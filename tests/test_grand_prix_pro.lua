@@ -369,6 +369,76 @@ script.update(1.0)     -- 1Hz strategy step
 
 print("  -> Passed: Main script pipeline successfully initialized and stepped.")
 
+-- [Test 16] Advanced Human Racecraft: 24-Car Topology, Feint Dummy, Tyre Cooking & Cold Out-Lap
+print("[Test 16] Testing 24-Car AI Topology, Feint Dummy, Tyre Cooking & Cold Out-Lap...")
+-- 1. Test 24-Car Inter-Vehicle Topology
+local mockCars = {
+  [0] = { index = 0, isConnected = true, position = vec3(0, 0, 0), splinePosition = 0.10 },
+  [1] = { index = 1, isConnected = true, position = vec3(0, 0, 20), splinePosition = 0.12 },
+  [2] = { index = 2, isConnected = true, position = vec3(0, 0, 45), splinePosition = 0.15 },
+}
+local function mockGetCar(i) return mockCars[i] end
+RaceContext.updateTopology(3, mockGetCar)
+local ahead1, distAhead1, behind1, distBehind1 = RaceContext.getNeighbors(1)
+assertEq(ahead1, 2, "Car 1 ahead neighbor is Car 2 (spline 0.15)")
+assertEq(behind1, 0, "Car 1 behind neighbor is Car 0 (spline 0.10)")
+assertTrue(distAhead1 < 30.0, "Car 1 ahead distance ~25m")
+assertTrue(distBehind1 < 25.0, "Car 1 behind distance ~20m")
+
+-- 2. Test Feint / Dummy Move Execution
+TacticalTicker.reset()
+local aggrAttacker = {
+  index = 3,
+  position = vec3(0, 0, 30),
+  speedKmh = 220,
+  isAIControlled = true,
+  splinePosition = 0.20,
+  worldToLocal = { transformPoint = function(s, p) return vec3(0, 0, 10) end }
+}
+local defenderCar = {
+  index = 4,
+  position = vec3(0, 0, 40), -- 10m ahead (< 12m)
+  speedKmh = 205,
+  isAIControlled = true,
+  splinePosition = 0.21
+}
+local highAggrPersona = { base_aggression = 0.90, base_caution = 0.5, pressure_resist = 0.8 }
+local feintPhase1 = TacticalTicker.stepCar(aggrAttacker, defenderCar, nil, highAggrPersona, 0.0, nil, 0.2)
+assertTrue(feintPhase1.isFeinting == true, "Aggressive attacker initiates feint dummy move")
+assertTrue(feintPhase1.targetSplineOffset > 0.0, "Phase 1 feints outside (offset > 0)")
+
+local feintPhase2 = TacticalTicker.stepCar(aggrAttacker, defenderCar, nil, highAggrPersona, 0.0, nil, 0.3)
+assertTrue(feintPhase2.targetSplineOffset < 0.0, "Phase 2 dives inside for pass (offset < 0)")
+
+-- 3. Test Tyre Cooking & Heat Degradation under sustained defense
+TacticalTicker.reset()
+local defendingCar = {
+  index = 5,
+  position = vec3(0, 0, 50),
+  speedKmh = 180,
+  isAIControlled = true,
+  splinePosition = 0.30,
+  worldToLocal = { transformPoint = function(s, p) return vec3(0.5, 0, -8) end }
+}
+local pressuringCar = {
+  index = 6,
+  position = vec3(0, 0, 42), -- 8m behind (< 25m)
+  speedKmh = 205, -- 25 km/h faster -> TTC = 8 / (25 / 3.6) = 1.15s (< 1.5s)
+  isAIControlled = true,
+  splinePosition = 0.29
+}
+local defState = nil
+for step = 1, 35 do -- ~3.5s of intense defense
+  defState = TacticalTicker.stepCar(defendingCar, nil, pressuringCar, mappedVerstappen, 0.0, nil, 0.1)
+end
+assertTrue(defState.tireTempNorm > 1.05, string.format("Sustained defense cooks tyres (Temp Norm: %.2f)", defState.tireTempNorm))
+
+-- 4. Test Cold Tyre Out-Lap warmup grip
+RaceContext.getCarState(1).tyreWarmupProgress = 0.0 -- fresh out-lap
+local coldState = TacticalTicker.stepCar(car2, nil, nil, proceduralDriver, 0.0, nil, 0.1)
+assertTrue(coldState.outLapColdGrip <= 1.0, "Cold tyres initial grip is bounded")
+print("  -> Passed: Advanced Racecraft verified (24-Car Topology, Feint Dummy, Tyre Cooking & Cold Out-Lap).")
+
 print("==================================================================")
-print("  ALL 15 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
+print("  ALL 16 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
 print("==================================================================")

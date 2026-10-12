@@ -38,4 +38,4 @@
 cd "C:\Users\EDZ\Desktop\update-ac\app\Ultimate AI Grand Prix Pro"
 & "D:\Program Files (x86)\Lua\5.1\lua.exe" tests/test_grand_prix_pro.lua
 ```
-预期输出：`ALL 15 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!`
+预期输出：`ALL 16 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!`

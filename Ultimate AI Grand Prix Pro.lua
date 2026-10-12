@@ -112,7 +112,7 @@ function script.update(dt)
     _tacticalTimer = 0.0
 
     RaceContext.updateFromSim(sim)
-    local carCount = math.min(64, sim.carsCount or 0)
+    local carCount = math.min(24, sim.carsCount or 0)
     _activeAiCount = 0
 
     local playerCar = ac.getCar(0)
@@ -122,6 +122,9 @@ function script.update(dt)
     local playerPos = playerCar and playerCar.position or nil
     LODScheduler.updateTiers(playerPos, carCount, getCarPositionScalar)
 
+    -- Update Global 24-Car Topological Neighbor Ring (AI-to-AI Inter-Vehicle Awareness)
+    RaceContext.updateTopology(carCount, ac.getCar)
+
     for i = 0, carCount - 1 do
       local c = ac.getCar(i)
       if c and c.isAIControlled then
@@ -129,6 +132,11 @@ function script.update(dt)
         RaceContext.updateCarFromAc(i, c)
         local cState = RaceContext.getCarState(i)
         cState.driverName = getCarDriverName(i)
+
+        -- Cold tyre warmup progression on out-lap
+        if cState.tyreWarmupProgress and cState.tyreWarmupProgress < 1.0 then
+          cState.tyreWarmupProgress = math.min(1.0, cState.tyreWarmupProgress + tacticalDt * 0.05) -- takes ~20s to warm up
+        end
 
         -- Anti-stuck watchdog
         watchdog.checkStuckCars(c, tacticalDt)
@@ -162,25 +170,16 @@ function script.update(dt)
 
           local rivalryGrievance = rivalryMemory.getGrievance(cState.driverName)
 
-          -- Proximity tracking with playerCar
+          -- Topological proximity tracking across all 24 cars (AI-to-AI and AI-to-Player)
           local aheadCar = nil
           local behindCar = nil
-          if playerCar and c.position and playerCar.position then
-            local dx = c.position.x - playerCar.position.x
-            local dy = c.position.y - playerCar.position.y
-            local dz = c.position.z - playerCar.position.z
-            local lenSq = dx * dx + dy * dy + dz * dz
-            if lenSq < 1225.0 then -- < 35m
-              local isBehind = false
-              if c.look then
-                local dot = dx * c.look.x + dy * c.look.y + dz * c.look.z
-                isBehind = (dot < 0)
-              else
-                isBehind = (c.splinePosition > playerCar.splinePosition)
-              end
-              if isBehind then behindCar = playerCar
-              else aheadCar = playerCar end
-            end
+          local aheadIdx, aheadDist, behindIdx, behindDist = RaceContext.getNeighbors(i)
+
+          if aheadIdx >= 0 and aheadDist < 35.0 then
+            aheadCar = ac.getCar(aheadIdx)
+          end
+          if behindIdx >= 0 and behindDist < 35.0 then
+            behindCar = ac.getCar(behindIdx)
           end
 
           -- Build Race Context
@@ -189,6 +188,8 @@ function script.update(dt)
             tyreWear = cState.tyreWear,
             isBlueFlagged = false,
             radioCommand = cState.radioCommand,
+            tyreWarmupProgress = cState.tyreWarmupProgress or 1.0,
+            tyreTempNorm = cState.tyreTempNorm or 1.0,
           }
           if playerCar and sim.currentLap and c.lapCount then
             if (playerCar.lapCount or 0) > (c.lapCount or 0) and behindCar == playerCar then
@@ -198,6 +199,14 @@ function script.update(dt)
 
           -- Execute 10Hz Tactical Tick
           local aiState = TacticalTicker.stepCar(c, aheadCar, behindCar, persona, rivalryGrievance, raceCtx, tacticalDt)
+
+          -- Pass cold tyre warmup factor to aiState for actuator grip adjustment
+          if cState.tyreWarmupProgress and cState.tyreWarmupProgress < 1.0 then
+            -- Cold tyres start at 0.92 grip and ramp to 1.0
+            aiState.outLapColdGrip = 0.92 + (0.08 * cState.tyreWarmupProgress)
+          else
+            aiState.outLapColdGrip = 1.0
+          end
 
           -- Sync back to unified RaceContext
           cState.tacticalState = aiState.state

@@ -19,6 +19,7 @@ local MistakeEngine = require("lib/driver/MistakeEngine")
 local BehaviorActuator = require("lib/driver/BehaviorActuator")
 local LODScheduler = require("lib/driver/LODScheduler")
 local TelemetryBridge = require("lib/bridge/TelemetryBridge")
+local watchdog = require("lib/driver/watchdog")
 
 local M = {}
 
@@ -29,7 +30,7 @@ M.STATE_MISTAKE = "MISTAKE"
 M.STATE_YIELD = "YIELD"
 M.STATE_SWITCHBACK = "SWITCHBACK"
 
-local MAX_CARS = 64
+local MAX_CARS = 24
 local RING_SIZE = 4 -- 4 slots @ 10Hz = 0.4s history buffer (covers 160-280ms human delay)
 
 -- Preallocated Flat State Pool
@@ -63,6 +64,16 @@ for i = 0, MAX_CARS - 1 do
     aheadDist = 999.0,
     behindDist = 999.0,
     persona = nil,
+
+    -- Dynamic Feint / Dummy Move (Two-phase attack deception)
+    feintTimer = 0.0,
+    feintOffset = 0.0,
+    isFeinting = false,
+
+    -- Tire Cooking & Defense Heat Degradation
+    defenseHeatTimer = 0.0,
+    tireTempNorm = 1.0, -- 1.0 (nominal) up to 1.6 (cooked / overheated)
+    outLapColdGrip = 1.0, -- 0.92 ~ 1.0 (cold tyre warmup ramp)
 
     -- v3.0.0 Momentum & Flow State (-1.0 Tilt to +1.0 Flow)
     momentum = 0.0,
@@ -235,11 +246,32 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
     s.recoveryTimer = s.recoveryTimer - dt
     if s.recoveryTimer <= 0 then
       s.state = M.STATE_CRUISE
-      s.stress = s.stress * 0.4
+      s.stress = s.stress * 0.5
       s.targetSplineOffset = 0.0
       s.mistakeGripPenalty = 0.0
+      s.targetCaution = persona and persona.base_caution or 1.0
     else
-      s.targetCaution = 2.0
+      -- Progressive recovery: caution smoothly relaxes as recovery timer expires
+      local recovProgress = 1.0 - (s.recoveryTimer / 2.0)
+      if recovProgress < 0.0 then recovProgress = 0.0 end
+      if recovProgress > 1.0 then recovProgress = 1.0 end
+      s.targetCaution = 2.0 - recovProgress * 0.8 -- drops from 2.0 to 1.2
+      s.mistakeGripPenalty = (s.mistakeGripPenalty or 0.0) * (1.0 - recovProgress * 0.5)
+
+      -- Trigger Physical Counter-Steer / Throttle Lift via watchdog
+      if s.lastMistakeType == MistakeEngine.TYPE_TRACTION_SLIDE and s.recoveryTimer > 1.0 then
+        watchdog.requestTakeover(idx, 0.20, function(ctrl, cCar, wDt)
+          -- Counter-steer twitch: pulse steer opposite to drift and cut throttle
+          ctrl.gas = 0.35
+          ctrl.steer = (s.targetSplineOffset > 0 and -0.45 or 0.45)
+        end)
+      elseif s.lastMistakeType == MistakeEngine.TYPE_BRAKE_LOCKUP and s.recoveryTimer > 0.8 then
+        watchdog.requestTakeover(idx, 0.15, function(ctrl, cCar, wDt)
+          -- Cadence brake release on lockup
+          ctrl.brake = 0.40
+        end)
+      end
+
       TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
       return s
     end
@@ -350,9 +382,16 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
     s.commitTimer = s.commitTimer - dt
     if s.committedState == M.STATE_DEFEND and behindCar and (behindDist < 35.0) then
       s.state = M.STATE_DEFEND
+      -- Maintain tire cooking progression during committed defense
+      s.defenseHeatTimer = (s.defenseHeatTimer or 0.0) + dt
+      if s.defenseHeatTimer > 2.0 then
+        s.tireTempNorm = math.min(1.50, (s.tireTempNorm or 1.0) + dt * 0.06)
+        s.targetCaution = math.min(2.2, s.targetCaution + 0.15 * (s.tireTempNorm - 1.0))
+        if raceContext then raceContext.tyreTempNorm = s.tireTempNorm end
+      end
       TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
       return s
-    elseif s.committedState == M.STATE_ATTACK and aheadCar and (s.aheadDist < 40.0) then
+    elseif s.committedState == M.STATE_ATTACK and aheadCar and (s.aheadDist < 40.0) and not s.isFeinting then
       s.state = M.STATE_ATTACK
       TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
       return s
@@ -419,11 +458,29 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
       local tgtA = baseA * 1.2
       if tgtA > 0.98 then tgtA = 0.98 end
       s.targetAggression = tgtA
+
+      -- Tire Cooking Mechanism: Prolonged intense defense (> 2.0s under pressure) overheats tyres
+      s.defenseHeatTimer = (s.defenseHeatTimer or 0.0) + dt
+      if s.defenseHeatTimer > 2.0 then
+        s.tireTempNorm = math.min(1.50, (s.tireTempNorm or 1.0) + dt * 0.06)
+        -- Overheated tyre penalty: degrades effective caution and introduces subtle micro-slip
+        s.targetCaution = math.min(2.2, s.targetCaution + 0.15 * (s.tireTempNorm - 1.0))
+        if raceContext then
+          raceContext.tyreTempNorm = s.tireTempNorm
+        end
+      end
+
       TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
       return s
     end
   else
     s.defendMoveDone = false
+    -- Gradually cool tyres when not defending hard
+    if s.tireTempNorm and s.tireTempNorm > 1.0 then
+      s.tireTempNorm = math.max(1.0, s.tireTempNorm - dt * 0.03)
+      if raceContext then raceContext.tyreTempNorm = s.tireTempNorm end
+    end
+    s.defenseHeatTimer = 0.0
   end
 
   -- 7.5 Breaking the Tow & Weaving (Straight defense when tailgated < 30m)
@@ -440,6 +497,14 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
       s.targetSplineOffset = s.towBreakOffset
       s.targetCaution = 0.8
       s.targetAggression = aggr
+
+      -- Intense weaving under tailgating also builds tire thermal load
+      s.defenseHeatTimer = (s.defenseHeatTimer or 0.0) + dt
+      if s.defenseHeatTimer > 2.0 then
+        s.tireTempNorm = math.min(1.50, (s.tireTempNorm or 1.0) + dt * 0.06)
+        if raceContext then raceContext.tyreTempNorm = s.tireTempNorm end
+      end
+
       TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
       return s
     end
@@ -509,7 +574,7 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
   end
   s.slipstreamActive = false
 
-  -- Close Quarters Hunting (< 20m)
+  -- Close Quarters Hunting (< 20m) & Two-Phase Feint / Dummy Move
   if aheadDist < 20.0 and aheadCar then
     s.state = M.STATE_ATTACK
     s.committedState = M.STATE_ATTACK
@@ -517,17 +582,40 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
     s.targetAggression = math.min(0.98, (persona.base_aggression or 0.8) + 0.15)
     s.targetCaution = math.max(0.1, (persona.base_caution or 0.5) * 0.3)
 
-    s.decoyTimer = s.decoyTimer - dt
-    if s.decoyTimer <= 0.0 then
-      if math.random() < (persona.decoy_tendency or 0.4) then
-        s.decoyOffset = (math.random() > 0.5 and 0.45 or -0.45)
-        s.decoyTimer = 2.0
+    local aggr = persona and persona.base_aggression or 0.75
+    -- Two-Phase Feint / Dummy Move: High aggression drivers (> 0.80) feint outside then dive inside
+    if aggr > 0.80 and aheadDist < 12.0 and isStraight then
+      s.feintTimer = (s.feintTimer or 0.0) + dt
+      if s.feintTimer < 0.40 then
+        -- Phase 1 (0.0~0.4s): Feint outside (+0.45 offset) to lure defender
+        s.targetSplineOffset = 0.45
+        s.isFeinting = true
+      elseif s.feintTimer < 1.10 then
+        -- Phase 2 (0.4~1.1s): Rapid dive inside (-0.50 offset) for the overtake line
+        s.targetSplineOffset = -0.50
+        s.isFeinting = true
       else
-        s.decoyOffset = 0.0
-        s.decoyTimer = 3.0
+        -- Cooldown
+        s.isFeinting = false
+        if s.feintTimer >= 3.5 then
+          s.feintTimer = 0.0
+        end
       end
+    else
+      s.isFeinting = false
+      s.feintTimer = 0.0
+      s.decoyTimer = s.decoyTimer - dt
+      if s.decoyTimer <= 0.0 then
+        if math.random() < (persona.decoy_tendency or 0.4) then
+          s.decoyOffset = (math.random() > 0.5 and 0.45 or -0.45)
+          s.decoyTimer = 2.0
+        else
+          s.decoyOffset = 0.0
+          s.decoyTimer = 3.0
+        end
+      end
+      s.targetSplineOffset = s.decoyOffset
     end
-    s.targetSplineOffset = s.decoyOffset
     TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, tyreWear, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
     return s
   end
@@ -572,6 +660,12 @@ function M.reset()
     s.towBreakTimer = 0.0
     s.towBreakOffset = 0.0
     s.isLiftAndCoast = false
+    s.feintTimer = 0.0
+    s.feintOffset = 0.0
+    s.isFeinting = false
+    s.defenseHeatTimer = 0.0
+    s.tireTempNorm = 1.0
+    s.outLapColdGrip = 1.0
     s.ringHead = 1
     s.ringInitialized = false
     for k = 1, RING_SIZE do

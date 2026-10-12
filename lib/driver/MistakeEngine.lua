@@ -27,7 +27,7 @@ M.TYPE_MISSED_APEX = "MISSED_APEX"
 M.TYPE_START_WHEELSPIN = "START_WHEELSPIN"
 M.TYPE_START_BOGDOWN = "START_BOGDOWN"
 
-local MAX_CARS = 64
+local MAX_CARS = 24
 local _startHandled = {} -- [carIdx] = true/false
 local _startDelayTimer = {} -- [carIdx] = delay remaining
 local _startBlunderType = {} -- [carIdx] = type

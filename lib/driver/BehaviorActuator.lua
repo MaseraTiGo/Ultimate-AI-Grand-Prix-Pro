@@ -17,7 +17,7 @@
 
 local M = {}
 
-local MAX_CARS = 64
+local MAX_CARS = 24
 local _twitchTimers = {}
 local _twitchPhases = {}
 local _flashTimers = {}
@@ -194,10 +194,18 @@ function M.applyActuator(car, aiState, dt)
     physics.setAIAggression(idx, aiState.currentAggression)
   end
 
-  -- 5. Grip Adjustments (Dirty Air + Mistake Grip penalties)
+  -- 5. Grip Adjustments (Dirty Air + Mistake Grip + Tyre Overheat & Cold Tyre Warmup)
   local totalGripPenalty = 0.0
   if aiState.dirtyAirLoss then totalGripPenalty = totalGripPenalty + aiState.dirtyAirLoss end
   if aiState.mistakeGripPenalty then totalGripPenalty = totalGripPenalty + aiState.mistakeGripPenalty end
+  if aiState.tireTempNorm and aiState.tireTempNorm > 1.15 then
+    -- Overheated tyre grip drop (up to 7% loss when cooked)
+    totalGripPenalty = totalGripPenalty + (aiState.tireTempNorm - 1.15) * 0.20
+  end
+  if aiState.outLapColdGrip and aiState.outLapColdGrip < 1.0 then
+    -- Fresh tyre warmup ramp (cold tyre grip loss)
+    totalGripPenalty = totalGripPenalty + (1.0 - aiState.outLapColdGrip)
+  end
 
   if physics.setExtraAIGrip then
     if totalGripPenalty > 0.001 then

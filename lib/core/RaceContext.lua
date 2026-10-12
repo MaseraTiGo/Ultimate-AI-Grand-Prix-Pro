@@ -10,7 +10,7 @@
 
 local M = {}
 
-local MAX_CARS = 64
+local MAX_CARS = 24
 
 M.FLAG_GREEN  = "GREEN"
 M.FLAG_YELLOW = "YELLOW"
@@ -58,6 +58,8 @@ for i = 0, MAX_CARS - 1 do
     tyreWear = 0.0,       -- 0.0 (new) ~ 1.0 (dead)
     tyreCompound = "MEDIUM",
     tyreLapsAge = 0,
+    tyreWarmupProgress = 1.0, -- 0.0 (ice cold) ~ 1.0 (optimal)
+    tyreTempNorm = 1.0,       -- 1.0 = nominal, >1.3 = cooked / overheated
 
     -- Dynamic Racecraft & Strategy Integration
     tacticalState = "CRUISE",
@@ -152,7 +154,106 @@ function M.reset()
     s.momentum = 0.0
     s.radioCommand = "NONE"
     s.radioOrderActive = false
+    s.tyreWarmupProgress = 1.0
+    s.tyreTempNorm = 1.0
   end
+end
+
+M.MAX_CARS = MAX_CARS
+
+-- Spatial Topology Neighbor Ring (Pure scalar, 24 cars)
+-- preallocated flat lookup arrays
+local _topoAheadIndex = {}
+local _topoBehindIndex = {}
+local _topoDistAhead = {}
+local _topoDistBehind = {}
+
+for i = 0, MAX_CARS - 1 do
+  _topoAheadIndex[i] = -1
+  _topoBehindIndex[i] = -1
+  _topoDistAhead[i] = 999.0
+  _topoDistBehind[i] = 999.0
+end
+
+--- Update 24-car pairwise topology using track spline position
+--- Runs in 10Hz tactical loop before vehicle steps (O(N) scalar distance checks, ~0.01ms)
+function M.updateTopology(carsCount, acGetCar)
+  local count = math.min(MAX_CARS, carsCount or 0)
+  for i = 0, count - 1 do
+    _topoAheadIndex[i] = -1
+    _topoBehindIndex[i] = -1
+    _topoDistAhead[i] = 999.0
+    _topoDistBehind[i] = 999.0
+  end
+
+  if count < 2 then return end
+
+  for i = 0, count - 1 do
+    local carI = acGetCar(i)
+    if carI and carI.isConnected ~= false and carI.position then
+      local sI = carI.splinePosition or 0.0
+      local pxI = carI.position.x or 0.0
+      local pyI = carI.position.y or 0.0
+      local pzI = carI.position.z or 0.0
+
+      local bestAheadIdx = -1
+      local minAheadDist = 999.0
+      local bestBehindIdx = -1
+      local minBehindDist = 999.0
+
+      for j = 0, count - 1 do
+        if i ~= j then
+          local carJ = acGetCar(j)
+          if carJ and carJ.isConnected ~= false and carJ.position then
+            local dx = carJ.position.x - pxI
+            local dy = carJ.position.y - pyI
+            local dz = carJ.position.z - pzI
+            local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+            
+            if dist < 65.0 then -- Focus bubble (65m proximity)
+              local sJ = carJ.splinePosition or 0.0
+              -- Spline forward distance with wrap-around [0, 1]
+              local sDiff = sJ - sI
+              if sDiff < -0.5 then sDiff = sDiff + 1.0
+              elseif sDiff > 0.5 then sDiff = sDiff - 1.0 end
+
+              if sDiff > 0.0 then
+                -- carJ is ahead of carI
+                if dist < minAheadDist then
+                  minAheadDist = dist
+                  bestAheadIdx = j
+                end
+              elseif sDiff < 0.0 then
+                -- carJ is behind carI
+                if dist < minBehindDist then
+                  minBehindDist = dist
+                  bestBehindIdx = j
+                end
+              end
+            end
+          end
+        end
+      end
+
+      _topoAheadIndex[i] = bestAheadIdx
+      _topoDistAhead[i] = minAheadDist
+      _topoBehindIndex[i] = bestBehindIdx
+      _topoDistBehind[i] = minBehindDist
+    end
+  end
+end
+
+--- Query topological neighbors for carIndex
+---@param carIndex integer
+---@return integer aheadIdx, number aheadDist, integer behindIdx, number behindDist
+function M.getNeighbors(carIndex)
+  if carIndex < 0 or carIndex >= MAX_CARS then
+    return -1, 999.0, -1, 999.0
+  end
+  return _topoAheadIndex[carIndex] or -1,
+         _topoDistAhead[carIndex] or 999.0,
+         _topoBehindIndex[carIndex] or -1,
+         _topoDistBehind[carIndex] or 999.0
 end
 
 return M

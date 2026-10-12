@@ -23,7 +23,7 @@ local StrategyAuthority = require("lib/strategy/strategy_authority")
 
 local M = {}
 
-local MAX_CARS = 64
+local MAX_CARS = 24
 local _carPlans = {}         -- [carIdx] = { stints, plannedStops, targetLap, openLap, escalateLap, fpl }
 local _carAuthority = {}     -- [carIdx] = authority state from strategy_authority
 local _carLastPitTimes = {}  -- [carIdx] = timestamp
@@ -209,11 +209,21 @@ function M.stepStrategy(dt)
           cState.radioCommand = "NONE"
           cState.radioOrderActive = false
 
+          -- Trigger realistic pit dwell pause if available (3.0 seconds service dwell)
+          if physics and physics.setAIStopCounter then
+            physics.setAIStopCounter(i, 3)
+          end
+
+          -- Trigger fresh tyre out-lap warmup state (cold tyre warmup begins from 0.0)
+          cState.tyreWarmupProgress = 0.0
+          cState.tyreWear = 0.0 -- fresh tyres fitted
+          cState.tyreLapsAge = 0
+
           -- Refill fuel for next stint
           local refillLiters = math.min(cState.maxFuelCapacity, dynFpl * 15.0)
           if physics and physics.setCarFuel then
             physics.setCarFuel(i, refillLiters)
-            Logger.info("PIT", string.format("Car #%d completed pit stop (Refilled: %.1fL, Next Stint Ready)", i + 1, refillLiters))
+            Logger.info("PIT", string.format("Car #%d completed pit stop (Refilled: %.1fL, Next Stint Ready, Cold Out-Lap Active)", i + 1, refillLiters))
           end
         end
       else

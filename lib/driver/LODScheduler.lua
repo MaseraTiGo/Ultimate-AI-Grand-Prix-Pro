@@ -18,7 +18,7 @@ M.TIER_FOCUS = 1
 M.TIER_MIDFIELD = 2
 M.TIER_AMBIENT = 3
 
-local MAX_CARS = 64
+local MAX_CARS = 24
 local _carTiers = {}      -- [carIdx] = tier (1, 2, 3)
 local _carDistSq = {}     -- [carIdx] = distance squared to player
 local _tickCounter = 0

@@ -6,38 +6,38 @@
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
-│                     Ultimate AI Grand Prix Pro 统一产品架构                            │
+│                     Ultimate AI Grand Prix Pro 统一产品架构 (24 车高拟真)              │
 │                                                                                        │
 │  [1. 交互与指挥层 (UI & Head-Up Display)] (lib/ui/DashboardUI.lua)                     │
-│     ├─ Tab 1 [LIVE HUD]: 全场 64 车微观状态矩阵 (压力、士气 Flow/Tilt、战术动作)        │
+│     ├─ Tab 1 [LIVE HUD]: 全场 24 车微观状态矩阵 (压力、士气 Flow/Tilt、战术动作)        │
 │     ├─ Tab 2 [PIT WALL]: 车队策略看板 (Stint 窗口、预估续航圈数、主动车队指令无线电)     │
 │     ├─ Tab 3 [GRID SETUP]: 连续基因图谱/预设人格手动覆写面板                           │
 │     └─ Tab 4 [LOGS]: 有界循环日志诊断流 (Bounded Ring Buffer)                          │
 │                                                                                        │
 │  [2. 核心状态与数据契约层 (Core & State Contract)]                                     │
-│     ├─ RaceContext.lua: 全局唯一样条圈数、旗语、安全车与预分配 64 车单一真相源          │
+│     ├─ RaceContext.lua: 全局唯一样条圈数、旗语、安全车与预分配 24 车全局拓扑网络        │
 │     ├─ Config.lua: 统一参数配置、范围校验与默认值回退保护                             │
 │     └─ Logger.lua: 结构化分级日志、高频节流保护与有界内存池                            │
 │                                                                                        │
 │  [3. 宏观车队策略层 (AI Race Strategy Layer)] ── 1.0Hz 异步周期调度                    │
-│     ├─ StrategyCoordinator.lua: Stint 规划、进站窗口管理、加油换胎物理注入             │
+│     ├─ StrategyCoordinator.lua: Stint 规划、进站窗口管理、3.0s换胎停顿与出站冷胎注入   │
 │     ├─ strategy_calculator.lua: 确定性多组别停站拆解与错峰计算                         │
 │     ├─ pit_strategy.lua: 实时 Undercut / Overcut 动态净收益评分                        │
 │     ├─ fuel_model.lua: 动态燃油消耗模型 (质量效应、推圈模式、脏空气跟车、安全车降耗)   │
-│     ├─ tyre_model.lua: 轮胎磨损非线性悬崖曲线与新胎窗口优势解算                        │
+│     ├─ tyre_model.lua: 轮胎磨损非线性悬崖曲线与冷胎出站升温窗口解算                    │
 │     ├─ traffic_model.lua: 出站虚拟落点投影与交通密度惩罚                               │
 │     └─ safety_car.lua: 全场黄旗/安全车异常减速智能识别                                 │
 │                                                                                        │
 │  [4. 微观车手决策与执行层 (AI Driver & Reflex Layer)] ── 10Hz/60Hz 空间调度            │
 │     ├─ persona_loader.lua: 7D 连续 DNA 基因图谱 (攻防/抗压/保胎/停站倾向)              │
-│     ├─ TacticalTicker.lua: 生理延迟环形缓冲、心理压力池、长线士气心流、破尾流画龙      │
+│     ├─ TacticalTicker.lua: 全场 AI-to-AI 拓扑攻防、两段式虚晃假动作、持续防守煮胎衰退  │
 │     ├─ LODScheduler.lua: 三级空间调度 (聚焦 10Hz / 中距 3.33Hz / 远端 0Hz 深度休眠)    │
 │     ├─ MistakeEngine.lua: 拟人化微失误谱系 (入弯迟疑/循迹推头/起步打滑/抱死)           │
-│     ├─ BehaviorActuator.lua: 一车宽并排走廊、速度自适应变道平滑、大灯施压、保胎断油    │
-│     └─ watchdog.lua @ 60Hz: 瞬态物理看门狗、J-Turn 掉头物理脱困与拥挤度防撞安全重置   │
+│     ├─ BehaviorActuator.lua: 物理反打与油门切断、一车宽并排走廊、大灯施压、冷热胎抓地   │
+│     └─ watchdog.lua @ 60Hz: 瞬态物理看门狗、J-Turn 掉头自救与零内存物理沙盒            │
 │                                                                                        │
 │  [5. 外部生态开放层 (Zero-Overhead Bridge)] (lib/bridge/TelemetryBridge.lua)          │
-│     └─ LuaJIT FFI 共享内存块，无 GC 损耗直接反哺外部 AI 领航员 / 语音工程师            │
+│     └─ LuaJIT FFI 共享内存块，无 GC 损耗直接反哺外部 AI 领航员与策略分析器              │
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 

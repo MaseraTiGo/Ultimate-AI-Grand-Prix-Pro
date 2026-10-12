@@ -10,11 +10,23 @@
 
 local M = {}
 
-local _activeOverrides = {}  -- carIndex -> { duration, elapsed, onComplete }
+local MAX_CARS = 24
+local _activeOverrides = {}  -- carIndex -> { active, duration, elapsed, callback }
 local _stuckWatch = {}       -- carIndex -> { timer, lastPos }
 local _rejoinRamp = {}        -- carIndex -> { remainingTimer, totalTimer, initialCap }
 local _dropHistory = { drops = 0, success = 0 } -- Self-judging reposition tracker
 local _isPhysicsAllowed = false
+
+for i = 0, MAX_CARS - 1 do
+  _activeOverrides[i] = {
+    active = false,
+    duration = 0.3,
+    elapsed = 0.0,
+    callback = nil
+  }
+  _stuckWatch[i] = { timer = 0, judgeTimer = 0, dropPending = false, attemptedJTurn = false }
+  _rejoinRamp[i] = { active = false, remainingTimer = 0.0, totalTimer = 0.0, initialCap = 0.60 }
+end
 
 function M.init()
   if physics and physics.allowed then
@@ -34,18 +46,23 @@ end
 ---@param onControlStep fun(ctrl: ac.CarControlsInput, car: ac.StateCar, dt: number)
 function M.requestTakeover(carIndex, durationSec, onControlStep)
   if not _isPhysicsAllowed or not ac or not ac.overrideCarControls then return false end
+  if carIndex < 0 or carIndex >= MAX_CARS then return false end
   
-  _activeOverrides[carIndex] = {
-    duration = math.min(durationSec or 0.3, 0.5), -- hard cap 0.5s as per design
-    elapsed = 0,
-    callback = onControlStep
-  }
+  local item = _activeOverrides[carIndex]
+  if not item then return false end
+  item.active = true
+  item.duration = math.min(durationSec or 0.3, 0.5) -- hard cap 0.5s as per design
+  item.elapsed = 0.0
+  item.callback = onControlStep
   return true
 end
 
 --- Force release any active micro-control takeover immediately
 function M.releaseTakeover(carIndex)
-  _activeOverrides[carIndex] = nil
+  if carIndex >= 0 and carIndex < MAX_CARS then
+    _activeOverrides[carIndex].active = false
+    _activeOverrides[carIndex].callback = nil
+  end
 end
 
 --- High frequency physics watchdog step (Run in simUpdate @ 60Hz)
@@ -54,58 +71,66 @@ function M.stepPhysics(dt)
   if not _isPhysicsAllowed then return end
 
   -- 1. Process active micro-takeovers
-  for carIdx, item in pairs(_activeOverrides) do
-    item.elapsed = item.elapsed + dt
-    if item.elapsed >= item.duration then
-      -- Auto release in single frame back to AC native AI
-      _activeOverrides[carIdx] = nil
-    else
-      local car = ac.getCar(carIdx)
-      if car and car.isAIControlled then
-        -- 1. Check slip angle / spin safety & inverted car
-        -- 2. Lateral G shock cutoff: if lateral acceleration > 3.0G (~29.4 m/s²), abort immediately to prevent physics explosion
-        local latGExceeded = false
-        if car.acceleration and math.abs(car.acceleration.x or 0) > 29.4 then
-          latGExceeded = true
-        end
-
-        if car.speedKmh < 0.5 or (car.up and car.up.y < 0.2) or latGExceeded then
-          _activeOverrides[carIdx] = nil
-        else
-          local ctrl = ac.overrideCarControls(carIdx)
-          if ctrl then
-            ctrl.combineAxis = false
-            item.callback(ctrl, car, dt)
-          else
-            _activeOverrides[carIdx] = nil
-          end
-        end
+  for carIdx = 0, MAX_CARS - 1 do
+    local item = _activeOverrides[carIdx]
+    if item and item.active then
+      item.elapsed = item.elapsed + dt
+      if item.elapsed >= item.duration then
+        -- Auto release in single frame back to AC native AI
+        item.active = false
+        item.callback = nil
       else
-        _activeOverrides[carIdx] = nil
+        local car = ac.getCar(carIdx)
+        if car and car.isAIControlled then
+          local latGExceeded = false
+          if car.acceleration and math.abs(car.acceleration.x or 0) > 29.4 then
+            latGExceeded = true
+          end
+
+          if (car.speedKmh or 0) < 0.5 or (car.up and car.up.y < 0.2) or latGExceeded then
+            item.active = false
+            item.callback = nil
+          else
+            local ctrl = ac.overrideCarControls(carIdx)
+            if ctrl and item.callback then
+              ctrl.combineAxis = false
+              item.callback(ctrl, car, dt)
+            else
+              item.active = false
+              item.callback = nil
+            end
+          end
+        else
+          item.active = false
+          item.callback = nil
+        end
       end
     end
   end
 
   -- 2. Process post-reposition rejoin throttle ramp (prevents cold-tyre snap spin)
-  for carIdx, ramp in pairs(_rejoinRamp) do
-    ramp.remainingTimer = ramp.remainingTimer - dt
-    if ramp.remainingTimer <= 0 then
-      _rejoinRamp[carIdx] = nil
-    else
-      local car = ac.getCar(carIdx)
-      if car and car.isAIControlled then
-        local progress = 1.0 - (ramp.remainingTimer / ramp.totalTimer)
-        -- Ramp throttle from 60% up to 100%
-        local throttleCap = ramp.initialCap + (1.0 - ramp.initialCap) * progress
-        local ctrl = ac.overrideCarControls(carIdx)
-        if ctrl then
-          ctrl.combineAxis = false
-          if ctrl.gas and ctrl.gas > throttleCap then
-            ctrl.gas = throttleCap
-          end
-        end
+  for carIdx = 0, MAX_CARS - 1 do
+    local ramp = _rejoinRamp[carIdx]
+    if ramp and ramp.active then
+      ramp.remainingTimer = ramp.remainingTimer - dt
+      if ramp.remainingTimer <= 0 then
+        ramp.active = false
       else
-        _rejoinRamp[carIdx] = nil
+        local car = ac.getCar(carIdx)
+        if car and car.isAIControlled then
+          local progress = 1.0 - (ramp.remainingTimer / ramp.totalTimer)
+          -- Ramp throttle from 60% up to 100%
+          local throttleCap = ramp.initialCap + (1.0 - ramp.initialCap) * progress
+          local ctrl = ac.overrideCarControls(carIdx)
+          if ctrl then
+            ctrl.combineAxis = false
+            if ctrl.gas and ctrl.gas > throttleCap then
+              ctrl.gas = throttleCap
+            end
+          end
+        else
+          ramp.active = false
+        end
       end
     end
   end
@@ -219,11 +244,13 @@ function M.checkStuckCars(car, dt)
       w.judgeTimer = 0.0
 
       -- Activate Rejoin Throttle Ramp for 3.0s (ramp up from 0.60 to 1.0)
-      _rejoinRamp[idx] = {
-        remainingTimer = 3.0,
-        totalTimer = 3.0,
-        initialCap = 0.60,
-      }
+      local r = _rejoinRamp[idx]
+      if r then
+        r.active = true
+        r.remainingTimer = 3.0
+        r.totalTimer = 3.0
+        r.initialCap = 0.60
+      end
     end
   else
     w.timer = 0
@@ -237,6 +264,30 @@ end
 
 function M.getDropStats()
   return _dropHistory
+end
+
+function M.reset()
+  for i = 0, MAX_CARS - 1 do
+    local item = _activeOverrides[i]
+    if item then
+      item.active = false
+      item.callback = nil
+    end
+    local w = _stuckWatch[i]
+    if w then
+      w.timer = 0
+      w.judgeTimer = 0
+      w.dropPending = false
+      w.attemptedJTurn = false
+    end
+    local r = _rejoinRamp[i]
+    if r then
+      r.active = false
+      r.remainingTimer = 0.0
+    end
+  end
+  _dropHistory.drops = 0
+  _dropHistory.success = 0
 end
 
 return M
