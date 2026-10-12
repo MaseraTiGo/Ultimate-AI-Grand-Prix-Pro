@@ -63,6 +63,7 @@ for i = 0, MAX_CARS - 1 do
 
     -- Dynamic Racecraft & Strategy Integration
     tacticalState = "CRUISE",
+    activeSkill = "NONE",
     stress = 0.0,
     momentum = 0.0,
     isInFlow = false,

@@ -94,10 +94,15 @@ function M.renderLiveHudTab()
       local telem = TelemetryBridge.getCarTelemetry(i)
 
       local stColor = COLOR_GREEN
-      if c.tacticalState == "ATTACK" then stColor = COLOR_WARN
-      elseif c.tacticalState == "DEFEND" then stColor = COLOR_INFO
-      elseif c.tacticalState == "MISTAKE" then stColor = COLOR_DANGER
-      elseif c.tacticalState == "YIELD" then stColor = COLOR_MUTED end
+      if c.tacticalState == "ATTACK" or c.tacticalState == "LATE_BRAKE_DIVE" or c.tacticalState == "FEINT_DUMMY" or c.tacticalState == "SWITCHBACK" then
+        stColor = COLOR_WARN
+      elseif c.tacticalState == "DEFEND" or c.tacticalState == "GENTLE_SQUEEZE" or c.tacticalState == "TOW_WEAVE" then
+        stColor = COLOR_INFO
+      elseif c.tacticalState == "MISTAKE" then
+        stColor = COLOR_DANGER
+      elseif c.tacticalState == "YIELD" then
+        stColor = COLOR_MUTED
+      end
 
       local dName = (c.driverName ~= "" and c.driverName or ("AI #" .. (i + 1))):sub(1, 10)
       ui.text(string.format("#%02d %-10s [%s]", i + 1, dName, tierStr))
@@ -105,6 +110,11 @@ function M.renderLiveHudTab()
       ui.textColored(stColor, string.format("[%s]", c.tacticalState or "CRUISE"))
       ui.sameLine()
       ui.text(string.format("P:%.1f | M:%+.2f", telem.stress or 0.0, telem.momentum or 0.0))
+
+      if c.activeSkill and c.activeSkill ~= "NONE" then
+        ui.sameLine()
+        ui.textColored(COLOR_TITLE, string.format("[SKILL:%s]", c.activeSkill))
+      end
 
       if telem.lift_and_coast == 1 then
         ui.sameLine()

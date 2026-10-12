@@ -210,6 +210,7 @@ function script.update(dt)
 
           -- Sync back to unified RaceContext
           cState.tacticalState = aiState.state
+          cState.activeSkill = aiState.activeSkill or "NONE"
           cState.stress = aiState.stress
           cState.momentum = aiState.momentum
           cState.isLiftAndCoast = aiState.isLiftAndCoast

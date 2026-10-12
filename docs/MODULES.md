@@ -51,10 +51,36 @@
 - **输出**：`aiState`（包含 `targetSplineOffset, targetCaution, targetAggression, isLiftAndCoast, isBreakingTow`）。
 
 ### `BehaviorActuator.lua`
-- **职责**：横向样条线平滑速率自适应控制、并排一车宽保护、大灯施压。
+- **职责**：横向样条线平滑速率自适应控制、并排一车宽保护、大灯施压、微纠正抖舵拟真。
 
 ### `watchdog.lua`
 - **职责**：60Hz 瞬态物理看门狗、物理 J-Turn 掉头脱困、自裁决防死车。
 
 ### `LODScheduler.lua`
 - **职责**：三级空间调度与 0Hz 深度休眠。
+
+---
+
+## 4. X-Skill 拟人化决策与技能体系 (`lib/skills/`)
+
+### `SkillRegistry.lua`
+- **职责**：全场技能契约合法性校验、O(1) 快速检索与无修改自动发现。
+- **公共接口**：
+  - `M.init()`: 加载内置技能与 `config/skills_manifest.txt` 清单中的外置技能。
+  - `M.registerSkill(skillDef)`: 动态接入新技能（校验 `id`, `name`, `category`, `checkPrerequisites`, `evaluateUtility`, `stepExecution`, `checkAbort`）。
+  - `M.getSkillById(id)` / `M.getAllSkills()`: 零 GC 内存直接查询。
+
+### `SkillArbitrator.lua`
+- **职责**：二阶段门控仲裁调度器，管理 24 车技能上下文、承诺锁（0.6s）与冷却期。
+- **公共接口**：
+  - `M.init()` / `M.reset()`: 重置 24 车上下文状态。
+  - `M.stepCarSkill(car, aheadCar, behindCar, persona, rivalryScore, raceCtx, sState, dt)`: 驱动技能前置过滤、效用评分与分阶段执行。
+  - `M.getContext(carIndex)`: 获取该车当前激活技能名、阶段与指标。
+
+### 内置战术技能库 (`lib/skills/*.lua`)
+- **`SwitchbackSkill.lua` (ID: 1, Category: OFFENSE)**：晚 Apex 交叉线下切反击。
+- **`FeintDummySkill.lua` (ID: 2, Category: OFFENSE)**：两段式声东击西假动作（外侧佯攻诱骗，瞬间内线切入）。
+- **`GentleSqueezeSkill.lua` (ID: 3, Category: DEFENSE)**：渐进式侧向挤压（逼迫攻方至脏走线，保留一车宽走廊）。
+- **`TowWeaveSkill.lua` (ID: 4, Category: DEFENSE)**：大直道尾流破坏摇摆防守（附加真实刹车/轮胎热负荷）。
+- **`LateBrakeDiveSkill.lua` (ID: 5, Category: OFFENSE)**：内线晚刹深潜超车（极限挑战抓地力与减速边界）。
+

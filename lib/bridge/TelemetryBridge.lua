@@ -86,7 +86,11 @@ local _stateMap = {
   ["DEFEND"] = 2,
   ["MISTAKE"] = 3,
   ["YIELD"] = 4,
-  ["SWITCHBACK"] = 5
+  ["SWITCHBACK"] = 5,
+  ["FEINT_DUMMY"] = 6,
+  ["GENTLE_SQUEEZE"] = 7,
+  ["TOW_WEAVE"] = 8,
+  ["LATE_BRAKE_DIVE"] = 9,
 }
 
 local _mistakeMap = {

@@ -29,8 +29,17 @@
 │     └─ safety_car.lua: 全场黄旗/安全车异常减速智能识别                                 │
 │                                                                                        │
 │  [4. 微观车手决策与执行层 (AI Driver & Reflex Layer)] ── 10Hz/60Hz 空间调度            │
-│     ├─ persona_loader.lua: 7D 连续 DNA 基因图谱 (攻防/抗压/保胎/停站倾向)              │
-│     ├─ TacticalTicker.lua: 全场 AI-to-AI 拓扑攻防、两段式虚晃假动作、持续防守煮胎衰退  │
+│     ├─ persona_loader.lua: 7D 连续 DNA 基因图谱 (攻防/抗压/保胎/停站/球商/耐心倾向)    │
+│     ├─ TacticalTicker.lua: 全局感官缓冲 (200ms延迟)、心态流动 (Flow/Tilt) 状态机       │
+│     ├─ X-Skill 拟人化技能体系 (lib/skills/):                                            │
+│     │   ├─ SkillRegistry.lua: 契约校验、快速检索与零修改 manifest 自动注册机制         │
+│     │   ├─ SkillArbitrator.lua: 二阶段门控 (硬性前置 O(1) 过滤 -> 效用函数评分)        │
+│     │   │                       防抖锁定 (0.6s) 与技能冷却，全预分配 24 车上下文       │
+│     │   ├─ SwitchbackSkill.lua: 晚 Apex 交叉线下切反击 (三阶段状态机)                  │
+│     │   ├─ FeintDummySkill.lua: 假动作声东击西诱骗 (外侧佯攻 -> 内线下切)              │
+│     │   ├─ GentleSqueezeSkill.lua: 渐进式侧向挤压 (迫使对手进入脏线，保留一车宽)       │
+│     │   ├─ TowWeaveSkill.lua: 尾流破坏防守摇摆 (阻断后车吸尾流，附加轮胎热量累积)      │
+│     │   └─ LateBrakeDiveSkill.lua: 内线晚刹俯冲超车 (轮胎抓地力边界极限攻防)           │
 │     ├─ LODScheduler.lua: 三级空间调度 (聚焦 10Hz / 中距 3.33Hz / 远端 0Hz 深度休眠)    │
 │     ├─ MistakeEngine.lua: 拟人化微失误谱系 (入弯迟疑/循迹推头/起步打滑/抱死)           │
 │     ├─ BehaviorActuator.lua: 物理反打与油门切断、一车宽并排走廊、大灯施压、冷热胎抓地   │
@@ -47,8 +56,21 @@
 
 1. **比赛时局采样**：每帧调用 `RaceContext.updateFromSim(sim)`，捕获全局圈数、比赛阶段、全场黄旗与安全车。
 2. **策略异步解算 (1Hz)**：`StrategyCoordinator.stepStrategy(dt)` 计算进站窗口与 Undercut 收益，若判定进站时机成熟或满足车队要求，将 `radioCommand` 标记为 `BOX_THIS_LAP`。
-3. **车手战术响应 (10Hz)**：`TacticalTicker.stepCar(...)` 从 `RaceContext` 消费 `radioCommand`：
+3. **车手战术响应 (10Hz)**：`TacticalTicker.stepCar(...)` 从 `RaceContext` 消费 `radioCommand`，更新生理感知环形缓冲区与压力/士气：
    - 收到 `PUSH`：caution 降低 60%，aggression 提升 25%，士气提升进入 Flow；
    - 收到 `SAVE`：触发 `isLiftAndCoast = true`，直道末端提前 50m 滑行断油；
-   - 收到 `BOX_THIS_LAP`：贴向维修区外侧走线，避免碰撞。
-4. **底层物理执行 (60Hz)**：`watchdog.stepPhysics(dt)` 负责瞬态微操控的安全沙盒熔断与逆向 J-Turn 物理自救。
+   - 收到 `BOX_THIS_LAP`：贴向维修区外侧走线，准备安全进站。
+4. **X-Skill 战术技能仲裁**：`SkillArbitrator.stepCarSkill(...)` 驱动二阶段门控：
+   - **Phase 1 (硬性物理前置过滤)**：以标量几何（车距、闭合速度、相对方位、直道/弯道曲率）为 O(1) 准入条件，未满足者直接 early-exit；
+   - **Phase 2 (效用函数综合评分)**：结合车手性格画像（激进、防守、球商、耐心）、心流状态（Flow/Tilt）与轮胎抓地力计算 utility 分数，竞争选出最高效用技能；
+   - **承诺锁（Commitment Hold）与安全中止**：触发后维持至少 0.6s 决策稳定期防抖；若出现严重碰撞风险或弯道曲率危险，即刻触发 `checkAbort` 安全降级。
+5. **底层物理执行 (60Hz)**：`watchdog.stepPhysics(dt)` 负责瞬态微操控的安全沙盒熔断与逆向 J-Turn 物理自救。
+
+---
+
+## 3. X-Skill 零修改插件化扩展机制
+
+当需要新增全新战术技能时：
+1. 在任意路径创建符合契约的技能模块（提供 `id`, `name`, `category`, `checkPrerequisites`, `evaluateUtility`, `stepExecution`, `checkAbort`）。
+2. 在 `config/skills_manifest.txt` 中追加该文件路径，或者直接调用 `SkillRegistry.registerSkill(def)`。
+3. 系统在初始化时自动完成契约合法性校验并接入仲裁调度，**无需修改任何现有核心框架代码**。

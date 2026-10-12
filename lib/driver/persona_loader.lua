@@ -125,6 +125,8 @@ local function generateProceduralDNA(driverName, carIndex)
     tyre_preservation = 0.35 + (1.0 - r2) * 0.55,  -- 0.35 ~ 0.90
     undercut_preference = 0.30 + r1 * 0.65,        -- 0.30 ~ 0.95
     overcut_preference = 0.20 + (1.0 - r1) * 0.60, -- 0.20 ~ 0.80
+    racecraft_iq = 0.50 + r3 * 0.45,               -- 0.50 ~ 0.95
+    patience = 0.30 + r4 * 0.60,                   -- 0.30 ~ 0.90
   }
 end
 

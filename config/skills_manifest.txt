@@ -1,0 +1,5 @@
+# Ultimate AI Grand Prix Pro - X-Skill Auto-Discovery Manifest
+# Add third-party or custom skill module require paths below (one per line).
+# Example:
+# custom_skills/SuperDriftSkill
+# mods/AiOvertakeProSkill

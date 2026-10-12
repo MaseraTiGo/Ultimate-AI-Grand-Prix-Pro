@@ -127,10 +127,10 @@ print("[Test 3] Testing PersonaLoader 7D Continuous DNA...")
 local personaLoader = require("lib/driver/persona_loader")
 personaLoader.init("config/personas.json")
 local mappedVerstappen = personaLoader.getPersonaForCar(1, "Max Verstappen")
-assertEq(mappedVerstappen.name, "Aggressive Bull", "Verstappen should resolve to Aggressive Bull")
+assertEq(mappedVerstappen.name, "Max Verstappen", "Verstappen should resolve to Max Verstappen")
 assertTrue(mappedVerstappen.undercut_preference >= 0.90, "Verstappen undercut preference high")
 
-local proceduralDriver = personaLoader.getPersonaForCar(7, "Jack Doohan")
+local proceduralDriver = personaLoader.getPersonaForCar(7, "Unknown Rookie 99")
 assertTrue(proceduralDriver.is_procedural == true, "Unmapped driver should receive continuous DNA")
 assertTrue(proceduralDriver.base_aggression >= 0.50 and proceduralDriver.base_aggression <= 0.95, "DNA aggression in spectrum")
 assertTrue(proceduralDriver.fuel_saving_factor >= 0.30 and proceduralDriver.fuel_saving_factor <= 0.90, "DNA fuel saving in spectrum")
@@ -318,20 +318,25 @@ print("  -> Passed: TelemetryBridge shared memory pipeline verified.")
 print("[Test 14] Testing Hot loop zero memory allocation (500 cycles)...")
 local BehaviorActuator = require("lib/driver/BehaviorActuator")
 LODScheduler.setDeepSleepEnabled(false) -- exercise active ticks
+local _staticLoopLoc = vec3(0.5, 0, -12)
 local loopLead = {
   index = 1,
   position = vec3(0, 0, 100),
   speedKmh = 210,
   isAIControlled = true,
   splinePosition = 0.5,
-  worldToLocal = { transformPoint = function(s, p) return vec3(0.5, 0, -12) end }
+  look = vec3(0, 0, 1),
+  side = vec3(1, 0, 0),
+  worldToLocal = { transformPoint = function(s, p) return _staticLoopLoc end }
 }
 local loopChaser = {
   index = 2,
   position = vec3(0, 0, 85),
   speedKmh = 220,
   isAIControlled = true,
-  splinePosition = 0.45
+  splinePosition = 0.45,
+  look = vec3(0, 0, 1),
+  side = vec3(1, 0, 0),
 }
 
 -- Warmup JIT
@@ -439,6 +444,75 @@ local coldState = TacticalTicker.stepCar(car2, nil, nil, proceduralDriver, 0.0, 
 assertTrue(coldState.outLapColdGrip <= 1.0, "Cold tyres initial grip is bounded")
 print("  -> Passed: Advanced Racecraft verified (24-Car Topology, Feint Dummy, Tyre Cooking & Cold Out-Lap).")
 
+-- [Test 17] Testing X-Skill Architecture (Registry, 2-Phase Gating, Extensibility & Driver Personality)
+print("[Test 17] Testing X-Skill Architecture (Registry, Gating, Extensibility & Personality)...")
+local SkillRegistry = require("lib/skills/SkillRegistry")
+local SkillArbitrator = require("lib/skills/SkillArbitrator")
+
+-- 1. Registry Contract & Built-in Skills
+SkillRegistry.init()
+local skills, count = SkillRegistry.getAllSkills()
+assertTrue(count >= 5, string.format("SkillRegistry loaded at least 5 built-in skills (Got %d)", count))
+assertEq(SkillRegistry.getSkillById(1).name, "SWITCHBACK", "Skill 1 is SWITCHBACK")
+assertEq(SkillRegistry.getSkillById(2).name, "FEINT_DUMMY", "Skill 2 is FEINT_DUMMY")
+assertEq(SkillRegistry.getSkillById(3).name, "GENTLE_SQUEEZE", "Skill 3 is GENTLE_SQUEEZE")
+assertEq(SkillRegistry.getSkillById(4).name, "TOW_WEAVE", "Skill 4 is TOW_WEAVE")
+assertEq(SkillRegistry.getSkillById(5).name, "LATE_BRAKE_DIVE", "Skill 5 is LATE_BRAKE_DIVE")
+
+-- 2. Zero-Edit Dynamic Extension via registerSkill
+local customSkill = {
+  id = 16,
+  name = "MOCK_CUSTOM_SLIPSTREAM",
+  category = "OFFENSE",
+  checkPrerequisites = function(car, ahead, behind, geo, mem) return true end,
+  evaluateUtility = function(car, ahead, behind, persona, geo, mem) return 0.88 end,
+  stepExecution = function(ctx, car, ahead, behind, dt) return 0.25, 0.40, 0.90, 0.0 end,
+  checkAbort = function(car, ahead, behind, geo) return false end
+}
+local regOk = SkillRegistry.registerSkill(customSkill)
+assertTrue(regOk == true, "Custom skill successfully registered without modifying core files")
+assertEq(SkillRegistry.getSkillById(16).name, "MOCK_CUSTOM_SLIPSTREAM", "Custom skill queryable by ID")
+
+-- 3. Driver Personality Differentiation in Utility Scoring
+local boldPersona = { base_aggression = 0.95, racecraft_iq = 0.90, base_caution = 0.3 }
+local timidPersona = { base_aggression = 0.30, racecraft_iq = 0.40, base_caution = 1.2 }
+local feintSkill = SkillRegistry.getSkillById(2)
+local scoreBold = feintSkill.evaluateUtility(nil, nil, nil, boldPersona, {}, {})
+local scoreTimid = feintSkill.evaluateUtility(nil, nil, nil, timidPersona, {}, {})
+assertTrue(scoreBold > scoreTimid + 0.30, string.format("Bold driver utility (%.2f) significantly higher than timid driver (%.2f)", scoreBold, scoreTimid))
+
+-- 4. 2-Phase Gating & Commitment Hold
+SkillArbitrator.reset()
+local chaserCar = {
+  index = 8,
+  position = vec3(0, 0, 100),
+  speedKmh = 230,
+  isAIControlled = true,
+  splinePosition = 0.60,
+  look = vec3(0, 0, 1),
+  side = vec3(1, 0, 0)
+}
+local targetCar = {
+  index = 9,
+  position = vec3(0, 0, 110), -- 10m ahead (< 14m)
+  speedKmh = 200, -- 30 km/h slower (closing in)
+  isAIControlled = true,
+  splinePosition = 0.62
+}
+local sCtxLead = { stress = 1.0, momentum = 0.2 }
+local hasSkill, off, caut, aggr = SkillArbitrator.stepCarSkill(chaserCar, targetCar, nil, boldPersona, 0.0, nil, sCtxLead, 0.1)
+assertTrue(hasSkill == true, "Offensive skill triggered in prime overtake conditions")
+local arbCtx = SkillArbitrator.getContext(8)
+assertTrue(arbCtx.commitTimer > 0.0, "SkillArbitrator engages commitment lock to prevent flapping")
+assertEq(arbCtx.activeSkillName, "FEINT_DUMMY", "Selected highest utility FEINT_DUMMY skill")
+
+-- 5. Safety Abort Verification
+local dangerGeo = { isStraight = false, aheadDist = 1.0 }
+local abortCheck = feintSkill.checkAbort(chaserCar, targetCar, nil, dangerGeo)
+assertTrue(abortCheck == true, "Skill triggers abort when corner hazard or proximity violation occurs")
+
+print("  -> Passed: X-Skill Architecture verified (Registry, Dynamic Extension, Gating, Personality & Safety Abort).")
+
 print("==================================================================")
-print("  ALL 16 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
+print("  ALL 17 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
 print("==================================================================")

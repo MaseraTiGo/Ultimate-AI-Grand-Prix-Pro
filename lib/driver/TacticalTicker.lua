@@ -20,6 +20,7 @@ local BehaviorActuator = require("lib/driver/BehaviorActuator")
 local LODScheduler = require("lib/driver/LODScheduler")
 local TelemetryBridge = require("lib/bridge/TelemetryBridge")
 local watchdog = require("lib/driver/watchdog")
+local SkillArbitrator = require("lib/skills/SkillArbitrator")
 
 local M = {}
 
@@ -41,6 +42,7 @@ for i = 0, MAX_CARS - 1 do
   _aiStates[i] = {
     index = i,
     state = M.STATE_CRUISE,
+    activeSkill = "NONE",
     stress = 0.0,
     targetSplineOffset = 0.0,
     currentSplineOffset = 0.0,
@@ -232,6 +234,7 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
   -- 0. Check Blue Flag yielding condition
   if raceContext and raceContext.isBlueFlagged and behindCar then
     s.state = M.STATE_YIELD
+    s.activeSkill = "NONE"
     s.targetSplineOffset = 0.75 -- Pull to outer safe line
     s.targetCaution = 1.8
     s.targetAggression = 0.3
@@ -243,6 +246,7 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
 
   -- 1. Handle Active Recovery / Mistake / Switchback States
   if s.state == M.STATE_MISTAKE then
+    s.activeSkill = "NONE"
     s.recoveryTimer = s.recoveryTimer - dt
     if s.recoveryTimer <= 0 then
       s.state = M.STATE_CRUISE
@@ -377,7 +381,56 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
     return s
   end
 
-  -- 5. Commitment Hold Check (Prevents rapid dithering)
+  -- 5. Radio Command Override (BOX_THIS_LAP priority for pit entry)
+  local radioCmd = raceContext and raceContext.radioCommand or "NONE"
+  if radioCmd == "BOX_THIS_LAP" then
+    s.state = M.STATE_CRUISE
+    s.activeSkill = "NONE"
+    s.targetCaution = 1.4
+    s.targetSplineOffset = 0.65
+    TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
+    return s
+  end
+
+  -- 6. X-Skill Arbitrator Execution & Evaluation
+  local hasSkill, sOffset, sCaution, sAggression, extraGrip = SkillArbitrator.stepCarSkill(
+    car, aheadCar, behindCar, persona, rivalryScore, raceContext, s, dt
+  )
+
+  if hasSkill then
+    local skillCtx = SkillArbitrator.getContext(idx)
+    s.activeSkill = skillCtx.activeSkillName or "SKILL"
+    s.state = s.activeSkill
+    s.targetSplineOffset = sOffset
+    s.targetCaution = sCaution
+    s.targetAggression = sAggression
+
+    -- Track specialized flags for downstream systems / UI
+    s.isBreakingTow = (s.activeSkill == "TOW_WEAVE")
+    s.isFeinting = (s.activeSkill == "FEINT_DUMMY")
+
+    -- Update tyre thermal effects if engaging in aggressive defense
+    if s.activeSkill == "TOW_WEAVE" or s.activeSkill == "GENTLE_SQUEEZE" then
+      s.defenseHeatTimer = (s.defenseHeatTimer or 0.0) + dt
+      if s.defenseHeatTimer > 2.0 then
+        s.tireTempNorm = math.min(1.50, (s.tireTempNorm or 1.0) + dt * 0.06)
+        if raceContext then raceContext.tyreTempNorm = s.tireTempNorm end
+      end
+    else
+      if s.tireTempNorm and s.tireTempNorm > 1.0 then
+        s.tireTempNorm = math.max(1.0, s.tireTempNorm - dt * 0.03)
+        if raceContext then raceContext.tyreTempNorm = s.tireTempNorm end
+      end
+      s.defenseHeatTimer = 0.0
+    end
+
+    TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
+    return s
+  else
+    s.activeSkill = "NONE"
+  end
+
+  -- 7. Legacy Commitment Hold & Baseline Fallbacks
   if s.commitTimer > 0.0 then
     s.commitTimer = s.commitTimer - dt
     if s.committedState == M.STATE_DEFEND and behindCar and (behindDist < 35.0) then
@@ -643,10 +696,17 @@ function M.applyActuator(car, s, dt)
   BehaviorActuator.applyActuator(car, s, dt)
 end
 
+function M.init()
+  SkillArbitrator.init()
+  M.reset()
+end
+
 function M.reset()
+  SkillArbitrator.reset()
   for i = 0, MAX_CARS - 1 do
     local s = _aiStates[i]
     s.state = M.STATE_CRUISE
+    s.activeSkill = "NONE"
     s.stress = 0.0
     s.targetSplineOffset = 0.0
     s.currentSplineOffset = 0.0
