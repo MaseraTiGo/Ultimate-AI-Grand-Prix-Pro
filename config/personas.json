@@ -1,0 +1,86 @@
+{
+  "default_persona": "balanced",
+  "personas": {
+    "ice_man": {
+      "name": "The Ice Man",
+      "description": "Ultra calm under pressure, calculates apex with precision, optimal tyre management.",
+      "base_aggression": 0.65,
+      "base_caution": 1.20,
+      "pressure_resist": 0.90,
+      "block_tendency": 0.70,
+      "decoy_tendency": 0.20,
+      "error_probability": 0.04,
+      "fuel_saving_factor": 0.85,
+      "tyre_preservation": 0.90,
+      "undercut_preference": 0.40,
+      "overcut_preference": 0.80
+    },
+    "aggressive_bull": {
+      "name": "Aggressive Bull",
+      "description": "Divebomber, hugs the bumper, dives into every gap, aggressive fuel burn & undercut seeker.",
+      "base_aggression": 0.95,
+      "base_caution": 0.25,
+      "pressure_resist": 0.40,
+      "block_tendency": 0.95,
+      "decoy_tendency": 0.85,
+      "error_probability": 0.25,
+      "fuel_saving_factor": 0.30,
+      "tyre_preservation": 0.40,
+      "undercut_preference": 0.95,
+      "overcut_preference": 0.20
+    },
+    "tactical_master": {
+      "name": "Tactical Master",
+      "description": "Calculates defense lines, master of one-move blocking, balanced stint execution.",
+      "base_aggression": 0.80,
+      "base_caution": 0.80,
+      "pressure_resist": 0.75,
+      "block_tendency": 0.90,
+      "decoy_tendency": 0.60,
+      "error_probability": 0.08,
+      "fuel_saving_factor": 0.75,
+      "tyre_preservation": 0.80,
+      "undercut_preference": 0.75,
+      "overcut_preference": 0.65
+    },
+    "gentleman_driver": {
+      "name": "Gentleman Driver",
+      "description": "Clean and respectful, gives generous racing room, conservative strategy.",
+      "base_aggression": 0.45,
+      "base_caution": 2.50,
+      "pressure_resist": 0.30,
+      "block_tendency": 0.35,
+      "decoy_tendency": 0.05,
+      "error_probability": 0.35,
+      "fuel_saving_factor": 0.60,
+      "tyre_preservation": 0.65,
+      "undercut_preference": 0.30,
+      "overcut_preference": 0.50
+    },
+    "balanced": {
+      "name": "Pro Contender",
+      "description": "Solid GT3 / Prototype field contender, well rounded skills and strategic reactions.",
+      "base_aggression": 0.75,
+      "base_caution": 1.00,
+      "pressure_resist": 0.65,
+      "block_tendency": 0.75,
+      "decoy_tendency": 0.40,
+      "error_probability": 0.12,
+      "fuel_saving_factor": 0.65,
+      "tyre_preservation": 0.70,
+      "undercut_preference": 0.60,
+      "overcut_preference": 0.60
+    }
+  },
+  "driver_mappings": {
+    "verstappen": "aggressive_bull",
+    "leclerc": "tactical_master",
+    "raikkonen": "ice_man",
+    "norris": "tactical_master",
+    "hamilton": "ice_man",
+    "alonso": "tactical_master",
+    "perez": "balanced",
+    "stroll": "gentleman_driver",
+    "latifi": "gentleman_driver"
+  }
+}

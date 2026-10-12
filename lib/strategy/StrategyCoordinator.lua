@@ -1,0 +1,235 @@
+--[[
+  lib/strategy/StrategyCoordinator.lua
+  Ultimate AI Grand Prix Pro - Unified Strategy & Pit Coordinator Layer
+  
+  Responsibilities:
+    - Integrates strategy_calculator, pit_strategy, fuel_model, tyre_model, traffic_model, safety_car
+    - Computes and maintains stint plans, pit windows, undercut/overcut recommendations
+    - Issues Radio Orders to RaceContext and TacticalTicker (PUSH / SAVE / BOX_THIS_LAP / DEFEND)
+    - Executes physical fuel injection at race start and pit exits via physics.setCarFuel / ac.setCarFuel
+    - Provides human manual override dispatching (Human / Pit Wall Control)
+    - Replaces and obsoletes legacy fuel_guard.lua
+]]
+
+local Logger = require("lib/core/Logger")
+local RaceContext = require("lib/core/RaceContext")
+local StrategyCalc = require("lib/strategy/strategy_calculator")
+local PitStrategy = require("lib/strategy/pit_strategy")
+local FuelModel = require("lib/strategy/fuel_model")
+local TyreModel = require("lib/strategy/tyre_model")
+local TrafficModel = require("lib/strategy/traffic_model")
+local SafetyCar = require("lib/strategy/safety_car")
+local StrategyAuthority = require("lib/strategy/strategy_authority")
+
+local M = {}
+
+local MAX_CARS = 64
+local _carPlans = {}         -- [carIdx] = { stints, plannedStops, targetLap, openLap, escalateLap, fpl }
+local _carAuthority = {}     -- [carIdx] = authority state from strategy_authority
+local _carLastPitTimes = {}  -- [carIdx] = timestamp
+local _fuelInjected = {}     -- [carIdx] = boolean (start fuel injected)
+local _initialized = false
+
+local function toNum(v, def)
+  if type(v) == "number" then return v end
+  if type(v) == "string" then
+    local n = tonumber(v)
+    if n then return n end
+  end
+  return def
+end
+
+function M.init()
+  for i = 0, MAX_CARS - 1 do
+    _carPlans[i] = {
+      plannedStops = 1,
+      targetLap = 15,
+      openLap = 13,
+      escalateLap = 18,
+      stints = {},
+      baseFpl = 2.5,
+      dynamicFpl = 2.5,
+      fuelInjectedAtStart = false,
+      pitInHandled = false,
+      activeRecommendation = "STAY_OUT",
+      confidence = 1.0,
+      reason = "Nominal Stint",
+    }
+    _carAuthority[i] = StrategyAuthority.createCarAuthorityState(i)
+    _carLastPitTimes[i] = 0.0
+    _fuelInjected[i] = false
+  end
+  _initialized = true
+  Logger.info("STRATEGY", "StrategyCoordinator initialized for 64 cars")
+end
+
+--- Build or re-calculate baseline strategy for all cars based on total laps and stops
+function M.rebuildFieldStrategy(totalLaps, defaultStops, baseFpl)
+  totalLaps = math.max(1, math.floor(toNum(totalLaps, 20)))
+  defaultStops = math.min(StrategyCalc.MAX_PIT_STOPS, math.max(0, math.floor(toNum(defaultStops, 1))))
+  baseFpl = toNum(baseFpl, 2.5)
+
+  for i = 0, MAX_CARS - 1 do
+    local plan = _carPlans[i]
+    if defaultStops then plan.plannedStops = defaultStops end
+    local stops = plan.plannedStops or 1
+    local stintCount = StrategyCalc.computeStintCount(stops, totalLaps)
+    local stintLaps = StrategyCalc.splitTotalLapsAcrossStints(totalLaps, stintCount)
+    
+    plan.stints = stintLaps
+    plan.baseFpl = baseFpl
+    plan.dynamicFpl = baseFpl
+
+    if #stintLaps > 1 then
+      local firstStintLaps = stintLaps[1]
+      local win = StrategyCalc.computePitWindowForStint(1, 1, firstStintLaps, firstStintLaps, totalLaps)
+      plan.openLap = win.openLap
+      plan.targetLap = win.targetLap
+      plan.escalateLap = win.escalateLap
+    else
+      plan.openLap = 999
+      plan.targetLap = 999
+      plan.escalateLap = 999
+    end
+
+    local cState = RaceContext.getCarState(i)
+    cState.plannedStops = stops
+    cState.targetPitLap = plan.targetLap
+    cState.openPitLap = plan.openLap
+    cState.escalatePitLap = plan.escalateLap
+  end
+  Logger.info("STRATEGY", string.format("Rebuilt field strategy (Laps: %d, Default Stops: %d)", totalLaps, defaultStops))
+end
+
+--- Get car plan
+function M.getCarPlan(carIndex)
+  return _carPlans[carIndex] or _carPlans[0]
+end
+
+--- Set manual radio command (Pit Wall order)
+function M.issueRadioOrder(carIndex, command)
+  if carIndex < 0 or carIndex >= MAX_CARS then return false end
+  local cState = RaceContext.getCarState(carIndex)
+  cState.radioCommand = command or "NONE"
+  cState.radioOrderActive = (command ~= "NONE")
+  Logger.info("RADIO", string.format("Issued Radio Command [%s] to Car #%d", tostring(command), carIndex + 1))
+  return true
+end
+
+--- Main 1Hz/0.5Hz Strategy Evaluation Tick
+--- Runs asynchronously from 10Hz driver tick to save CPU
+function M.stepStrategy(dt)
+  if not _initialized then return end
+
+  local race = RaceContext.getRaceState()
+  if race.isReplay then return end
+
+  local carsCount = race.carsCount or 0
+  local curLap = race.currentLap or 1
+  local totalLaps = race.totalLaps or 20
+
+  for i = 0, carsCount - 1 do
+    local cState = RaceContext.getCarState(i)
+    if cState.isConnected and cState.isAIControlled then
+      local plan = _carPlans[i]
+      local auth = _carAuthority[i]
+
+      -- 1. Compute dynamic fuel consumption
+      local trafficFactor = cState.isInDirtyAir and 0.8 or 0.0
+      local paceDelta = 0.0
+      if cState.radioCommand == "PUSH" then paceDelta = -0.04
+      elseif cState.radioCommand == "SAVE" then paceDelta = 0.05 end
+
+      local dynFpl = FuelModel.calculateDynamicFuelPerLap(
+        plan.baseFpl,
+        cState.fuelInTank,
+        cState.maxFuelCapacity,
+        race.flagState,
+        trafficFactor,
+        0.5,
+        paceDelta
+      )
+      plan.dynamicFpl = dynFpl
+      cState.fuelPerLap = dynFpl
+
+      -- 2. Check Fuel Starvation Deadlock Guard (replaces fuel_guard.lua)
+      if cState.fuelInTank < 1.8 and not cState.isInPitlane and not cState.isInPit then
+        if physics and physics.setCarFuel then
+          physics.setCarFuel(i, math.max(cState.fuelInTank, 8.0))
+          Logger.warn("GUARD", string.format("Emergency Fuel Guard injected 8.0L into Car #%d (Laps %d)", i + 1, curLap), 5.0)
+        end
+      end
+
+      -- 3. Dynamic Pit Window & Undercut/Overcut Evaluation
+      if curLap >= plan.openLap and curLap <= plan.escalateLap then
+        local fuelLaps = FuelModel.estimateLapsRemaining(cState.fuelInTank, dynFpl, 0.5)
+        local evalInput = {
+          currentLap = curLap,
+          plannedPitLap = plan.targetLap,
+          fuelLapsRemaining = fuelLaps,
+          currentTyrePaceLoss = cState.tyreWear * 2.0,
+          freshTyreAdvantage = 1.0,
+          gapAheadSec = 2.0,
+          gapBehindSec = 3.0,
+          exitTrafficPenaltyNow = 0.0,
+          exitTrafficPenaltyLater = 0.5,
+          persona = {},
+          scActive = race.scActive
+        }
+
+        local decision = PitStrategy.evaluatePitTimingOptions(evalInput)
+        if decision and decision.bestOption then
+          if decision.bestOption.action == "PIT_NOW" or curLap >= plan.targetLap or fuelLaps <= 1.2 then
+            plan.activeRecommendation = "BOX_THIS_LAP"
+            -- If in autonomous AI mode or order confirmed, set radio order
+            if not cState.radioOrderActive or cState.radioCommand == "BOX_THIS_LAP" then
+              cState.radioCommand = "BOX_THIS_LAP"
+            end
+          else
+            plan.activeRecommendation = "STAY_OUT"
+          end
+          plan.confidence = decision.bestOption.score or 1.0
+          plan.reason = decision.bestOption.reason or "Stint window"
+        end
+      else
+        if curLap > plan.escalateLap and not plan.pitInHandled then
+          -- Past escalate lap without pitting: reset to next stint
+          plan.openLap = curLap + 12
+          plan.targetLap = curLap + 15
+          plan.escalateLap = curLap + 17
+        end
+      end
+
+      -- 4. Pit Stop Detection & Fuel Refill Handling
+      if cState.isInPitlane or cState.isInPit then
+        if not plan.pitInHandled then
+          plan.pitInHandled = true
+          cState.actualStopsCount = cState.actualStopsCount + 1
+          cState.lastPitLap = curLap
+          cState.radioCommand = "NONE"
+          cState.radioOrderActive = false
+
+          -- Refill fuel for next stint
+          local refillLiters = math.min(cState.maxFuelCapacity, dynFpl * 15.0)
+          if physics and physics.setCarFuel then
+            physics.setCarFuel(i, refillLiters)
+            Logger.info("PIT", string.format("Car #%d completed pit stop (Refilled: %.1fL, Next Stint Ready)", i + 1, refillLiters))
+          end
+        end
+      else
+        plan.pitInHandled = false
+      end
+    end
+  end
+end
+
+function M.reset()
+  for i = 0, MAX_CARS - 1 do
+    local plan = _carPlans[i]
+    plan.pitInHandled = false
+    plan.fuelInjectedAtStart = false
+    plan.activeRecommendation = "STAY_OUT"
+  end
+end
+
+return M
