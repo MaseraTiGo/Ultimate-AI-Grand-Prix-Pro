@@ -127,11 +127,15 @@ function script.update(dt)
 
     for i = 0, carCount - 1 do
       local c = ac.getCar(i)
-      if c and c.isAIControlled then
-        _activeAiCount = _activeAiCount + 1
+      if c then
         RaceContext.updateCarFromAc(i, c)
         local cState = RaceContext.getCarState(i)
         cState.driverName = getCarDriverName(i)
+      end
+      if c and c.isAIControlled then
+        _activeAiCount = _activeAiCount + 1
+        local cState = RaceContext.getCarState(i)
+
 
         -- Cold tyre warmup progression on out-lap
         if cState.tyreWarmupProgress and cState.tyreWarmupProgress < 1.0 then
@@ -229,13 +233,16 @@ function script.update(dt)
   end
 end
 
-function script.windowMain(dt)
+local function ensureInitialized()
   if not _initialized then
-    if ui and ui.text then
-      ui.text("Initializing Ultimate AI Grand Prix Pro...")
+    if script.init then
+      pcall(script.init)
     end
-    return
   end
+end
+
+function windowMain(dt)
+  ensureInitialized()
   local ok, err = pcall(DashboardUI.renderMain, _perfMs, _activeAiCount)
   if not ok then
     if ui and ui.textColored and ui.text then
@@ -245,19 +252,24 @@ function script.windowMain(dt)
   end
 end
 
-function script.windowSetup(dt)
-  if not _initialized then return end
+function windowSetup(dt)
+  ensureInitialized()
   local ok, err = pcall(DashboardUI.renderSetup)
   if not ok and ui and ui.text then
     ui.text("Setup UI Error: " .. tostring(err))
   end
 end
 
-function script.windowSettings(dt)
-  if not _initialized then return end
+function windowSettings(dt)
+  ensureInitialized()
   local ok, err = pcall(DashboardUI.renderGridSetupTab)
   if not ok and ui and ui.text then
     ui.text("Settings UI Error: " .. tostring(err))
   end
 end
+
+script.windowMain = windowMain
+script.windowSetup = windowSetup
+script.windowSettings = windowSettings
+
 

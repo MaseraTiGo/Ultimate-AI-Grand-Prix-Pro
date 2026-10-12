@@ -1,0 +1,22 @@
+{
+  "general": {
+    "enable_smart_driver": true,
+    "enable_race_strategy": true,
+    "enable_safety_watchdog": true,
+    "enable_telemetry_bridge": true,
+    "enable_human_override": true
+  },
+  "strategy": {
+    "default_reserve_laps": 0.8,
+    "sc_fuel_discount": 0.45,
+    "traffic_density_penalty": 1.8,
+    "pit_lane_loss_sec": 22.0
+  },
+  "driver": {
+    "commitment_hold_sec": 0.7,
+    "car_width_corridor_margin": 0.40,
+    "breaking_tow_dist": 30.0,
+    "lift_and_coast_wear_threshold": 0.65,
+    "deep_sleep_enabled": true
+  }
+}
