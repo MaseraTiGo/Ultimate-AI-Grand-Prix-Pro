@@ -231,18 +231,33 @@ end
 
 function script.windowMain(dt)
   if not _initialized then
-    ui.text("Initializing Ultimate AI Grand Prix Pro...")
+    if ui and ui.text then
+      ui.text("Initializing Ultimate AI Grand Prix Pro...")
+    end
     return
   end
-  DashboardUI.renderMain(_perfMs, _activeAiCount)
+  local ok, err = pcall(DashboardUI.renderMain, _perfMs, _activeAiCount)
+  if not ok then
+    if ui and ui.textColored and ui.text then
+      ui.textColored(_G.rgbm and _G.rgbm(1, 0.2, 0.2, 1) or {r=1,g=0.2,b=0.2,a=1}, "Grand Prix Pro UI Render Error:")
+      ui.text(tostring(err))
+    end
+  end
 end
 
 function script.windowSetup(dt)
   if not _initialized then return end
-  DashboardUI.renderSetup()
+  local ok, err = pcall(DashboardUI.renderSetup)
+  if not ok and ui and ui.text then
+    ui.text("Setup UI Error: " .. tostring(err))
+  end
 end
 
 function script.windowSettings(dt)
   if not _initialized then return end
-  DashboardUI.renderGridSetupTab()
+  local ok, err = pcall(DashboardUI.renderGridSetupTab)
+  if not ok and ui and ui.text then
+    ui.text("Settings UI Error: " .. tostring(err))
+  end
 end
+
