@@ -177,9 +177,10 @@ function M.checkStuckCars(car, dt, sessionTime)
    
    local w = _stuckWatch[idx]
 
-  -- 1. START GUARD: Strictly ignore cars on starting grid or during race launch phase (first 15s)
-  -- Also ignore if car is on Lap 0 before completing initial acceleration
-  if (sessionTime and sessionTime < 15.0) or ((car.lapCount or 0) == 0 and (car.speedKmh or 0) < 15.0 and (sessionTime or 0) < 25.0) then
+  -- 1. START GUARD: Strictly ignore cars on starting grid or during race launch phase.
+  -- While car is on Lap 0, NEVER trigger stuck unfreeze or tamper with car.
+  -- Cars sitting on the starting grid waiting for lights or accelerating down the front straight must not be flagged as stuck!
+  if (car.lapCount or 0) == 0 or (sessionTime and sessionTime < 25.0) then
     w.timer = 0
     w.attemptedJTurn = false
     return

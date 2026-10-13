@@ -174,11 +174,11 @@ function M.applyActuator(car, aiState, dt)
   aiState.currentAggression = curA
 
   -- 4. Push to CSP Physics Actuators
-  if curSpeed < 45.0 then
+  if curSpeed < 45.0 or (car.lapCount or 0) == 0 then
     aiState.currentSplineOffset = 0.0
-    if physics.setAISplineOffset then
-      physics.setAISplineOffset(idx, 0.0, false)
-    end
+    -- DO NOT call physics.setAISplineOffset on the starting grid / Lap 0!
+    -- Calling setAISplineOffset(idx, 0.0) forces cars out of their left/right grid slots
+    -- and directly into each other on the centerline. Let native AC AI handle grid launch undisturbed!
     if physics.setAICaution then
       physics.setAICaution(idx, 1.0)
     end
@@ -190,8 +190,12 @@ function M.applyActuator(car, aiState, dt)
     end
   else
     if physics.setAISplineOffset then
+      -- Only apply spline offset if there is an intentional lateral tactical displacement.
+      -- If offset is effectively 0.0, leave it to native AC AI's own racing line.
       -- ALWAYS false for overrideAwareness so native AC AI obstacle/collision avoidance is never blinded!
-      physics.setAISplineOffset(idx, aiState.currentSplineOffset, false)
+      if math.abs(aiState.currentSplineOffset) > 0.02 then
+        physics.setAISplineOffset(idx, aiState.currentSplineOffset, false)
+      end
     end
 
     if physics.setAICaution then
