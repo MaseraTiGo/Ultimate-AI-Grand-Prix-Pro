@@ -404,8 +404,9 @@ function M.stepStrategy(dt)
 
           -- Refill fuel for next stint (respecting work order if configured, otherwise calculate stint requirement)
           local hasCustomRefuel = cState.pendingWorkOrder and (cState.pendingWorkOrder.refuelLiters ~= nil)
+          local isStationaryInBay = (cState.isInPit == true or cState.pitState == "IN_BAY" or cState.pitState == "SERVICING") and ((cState.speedKmh or 0) < 1.0)
           local refillLiters = hasCustomRefuel and math.min(cState.maxFuelCapacity, cState.fuelInTank + cState.pendingWorkOrder.refuelLiters) or math.min(cState.maxFuelCapacity, dynFpl * 15.0)
-          if not hasCustomRefuel and physics and physics.setCarFuel then
+          if not hasCustomRefuel and isStationaryInBay and physics and physics.setCarFuel then
             ControlTelemetry.dispatchCarFuel(i, refillLiters, nil, cState.driverName)
             Logger.info("PIT", string.format("%s completed pit stop (Refilled: %.1fL, Next Stint Ready, Cold Out-Lap Active)", dLabel, refillLiters))
           end

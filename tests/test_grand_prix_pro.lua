@@ -1297,9 +1297,10 @@ assertEq(ControlTelemetry.isEnabled(), false, "Checkbox click toggles stream bac
 ui = nil
 
 -- ==============================================================================
--- [Test 34] Comprehensive Compound Palette Discovery & Pit Zone Execution
 -- ==============================================================================
-print("[Test 34] Testing Comprehensive Compound Palette Discovery & Pit Zone Execution...")
+-- [Test 34] Comprehensive Compound Palette Discovery & Pit Lifecycle Execution
+-- ==============================================================================
+print("[Test 34] Testing Comprehensive Compound Palette Discovery & Pit Lifecycle Execution...")
 -- 1. Test rich motorsport compound options returned when car has no custom tyres
 local compounds = RaceContext.getCarCompounds(3)
 assertTrue(#compounds >= 5, "RaceContext returns comprehensive motorsport compound options (Soft/Med/Hard/SS/US/Inter/Wet)")
@@ -1311,10 +1312,13 @@ for _, c in ipairs(compounds) do
 end
 assertTrue(foundSoft and foundHard and foundWet, "Compound palette contains Soft, Hard, and Wet/Inter tyre choices")
 
--- 2. Test Work Order execution triggered reliably in pitlane zone (isInPitlane = true, isInPit = false)
+-- 2. Test Work Order anti-premature gating: entering pitlane (driving at speed) must NOT execute service
 local c3State = RaceContext.getCarState(3)
 c3State.fuelInTank = 15.0
 c3State.maxFuelCapacity = 100.0
+c3State.pitState = "NONE"
+c3State.isInPit = false
+c3State.isInPitlane = false
 RaceContext.setCarWorkOrder(3, {
   changeTyres = true,
   targetCompoundIndex = 2,
@@ -1324,20 +1328,69 @@ RaceContext.setCarWorkOrder(3, {
 })
 assertTrue(c3State.pendingWorkOrder.isConfirmed, "Car 3 pendingWorkOrder is confirmed before pit entry")
 
-local mockCarEnteringPitLane = {
+local mockCarDrivingInPitLane = {
   isConnected = true,
   isAIControlled = true,
   isInPit = false,
   isInPitlane = true,
+  speedKmh = 75.0,
   fuel = 15.0,
   maxFuel = 100.0,
 }
-RaceContext.updateCarFromAc(3, mockCarEnteringPitLane)
-assertEq(c3State.fuelInTank, 40.0, "Car 3 refueled +25L upon entering pitlane zone")
+RaceContext.updateCarFromAc(3, mockCarDrivingInPitLane)
+assertEq(c3State.fuelInTank, 15.0, "Car 3 fuel strictly UNCHANGED while driving in pitlane limiter zone (anti-premature)")
+assertTrue(c3State.pendingWorkOrder.isConfirmed, "Work order remains pending while vehicle is driving down pit lane")
+assertEq(c3State.pitState, "IN_PITLANE", "Car 3 transitioned to IN_PITLANE")
+
+-- 3. Test Service Execution: strictly triggers once vehicle comes to complete halt in pit stall
+local mockCarHaltedInBay = {
+  isConnected = true,
+  isAIControlled = true,
+  isInPit = true,
+  isInPitlane = true,
+  speedKmh = 0.0,
+  fuel = 15.0,
+  maxFuel = 100.0,
+}
+RaceContext.updateCarFromAc(3, mockCarHaltedInBay)
+assertEq(c3State.fuelInTank, 40.0, "Car 3 refueled +25L strictly upon halting in pit stall")
 assertEq(c3State.compoundIndex, 2, "Car 3 fitted with Hard compound (#2)")
 assertEq(c3State.compoundName, "Hard Slick", "Car 3 compound name updated to Hard Slick")
-assertEq(c3State.pendingWorkOrder.isConfirmed, false, "Car 3 work order marked executed and cleared")
-print("  -> Passed: Comprehensive Compound Palette Discovery & Pit Zone Execution verified.")
+assertEq(c3State.pendingWorkOrder.isConfirmed, false, "Work order cleared after execution in pit stall")
+assertEq(c3State.pendingWorkOrder.serviced, true, "Work order marked serviced")
+
+-- 4. Test Idempotency: subsequent frames while halted in bay do not re-dispatch or thrash
+mockCarHaltedInBay.fuel = 40.0
+RaceContext.updateCarFromAc(3, mockCarHaltedInBay)
+assertEq(c3State.fuelInTank, 40.0, "Car 3 fuel remains 40.0 on subsequent frame (idempotent, zero thrashing)")
+
+-- 5. Test Release: vehicle pulls away from pit box
+local mockCarDepartingBay = {
+  isConnected = true,
+  isAIControlled = true,
+  isInPit = true,
+  isInPitlane = true,
+  speedKmh = 12.0,
+  fuel = 40.0,
+  maxFuel = 100.0,
+}
+RaceContext.updateCarFromAc(3, mockCarDepartingBay)
+assertEq(c3State.pitState, "RELEASED", "Car 3 transitioned to RELEASED upon accelerating out of pit box")
+
+-- 6. Test Track Re-entry: vehicle exits pitlane back onto circuit
+local mockCarBackOnTrack = {
+  isConnected = true,
+  isAIControlled = true,
+  isInPit = false,
+  isInPitlane = false,
+  speedKmh = 180.0,
+  fuel = 40.0,
+  maxFuel = 100.0,
+}
+RaceContext.updateCarFromAc(3, mockCarBackOnTrack)
+assertEq(c3State.pitState, "COMPLETED", "Car 3 transitioned to COMPLETED upon re-entering track")
+assertEq(c3State.pendingWorkOrder.serviced, false, "Work order serviced flag cleanly reset for next stop")
+print("  -> Passed: Comprehensive Compound Palette Discovery & Pit Lifecycle Execution verified.")
 
 print("==================================================================")
 print("  ALL 34 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")

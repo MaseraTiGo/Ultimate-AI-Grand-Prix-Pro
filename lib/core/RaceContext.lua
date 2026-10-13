@@ -25,6 +25,8 @@ M.PIT_STATE_NONE       = "NONE"
 M.PIT_STATE_REQUESTED  = "REQUESTED"
 M.PIT_STATE_IN_PITLANE = "IN_PITLANE"
 M.PIT_STATE_IN_BAY     = "IN_BAY"
+M.PIT_STATE_SERVICING  = "SERVICING"
+M.PIT_STATE_RELEASED   = "RELEASED"
 M.PIT_STATE_COMPLETED  = "COMPLETED"
 
 local _raceState = {
@@ -339,6 +341,15 @@ function M.updateCarFromAc(carIndex, c)
   local newPos = safeCarGet(c, "racePosition") or (carIndex + 1)
   s.positionInRace = newPos
 
+  local fuelVal = safeCarGet(c, "fuel")
+  if fuelVal and type(fuelVal) == "number" then
+    s.fuelInTank = fuelVal
+  end
+  local maxFuel = safeCarGet(c, "maxFuel")
+  if maxFuel and type(maxFuel) == "number" and maxFuel > 0 then
+    s.maxFuelCapacity = maxFuel
+  end
+
   local EventHub = package.loaded["lib/core/EventHub"]
   local StrategyCoordinator = package.loaded["lib/strategy/StrategyCoordinator"]
 
@@ -396,7 +407,7 @@ function M.updateCarFromAc(carIndex, c)
     end
   end
 
-  -- Continuous invariant: while inside pitlane / pit box, stay cleared
+  -- Continuous invariant: while inside pitlane / pit box
   if isNowInPit then
     s.pit_requested = false
     s.pit_stop_planned = false
@@ -404,16 +415,71 @@ function M.updateCarFromAc(carIndex, c)
       s.radioCommand = "NONE"
       s.radioOrderActive = false
     end
-    if s.isInPit then
-      s.pitState = M.PIT_STATE_IN_BAY
-    else
-      s.pitState = M.PIT_STATE_IN_PITLANE
-    end
     if s.tacticalState ~= "PIT_BAY" then
       s.tacticalState = "PIT_BAY"
     end
     if physics and physics.setAIThrottleLimit then
       physics.setAIThrottleLimit(carIndex, 1.0)
+    end
+
+    -- Sub-state machine for pit lane vs pit stall
+    local isHaltedInBay = (s.isInPit or s.pitState == M.PIT_STATE_IN_BAY or s.isInPitlane) and (s.speedKmh < 1.0)
+    if isHaltedInBay then
+      -- Stationary in pit stall: check and execute work order (strictly one-shot idempotent)
+      local wo = s.pendingWorkOrder
+      if wo and (wo.isConfirmed or wo.status == "CONFIRMED") and not wo.serviced then
+        s.pitState = M.PIT_STATE_SERVICING
+        wo.serviced = true
+        wo.status = "SERVICED"
+        wo.isConfirmed = false
+        wo.isExecuting = false
+        if s.workOrder then s.workOrder.isConfirmed = false end
+
+        -- 1. One-shot fuel delivery
+        if wo.refuelLiters and wo.refuelLiters > 0 then
+          local currentFuel = s.fuelInTank or safeCarGet(c, "fuel") or 0.0
+          local targetFuel = math.min(s.maxFuelCapacity, currentFuel + wo.refuelLiters)
+          ControlTelemetry.dispatchCarFuel(carIndex, targetFuel, c, s.driverName)
+          s.fuelInTank = targetFuel
+        end
+
+        -- 2. One-shot tyre compound fitting
+        if wo.changeTyres then
+          ControlTelemetry.dispatchAITyres(carIndex, wo.targetCompoundIndex or 0, wo.targetCompoundName, c, s.driverName)
+          s.compoundIndex = wo.targetCompoundIndex or 0
+          s.compoundName = wo.targetCompoundName or "Default"
+          s.tyreWear = 0.0
+          s.tyreWarmupProgress = 0.0
+          s.tyreCliffAlertSent = false
+          for wIdx = 1, 4 do s.wheelWear[wIdx] = 1.0 end
+        end
+
+        -- 3. Emit work order event
+        if EventHub then
+          local dLabel = EventHub.formatDriverLabel(carIndex, s.driverName)
+          local msg = string.format("[%s] %s 进站工单执行完毕: 配方 %s, 补油 %.1fL",
+            lapPrefix, dLabel, wo.targetCompoundName or "默认", wo.refuelLiters or 0.0)
+          EventHub.pushCommandEvent("PIT_WORK", msg, "SUCCESS")
+        end
+      else
+        if s.pitState ~= M.PIT_STATE_SERVICING then
+          s.pitState = M.PIT_STATE_IN_BAY
+        end
+      end
+    elseif (s.isInPit or s.pitState == M.PIT_STATE_IN_BAY or s.pitState == M.PIT_STATE_SERVICING) and s.speedKmh >= 1.0 then
+      -- Finished servicing and moving away from stall
+      s.pitState = M.PIT_STATE_RELEASED
+      if physics and physics.setAIStopCounter then
+        physics.setAIStopCounter(carIndex, 0)
+      end
+      if physics and physics.setAIThrottleLimit then
+        physics.setAIThrottleLimit(carIndex, 1.0)
+      end
+    else
+      -- In pitlane driving (not in pit box)
+      if s.pitState ~= M.PIT_STATE_RELEASED then
+        s.pitState = M.PIT_STATE_IN_PITLANE
+      end
     end
   end
 
@@ -430,6 +496,8 @@ function M.updateCarFromAc(carIndex, c)
     s.lastPitLap = curLap
     if s.pendingWorkOrder then
       s.pendingWorkOrder.isExecuting = false
+      s.pendingWorkOrder.serviced = false
+      s.pendingWorkOrder.status = "NONE"
     end
 
     -- Guarantee native AC AI is fully released to resume racing
@@ -456,15 +524,6 @@ function M.updateCarFromAc(carIndex, c)
       local pitOutMsg = string.format("[%s] %s 进站作业完成", lapPrefix, dLabel)
       EventHub.pushAiEvent(carIndex, "PIT", pitOutMsg, "STRATEGY", _raceState.sessionTime)
     end
-  end
-
-  local fuelVal = safeCarGet(c, "fuel")
-  if fuelVal and type(fuelVal) == "number" then
-    s.fuelInTank = fuelVal
-  end
-  local maxFuel = safeCarGet(c, "maxFuel")
-  if maxFuel and type(maxFuel) == "number" and maxFuel > 0 then
-    s.maxFuelCapacity = maxFuel
   end
 
   -- Empirical Fuel Tracking (EMA per completed lap)
@@ -595,40 +654,6 @@ function M.updateCarFromAc(carIndex, c)
       end
     end
   end
-
-  -- Execute pending work order if confirmed upon entering pit lane or pit bay
-  local isCarInPitZone = s.isInPit or s.isInPitlane or (s.pitState == M.PIT_STATE_IN_BAY) or (s.pitState == M.PIT_STATE_IN_PITLANE)
-  if isCarInPitZone and s.pendingWorkOrder and (s.pendingWorkOrder.isConfirmed or s.pendingWorkOrder.isExecuting) then
-    local wo = s.pendingWorkOrder
-    wo.isExecuting = true
-
-    -- Apply fuel and tyre changes
-    if wo.refuelLiters and wo.refuelLiters > 0 then
-      local targetFuel = math.min(s.maxFuelCapacity, (wo.baseFuel or s.fuelInTank) + wo.refuelLiters)
-      ControlTelemetry.dispatchCarFuel(carIndex, targetFuel, c, s.driverName)
-      s.fuelInTank = targetFuel
-    end
-
-    if wo.changeTyres then
-      ControlTelemetry.dispatchAITyres(carIndex, wo.targetCompoundIndex or 0, wo.targetCompoundName, c, s.driverName)
-      s.tyreWear = 0.0
-      s.tyreCliffAlertSent = false
-      s.tyreWarmupProgress = 0.0
-      for wIdx = 1, 4 do s.wheelWear[wIdx] = 1.0 end
-      s.compoundIndex = wo.targetCompoundIndex or 0
-      s.compoundName = wo.targetCompoundName or "Default"
-    end
-
-    if wo.isConfirmed then
-      wo.isConfirmed = false
-      if EventHub then
-        local dLabel = EventHub.formatDriverLabel(carIndex, s.driverName)
-        local msg = string.format("[%s] %s 进站工单执行: 配方 %s, 补油 %.1fL",
-          lapPrefix, dLabel, wo.targetCompoundName or "默认", wo.refuelLiters or 0.0)
-        EventHub.pushCommandEvent("PIT_WORK", msg, "SUCCESS")
-      end
-    end
-  end
 end
 
 function M.reset()
@@ -647,7 +672,12 @@ function M.reset()
     s.radioOrderActive = false
     s.tyreWarmupProgress = 1.0
     s.tyreTempNorm = 1.0
-    if s.pendingWorkOrder then s.pendingWorkOrder.isConfirmed = false end
+    if s.pendingWorkOrder then
+      s.pendingWorkOrder.isConfirmed = false
+      s.pendingWorkOrder.serviced = false
+      s.pendingWorkOrder.status = "NONE"
+      s.pendingWorkOrder.isExecuting = false
+    end
     s.empiricalFpl = nil
     s.lastTrackedLap = 0
     s.tyreCliffAlertSent = false
@@ -757,12 +787,74 @@ end
 
 --- Dynamically query actual tire compound options for the vehicle
 function M.getCarCompounds(carIndex)
-  if _compoundsCache[carIndex] and #_compoundsCache[carIndex] > 0 then
+  if carIndex and _compoundsCache[carIndex] and #_compoundsCache[carIndex] > 0 then
     return _compoundsCache[carIndex]
   end
 
   local list = {}
-  if ac and ac.getTyresName then
+  local seenNames = {}
+
+  local function addCompound(idx, sName, lName)
+    sName = tostring(sName or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    lName = tostring(lName or sName):gsub("^%s+", ""):gsub("%s+$", "")
+    if sName == "" and lName == "" then return end
+    if sName == "" then sName = lName end
+    if lName == "" then lName = sName end
+    local dedupeKey = string.upper(lName)
+    if seenNames[dedupeKey] then return end
+    seenNames[dedupeKey] = true
+
+    list[#list + 1] = {
+      index = idx,
+      shortName = sName,
+      longName = lName,
+    }
+  end
+
+  -- Tier 1: CSP ac.INIConfig.carData(carIndex, 'tyres.ini')
+  if ac and ac.INIConfig and ac.INIConfig.carData and carIndex then
+    local okIni, ini = pcall(ac.INIConfig.carData, carIndex, 'tyres.ini')
+    if okIni and ini then
+      for idx = 0, 15 do
+        local secFront = idx == 0 and "FRONT" or ("FRONT_" .. idx)
+        local secThermal = idx == 0 and "THERMAL_FRONT" or ("THERMAL_FRONT_" .. idx)
+        local secComp = "COMPOUND_" .. idx
+
+        local name = ini:get(secFront, "NAME", "")
+        if name == "" then name = ini:get(secThermal, "NAME", "") end
+        if name == "" then name = ini:get(secComp, "NAME", "") end
+
+        local shortName = ini:get(secFront, "SHORT_NAME", "")
+        if shortName == "" then shortName = ini:get(secThermal, "SHORT_NAME", "") end
+        if shortName == "" then shortName = ini:get(secComp, "SHORT_NAME", "") end
+
+        if name ~= "" or shortName ~= "" then
+          addCompound(idx, shortName ~= "" and shortName or name, name ~= "" and name or shortName)
+        end
+      end
+    end
+  end
+
+  -- Tier 2: CSP setup spinners
+  if #list == 0 and ac and ac.getSetupSpinners then
+    local okS, spinners = pcall(ac.getSetupSpinners)
+    if okS and spinners and type(spinners) == "table" then
+      for _, sp in ipairs(spinners) do
+        local spName = string.upper(tostring(sp.name or sp.label or ""))
+        if spName:find("TYRE") or spName:find("COMPOUND") then
+          if sp.items and type(sp.items) == "table" and #sp.items > 0 then
+            for sIdx, itemText in ipairs(sp.items) do
+              addCompound(sIdx - 1, itemText, itemText)
+            end
+            break
+          end
+        end
+      end
+    end
+  end
+
+  -- Tier 3: ac.getTyresName and ac.getTyresLongName
+  if #list == 0 and ac and ac.getTyresName and carIndex then
     local emptyStreak = 0
     for idx = 0, 15 do
       local okN, sName = pcall(ac.getTyresName, carIndex, idx)
@@ -775,11 +867,7 @@ function M.getCarCompounds(carIndex)
             lName = resL
           end
         end
-        list[#list + 1] = {
-          index = idx,
-          shortName = sName,
-          longName = lName,
-        }
+        addCompound(idx, sName, lName)
       else
         emptyStreak = emptyStreak + 1
         if emptyStreak >= 2 and idx >= 4 then
@@ -789,22 +877,68 @@ function M.getCarCompounds(carIndex)
     end
   end
 
-  if #list > 0 then
-    _compoundsCache[carIndex] = list
-    return list
+  -- Check if discovered list only collapsed to generic DRY/WET without specific slicks
+  local onlyGenericSlicks = false
+  if #list > 0 and #list <= 2 then
+    local allGeneric = true
+    for _, item in ipairs(list) do
+      local u = string.upper(item.shortName or item.longName)
+      if u ~= "DRY" and u ~= "WET" and u ~= "RAIN" and u ~= "SLICK" then
+        allGeneric = false
+        break
+      end
+    end
+    onlyGenericSlicks = allGeneric
   end
 
-  -- Comprehensive, rich motorsport compound presets (F1 & GT) when CSP does not expose custom compounds
-  local fallbackList = {
-    { index = 0, shortName = "SOFT",  longName = "Soft Slick (红胎 软胎)" },
-    { index = 1, shortName = "MED",   longName = "Medium Slick (黄胎 中性胎)" },
-    { index = 2, shortName = "HARD",  longName = "Hard Slick (白胎 硬胎)" },
-    { index = 3, shortName = "SS",    longName = "Super Soft (紫胎 超软胎)" },
-    { index = 4, shortName = "US",    longName = "Ultra Soft (粉胎 极软胎)" },
-    { index = 5, shortName = "INTER", longName = "Intermediate (绿胎 半雨胎)" },
-    { index = 6, shortName = "WET",   longName = "Full Wet (蓝胎 全雨胎)" },
-  }
-  return fallbackList
+  -- Tier 4: Cross-car discovery in session (if selected car only found generic DRY/WET)
+  if (onlyGenericSlicks or #list == 0) and ac and _raceState.carsCount and _raceState.carsCount > 1 then
+    for otherIdx = 0, math.min(_raceState.carsCount, MAX_CARS) - 1 do
+      if otherIdx ~= carIndex then
+        local otherList = nil
+        if ac.INIConfig and ac.INIConfig.carData then
+          local okOther, otherIni = pcall(ac.INIConfig.carData, otherIdx, 'tyres.ini')
+          if okOther and otherIni then
+            local candList = {}
+            for idx = 0, 15 do
+              local sec = idx == 0 and "FRONT" or ("FRONT_" .. idx)
+              local n = otherIni:get(sec, "NAME", "")
+              local sn = otherIni:get(sec, "SHORT_NAME", "")
+              if n ~= "" or sn ~= "" then
+                candList[#candList + 1] = { index = idx, shortName = sn ~= "" and sn or n, longName = n ~= "" and n or sn }
+              end
+            end
+            if #candList >= 3 then
+              otherList = candList
+            end
+          end
+        end
+        if otherList and #otherList >= 3 then
+          list = otherList
+          onlyGenericSlicks = false
+          break
+        end
+      end
+    end
+  end
+
+  -- Tier 5: Rich fallback motorsport compound catalog (F1 & GT3/WEC)
+  if #list == 0 or onlyGenericSlicks then
+    local fallbackList = {
+      { index = 0, shortName = "SOFT",  longName = "Soft Slick (红胎 软胎)" },
+      { index = 1, shortName = "MED",   longName = "Medium Slick (黄胎 中性胎)" },
+      { index = 2, shortName = "HARD",  longName = "Hard Slick (白胎 硬胎)" },
+      { index = 3, shortName = "SS",    longName = "Super Soft (紫胎 超软胎)" },
+      { index = 4, shortName = "US",    longName = "Ultra Soft (粉胎 极软胎)" },
+      { index = 5, shortName = "INTER", longName = "Intermediate (绿胎 半雨胎)" },
+      { index = 6, shortName = "WET",   longName = "Full Wet (蓝胎 全雨胎)" },
+    }
+    if carIndex then _compoundsCache[carIndex] = fallbackList end
+    return fallbackList
+  end
+
+  if carIndex then _compoundsCache[carIndex] = list end
+  return list
 end
 
 --- Configure pit stop work order for a specific car
@@ -838,6 +972,8 @@ function M.setCarWorkOrder(carIndex, workOrder)
     wo.isConfirmed = workOrder.isConfirmed
     s.workOrder.isConfirmed = workOrder.isConfirmed
   end
+  wo.serviced = false
+  wo.status = workOrder.isConfirmed and "CONFIRMED" or "PENDING"
   wo.isExecuting = false
 end
 

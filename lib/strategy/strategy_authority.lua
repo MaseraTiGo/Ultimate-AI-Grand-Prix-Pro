@@ -120,8 +120,20 @@ function M.validateHumanCommand(authState, cmd, raceContext)
 
   -- 3. Tyre selection validation
   if cmd.tyre then
-    local validTyres = { SOFT = true, MEDIUM = true, HARD = true, INTERMEDIATE = true, WET = true }
-    if not validTyres[cmd.tyre:upper()] then
+    local tUpper = tostring(cmd.tyre):upper():gsub("^%s+", ""):gsub("%s+$", "")
+    local validTyres = {
+      SOFT = true, MEDIUM = true, HARD = true, INTERMEDIATE = true, WET = true,
+      S = true, M = true, H = true, I = true, W = true, HR = true,
+      SS = true, US = true, SUPERSOFT = true, ULTRASOFT = true,
+      DRY = true, SLICK = true, C1 = true, C2 = true, C3 = true, C4 = true, C5 = true
+    }
+    local isValid = validTyres[tUpper] ~= nil
+    if not isValid then
+      if tUpper:find("SOFT") or tUpper:find("MED") or tUpper:find("HARD") or tUpper:find("WET") or tUpper:find("INTER") or tUpper:find("SLICK") or tUpper:find("DRY") then
+        isValid = true
+      end
+    end
+    if not isValid then
       return false, "REJECTED: Unknown tyre compound " .. tostring(cmd.tyre)
     end
   end

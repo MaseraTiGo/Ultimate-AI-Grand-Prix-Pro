@@ -50,21 +50,23 @@ local COLOR_PURPLE = makeColor(0.85, 0.20, 1.00, 1.0) -- #D500F9
 local COLOR_WET_BLUE = makeColor(0.16, 0.47, 1.00, 1.0) -- #2979FF
 
 local function getCompoundVisual(compName, compIndex)
-  local nameUpper = string.upper(tostring(compName or ""))
-  if string.find(nameUpper, "SOFT") and not string.find(nameUpper, "SUPER") and not string.find(nameUpper, "ULTRA") then
+  local nameUpper = string.upper(tostring(compName or "")):gsub("^%s+", ""):gsub("%s+$", "")
+  if (string.find(nameUpper, "SOFT") or nameUpper == "S") and not string.find(nameUpper, "SUPER") and not string.find(nameUpper, "ULTRA") then
     return COLOR_RED, "● [SOFT]"
-  elseif string.find(nameUpper, "MED") then
+  elseif string.find(nameUpper, "MED") or nameUpper == "M" then
     return COLOR_GOLD, "● [MED]"
-  elseif string.find(nameUpper, "HARD") then
+  elseif string.find(nameUpper, "HARD") or nameUpper == "H" or nameUpper == "HR" then
     return COLOR_WHITE, "● [HARD]"
   elseif string.find(nameUpper, "SUPER") or string.find(nameUpper, "SS") then
     return COLOR_PURPLE, "● [SUPER-SOFT]"
   elseif string.find(nameUpper, "ULTRA") or string.find(nameUpper, "HYPER") or string.find(nameUpper, "US") then
     return COLOR_PURPLE, "● [ULTRA-SOFT]"
-  elseif string.find(nameUpper, "INTER") then
+  elseif string.find(nameUpper, "INTER") or nameUpper == "I" then
     return COLOR_GREEN, "● [INTER]"
-  elseif string.find(nameUpper, "WET") or string.find(nameUpper, "RAIN") then
+  elseif string.find(nameUpper, "WET") or string.find(nameUpper, "RAIN") or nameUpper == "W" then
     return COLOR_WET_BLUE, "● [WET]"
+  elseif string.find(nameUpper, "SLICK") or string.find(nameUpper, "DRY") then
+    return COLOR_GOLD, "● [SLICK]"
   end
   -- Fallback by index
   local idx = compIndex or 0
@@ -694,17 +696,17 @@ function M.renderPitWallTab()
       local selCol, selBadge = getCompoundVisual(_woCompoundName, _woCompoundIndex)
       ui.text("     选定配方:")
       ui.sameLine()
-      drawInlineColored(selCol, string.format("【%s %s】", selBadge, _woCompoundName or "默认配方"))
+      drawInlineColored(selCol, string.format("【%s】", _woCompoundName or "默认配方"))
 
-      -- Horizontal compact badge selector bar
+      -- Horizontal compact badge selector bar with high-contrast indicator
       for cIdx, comp in ipairs(compounds) do
-        if cIdx > 1 then
+        if cIdx > 1 and (cIdx - 1) % 4 ~= 0 then
           ui.sameLine()
         end
         local isSel = (_woCompoundIndex == comp.index)
         local cCol, cBadge = getCompoundVisual(comp.longName or comp.shortName, comp.index)
         local shortCode = comp.shortName or ("C" .. comp.index)
-        local btnLabel = string.format("%s %s##wo_comp_%d", isSel and "✔" or " ", shortCode, comp.index)
+        local btnLabel = string.format("%s %s##wo_comp_%d", isSel and "[✔]" or "[ ]", shortCode, comp.index)
 
         local pushedCol = false
         if isSel and ui.pushStyleColor and ui.popStyleColor and ui.StyleColor and ui.StyleColor.Button then
