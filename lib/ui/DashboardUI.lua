@@ -692,18 +692,19 @@ function M.renderPitWallTab()
     if _woChangeTyres then
       local compounds = RaceContext.getCarCompounds(_selectedCarForRadio)
       local selCol, selBadge = getCompoundVisual(_woCompoundName, _woCompoundIndex)
-      ui.text("     目标轮胎配方: ")
+      ui.text("     选定配方:")
       ui.sameLine()
-      drawInlineColored(selCol, string.format("【已选: %s %s】", selBadge, _woCompoundName or "默认"))
+      drawInlineColored(selCol, string.format("【%s %s】", selBadge, _woCompoundName or "默认配方"))
 
+      -- Horizontal compact badge selector bar
       for cIdx, comp in ipairs(compounds) do
+        if cIdx > 1 then
+          ui.sameLine()
+        end
         local isSel = (_woCompoundIndex == comp.index)
         local cCol, cBadge = getCompoundVisual(comp.longName or comp.shortName, comp.index)
-        local btnLabel = string.format("%s %s %s##wo_comp_%d",
-          isSel and "▶ [✔ 选用]" or "  [更换]",
-          cBadge,
-          comp.longName or comp.shortName,
-          comp.index)
+        local shortCode = comp.shortName or ("C" .. comp.index)
+        local btnLabel = string.format("%s %s##wo_comp_%d", isSel and "✔" or " ", shortCode, comp.index)
 
         local pushedCol = false
         if isSel and ui.pushStyleColor and ui.popStyleColor and ui.StyleColor and ui.StyleColor.Button then
@@ -720,7 +721,7 @@ function M.renderPitWallTab()
           _woCompoundIndex = comp.index
           _woCompoundName = comp.longName or comp.shortName
         end
-        setTooltip(string.format("选定进站更换配方: %s (%s)", comp.longName or "", comp.shortName or ""))
+        setTooltip(string.format("点击选用: %s (%s)", comp.longName or "", shortCode))
       end
     end
 

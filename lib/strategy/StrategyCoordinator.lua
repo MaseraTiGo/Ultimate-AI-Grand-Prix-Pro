@@ -183,9 +183,9 @@ function M.issueRadioOrder(carIndex, command)
     -- Official CSP AI Pit Stop Request:
     -- physics.setAIPitStopRequest(carIndex, true) directs native AC AI to pit on current lap.
     -- Replaces and obsoletes artificial fuel starvation hacks.
-    local wo = cState.workOrder
+    local wo = cState.workOrder or cState.pendingWorkOrder
     local targetComp = (wo and wo.targetCompoundName) or "Hard"
-    local targetFuel = (wo and wo.addFuelLiters) or 42
+    local targetFuel = (wo and (wo.refuelLiters or wo.addFuelLiters)) or 42
     ControlTelemetry.dispatchPitStopRequest(carIndex, true, targetComp, targetFuel, nil, cState.driverName)
     EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 确认指令 -> 执行 [BOX_THIS_LAP] (CSP原生进站请求激活)", dLabel), "SUCCESS")
     EventHub.pushAiEvent(carIndex, "RADIO", string.format("【进站指令】%s 车队无线电下达: 本圈立即进站换胎！赛车已进入进站准备姿态！", dLabel), "STRATEGY")

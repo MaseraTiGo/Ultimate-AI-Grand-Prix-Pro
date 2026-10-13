@@ -428,6 +428,9 @@ function M.updateCarFromAc(carIndex, c)
     s.pitState = M.PIT_STATE_COMPLETED
     s.actualStopsCount = (s.actualStopsCount or 0) + 1
     s.lastPitLap = curLap
+    if s.pendingWorkOrder then
+      s.pendingWorkOrder.isExecuting = false
+    end
 
     -- Guarantee native AC AI is fully released to resume racing
     if physics and physics.setAIPitStopRequest then
@@ -595,13 +598,17 @@ function M.updateCarFromAc(carIndex, c)
 
   -- Execute pending work order if confirmed upon entering pit lane or pit bay
   local isCarInPitZone = s.isInPit or s.isInPitlane or (s.pitState == M.PIT_STATE_IN_BAY) or (s.pitState == M.PIT_STATE_IN_PITLANE)
-  if isCarInPitZone and s.pendingWorkOrder and s.pendingWorkOrder.isConfirmed then
+  if isCarInPitZone and s.pendingWorkOrder and (s.pendingWorkOrder.isConfirmed or s.pendingWorkOrder.isExecuting) then
     local wo = s.pendingWorkOrder
+    wo.isExecuting = true
+
+    -- Apply fuel and tyre changes
     if wo.refuelLiters and wo.refuelLiters > 0 then
-      local targetFuel = math.min(s.maxFuelCapacity, s.fuelInTank + wo.refuelLiters)
+      local targetFuel = math.min(s.maxFuelCapacity, (wo.baseFuel or s.fuelInTank) + wo.refuelLiters)
       ControlTelemetry.dispatchCarFuel(carIndex, targetFuel, c, s.driverName)
       s.fuelInTank = targetFuel
     end
+
     if wo.changeTyres then
       ControlTelemetry.dispatchAITyres(carIndex, wo.targetCompoundIndex or 0, wo.targetCompoundName, c, s.driverName)
       s.tyreWear = 0.0
@@ -611,12 +618,15 @@ function M.updateCarFromAc(carIndex, c)
       s.compoundIndex = wo.targetCompoundIndex or 0
       s.compoundName = wo.targetCompoundName or "Default"
     end
-    wo.isConfirmed = false
-    if EventHub then
-      local dLabel = EventHub.formatDriverLabel(carIndex, s.driverName)
-      local msg = string.format("[%s] %s 进站工单执行完毕: 配方 %s, 补油 %.1fL",
-        lapPrefix, dLabel, wo.targetCompoundName or "默认", wo.refuelLiters or 0.0)
-      EventHub.pushCommandEvent("PIT_WORK", msg, "SUCCESS")
+
+    if wo.isConfirmed then
+      wo.isConfirmed = false
+      if EventHub then
+        local dLabel = EventHub.formatDriverLabel(carIndex, s.driverName)
+        local msg = string.format("[%s] %s 进站工单执行: 配方 %s, 补油 %.1fL",
+          lapPrefix, dLabel, wo.targetCompoundName or "默认", wo.refuelLiters or 0.0)
+        EventHub.pushCommandEvent("PIT_WORK", msg, "SUCCESS")
+      end
     end
   end
 end
@@ -803,21 +813,32 @@ function M.setCarWorkOrder(carIndex, workOrder)
   local s = _carStates[carIndex]
   if not s or not workOrder then return end
   s.pendingWorkOrder = s.pendingWorkOrder or {}
+  s.workOrder = s.workOrder or {}
+
+  local wo = s.pendingWorkOrder
+  wo.baseFuel = s.fuelInTank or 30.0
   if workOrder.changeTyres ~= nil then
-    s.pendingWorkOrder.changeTyres = workOrder.changeTyres
+    wo.changeTyres = workOrder.changeTyres
+    s.workOrder.changeTyres = workOrder.changeTyres
   end
   if workOrder.targetCompoundIndex ~= nil then
-    s.pendingWorkOrder.targetCompoundIndex = workOrder.targetCompoundIndex
+    wo.targetCompoundIndex = workOrder.targetCompoundIndex
+    s.workOrder.targetCompoundIndex = workOrder.targetCompoundIndex
   end
   if workOrder.targetCompoundName ~= nil then
-    s.pendingWorkOrder.targetCompoundName = workOrder.targetCompoundName
+    wo.targetCompoundName = workOrder.targetCompoundName
+    s.workOrder.targetCompoundName = workOrder.targetCompoundName
   end
   if workOrder.refuelLiters ~= nil then
-    s.pendingWorkOrder.refuelLiters = math.max(0.0, workOrder.refuelLiters)
+    wo.refuelLiters = math.max(0.0, workOrder.refuelLiters)
+    s.workOrder.refuelLiters = math.max(0.0, workOrder.refuelLiters)
+    s.workOrder.addFuelLiters = math.max(0.0, workOrder.refuelLiters)
   end
   if workOrder.isConfirmed ~= nil then
-    s.pendingWorkOrder.isConfirmed = workOrder.isConfirmed
+    wo.isConfirmed = workOrder.isConfirmed
+    s.workOrder.isConfirmed = workOrder.isConfirmed
   end
+  wo.isExecuting = false
 end
 
 return M
