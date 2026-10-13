@@ -38,7 +38,9 @@
 ## 2. 验收状态与事实标记
 
 - **已验证事实**：
-  - **33 项核心集成与实机安全防护测试 100% 通过**（`tests/test_grand_prix_pro.lua`）。
+  - **35 项核心集成与实机安全防护测试 100% 通过**（`tests/test_grand_prix_pro.lua`）。
+  - **真实轮胎配方槽位解析与物理多级装配（Real Tyre Compound Resolution & Multi-Tier Fitting）**：彻底攻克了进站换胎提示成功但实车未生效的隐患。在 `ControlTelemetry.lua` 中引入 `resolveRealCompoundIndex`，结合 `ac.getTyresIndex`、名称代号解析与 `ac.getTyresName`/`ac.getTyresLongName` 双向模糊遍历，将界面选中的配方准确映射到底层物理真实存在的有效槽位（消除越界槽位导致的 C++ 静默丢弃）；同时通过 `physics.setAITyres`、`physics.setAIRainTyres`（雨胎/干胎意向同步）、`physics.setTyresCompound`（全轮 60 及 0~3 轮毂逐轮注入）与 `physics.setTyresVirtualKM`（虚拟磨损里程与胎损归零）进行四重物理层强制换装；并在 `RaceContext.lua` 中实现 `compoundIndex` 变更时自动调用 CSP API 回读刷新真实的 `compoundName`，杜绝 UI 虚假与显示滞后。
+  - **维修区工单防早产与工位停稳释放闭锁（Pit Stop Service Gate & Departure Release）**：进站作业严格隔离限速通道行驶阶段（`IN_PITLANE`）与工位停稳阶段（`IN_BAY`），严格仅在 `speedKmh < 1.0` 且在停站工位静止时单次幂等触发加注与换胎；离站加速时（`speedKmh >= 1.0`）平滑过渡至 `RELEASED`，彻底消除由于重置油量过低引发的燃油保护看门狗覆盖、减速锁死及原地橡皮筋死锁。
   - **诊断日志实时 AI 原生控制遥测流与开关（AI Control Telemetry Stream & Toggle）**：在诊断日志工具栏新增交互式开关 `[ ] 实时 AI 直接控制日志 (Live AI Control Stream)`，严格遵循 Dear ImGui 单帧点击事件模型（修复了返回值误作稳态变量导致次帧自复位的 Bug），并支持点击状态标签双向快速切换与 `ac.storage` 安全持久化；默认关闭维持零性能损耗与日志纯净度；开启后以 2–4Hz 动态抽样捕获底层物理动作，杜绝原生函数名转储，语义化转译为 `[HH:mm:ss.fff] [#CarNum DriverName] Action Category -> Operational Description`（如配速推圈、进站换胎加注、防守卡位走线、ERS/DRS 进攻超车模式等），并支持 CSP API 调用异常与前置校验拦截的 Red/Amber 显式告警追踪。
   - **车手配置折叠面板修复（Accordion Fold Fix）**：攻克了 Lua 三元运算 `isEditing and nil or i` 恒等于 `i` 导致折叠失效的语言级陷阱，重构为显式条件分支，实现卡片展开/收起 100% 顺畅双向切换。
   - **广播事件虚警严控与几何特征过滤**：收紧 `TacticalTicker` 与 `TowWeaveSkill` 触发阈值，严格校验直线物理特征（车速 > 100km/h、横向加速度 $|a_x| < 2.0\text{ m/s}^2$、航向点积 $> 0.985$）与横向尾流走廊（$|\Delta x| \le 1.2\text{m}$），彻底杜绝弯道中触发“大直道摇摆走线”与非贴身跟车阶段虚报“进入攻击窗口”。
