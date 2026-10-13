@@ -24,6 +24,7 @@ local watchdog = require("lib/driver/watchdog")
 local StrategyCoordinator = require("lib/strategy/StrategyCoordinator")
 local TelemetryBridge = require("lib/bridge/TelemetryBridge")
 local EventHub = require("lib/core/EventHub")
+local ControlTelemetry = require("lib/core/ControlTelemetry")
 local DashboardUI = require("lib/ui/DashboardUI")
 
 local _initialized = false
@@ -78,6 +79,7 @@ function script.init()
   StrategyCoordinator.init()
   TelemetryBridge.reset()
   EventHub.init()
+  ControlTelemetry.init()
 
   local sim = nil
   if ac and ac.getSim then

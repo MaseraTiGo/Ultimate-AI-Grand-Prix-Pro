@@ -21,6 +21,7 @@ local TrafficModel = require("lib/strategy/traffic_model")
 local SafetyCar = require("lib/strategy/safety_car")
 local StrategyAuthority = require("lib/strategy/strategy_authority")
 local EventHub = require("lib/core/EventHub")
+local ControlTelemetry = require("lib/core/ControlTelemetry")
 
 local M = {}
 
@@ -182,9 +183,10 @@ function M.issueRadioOrder(carIndex, command)
     -- Official CSP AI Pit Stop Request:
     -- physics.setAIPitStopRequest(carIndex, true) directs native AC AI to pit on current lap.
     -- Replaces and obsoletes artificial fuel starvation hacks.
-    if physics and physics.setAIPitStopRequest then
-      physics.setAIPitStopRequest(carIndex, true)
-    end
+    local wo = cState.workOrder
+    local targetComp = (wo and wo.targetCompoundName) or "Hard"
+    local targetFuel = (wo and wo.addFuelLiters) or 42
+    ControlTelemetry.dispatchPitStopRequest(carIndex, true, targetComp, targetFuel, nil, cState.driverName)
     EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 确认指令 -> 执行 [BOX_THIS_LAP] (CSP原生进站请求激活)", dLabel), "SUCCESS")
     EventHub.pushAiEvent(carIndex, "RADIO", string.format("【进站指令】%s 车队无线电下达: 本圈立即进站换胎！赛车已进入进站准备姿态！", dLabel), "STRATEGY")
   elseif cmd == "PUSH" then
@@ -194,9 +196,7 @@ function M.issueRadioOrder(carIndex, command)
     cState.pit_requested = false
     cState.pit_stop_planned = false
     if cState.pitState == "REQUESTED" then cState.pitState = "NONE" end
-    if physics and physics.setAIPitStopRequest then
-      physics.setAIPitStopRequest(carIndex, false)
-    end
+    ControlTelemetry.dispatchPitStopRequest(carIndex, false, nil, nil, nil, cState.driverName)
     EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 确认指令 -> 执行 [PUSH 全力推进]", dLabel), "SUCCESS")
   elseif cmd == "ATTACK" then
     cState.radioCommand = "ATTACK"
@@ -205,9 +205,8 @@ function M.issueRadioOrder(carIndex, command)
     cState.pit_requested = false
     cState.pit_stop_planned = false
     if cState.pitState == "REQUESTED" then cState.pitState = "NONE" end
-    if physics and physics.setAIPitStopRequest then
-      physics.setAIPitStopRequest(carIndex, false)
-    end
+    ControlTelemetry.dispatchPitStopRequest(carIndex, false, nil, nil, nil, cState.driverName)
+    ControlTelemetry.logEnergyDeployment(carIndex, "Deployed overtake boost mode", nil, cState.driverName)
     EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 确认指令 -> 执行 [ATTACK 激进超车]", dLabel), "SUCCESS")
   elseif cmd == "DEFEND" then
     cState.radioCommand = "DEFEND"
@@ -216,9 +215,7 @@ function M.issueRadioOrder(carIndex, command)
     cState.pit_requested = false
     cState.pit_stop_planned = false
     if cState.pitState == "REQUESTED" then cState.pitState = "NONE" end
-    if physics and physics.setAIPitStopRequest then
-      physics.setAIPitStopRequest(carIndex, false)
-    end
+    ControlTelemetry.dispatchPitStopRequest(carIndex, false, nil, nil, nil, cState.driverName)
     EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 确认指令 -> 执行 [DEFEND 极限卡位防守]", dLabel), "SUCCESS")
   elseif cmd == "SAVE" then
     cState.radioCommand = "SAVE"
@@ -228,9 +225,7 @@ function M.issueRadioOrder(carIndex, command)
     cState.pit_requested = false
     cState.pit_stop_planned = false
     if cState.pitState == "REQUESTED" then cState.pitState = "NONE" end
-    if physics and physics.setAIPitStopRequest then
-      physics.setAIPitStopRequest(carIndex, false)
-    end
+    ControlTelemetry.dispatchPitStopRequest(carIndex, false, nil, nil, nil, cState.driverName)
     EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 确认指令 -> 执行 [SAVE 保胎节油]", dLabel), "SUCCESS")
   elseif cmd == "NONE" then
     cState.radioCommand = "NONE"
@@ -244,9 +239,7 @@ function M.issueRadioOrder(carIndex, command)
     if plan then
       plan.activeRecommendation = "NONE"
     end
-    if physics and physics.setAIPitStopRequest then
-      physics.setAIPitStopRequest(carIndex, false)
-    end
+    ControlTelemetry.dispatchPitStopRequest(carIndex, false, nil, nil, nil, cState.driverName)
     EventHub.settleCarPitCommands(carIndex, dLabel)
     EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 指令已解除 -> 恢复自主战术", dLabel), "SUCCESS")
   end
@@ -353,9 +346,10 @@ function M.stepStrategy(dt)
                 cState.pit_requested = true
                 cState.tacticalState = "BOXING"
                 cState.pitState = "REQUESTED"
-                if physics and physics.setAIPitStopRequest then
-                  physics.setAIPitStopRequest(i, true)
-                end
+                local wo = cState.workOrder
+                local targetComp = (wo and wo.targetCompoundName) or "Optimal"
+                local targetFuel = (wo and wo.addFuelLiters) or 35
+                ControlTelemetry.dispatchPitStopRequest(i, true, targetComp, targetFuel, nil, cState.driverName)
               end
             end
           else
@@ -411,7 +405,7 @@ function M.stepStrategy(dt)
           -- Refill fuel for next stint
           local refillLiters = math.min(cState.maxFuelCapacity, dynFpl * 15.0)
           if physics and physics.setCarFuel then
-            physics.setCarFuel(i, refillLiters)
+            ControlTelemetry.dispatchCarFuel(i, refillLiters, nil, cState.driverName)
             Logger.info("PIT", string.format("%s completed pit stop (Refilled: %.1fL, Next Stint Ready, Cold Out-Lap Active)", dLabel, refillLiters))
           end
 

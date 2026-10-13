@@ -1128,6 +1128,124 @@ assertEq(pCarState.pit_requested, true, "AI executes pit request when targetLap 
 assertEq(pCarPlan.activeRecommendation, "BOX_THIS_LAP", "Recommendation becomes BOX_THIS_LAP on target lap")
 print("  -> Passed: Autonomous AI Pit Timing Protection verified.")
 
+-- ==============================================================================
+-- [Test 31] AI Control Telemetry Stream Toggle, Persistence & Zero-Overhead Bypassing
+-- ==============================================================================
+print("[Test 31] Testing AI Control Telemetry Stream Toggle & Bypassing...")
+local ControlTelemetry = require("lib/core/ControlTelemetry")
+ControlTelemetry.reset()
+assertEq(ControlTelemetry.isEnabled(), false, "Control telemetry stream is disabled by default")
+
+-- When disabled, zero log entries are generated (zero overhead bypassing)
+ControlTelemetry.logAction(1, "Pace Override", "Set race pace target to 98% (Pushing lap)", nil, "Charles Leclerc")
+assertEq(#ControlTelemetry.getRecentEntries(), 0, "Zero entries stored when stream is disabled (zero CPU/GC overhead)")
+
+-- Enable stream
+ControlTelemetry.setEnabled(true)
+assertEq(ControlTelemetry.isEnabled(), true, "Stream enabled successfully")
+
+-- Pushing action when enabled
+ControlTelemetry.logAction(1, "Pace Override", "Set race pace target to 98% (Pushing lap)", nil, "Charles Leclerc")
+local entries = ControlTelemetry.getRecentEntries()
+assertEq(#entries, 1, "Action recorded when stream is enabled")
+
+-- High-frequency rate-limiting check: second identical continuous action within 0.1s is debounced
+ControlTelemetry.logAction(1, "Pace Override", "Set race pace target to 98% (Pushing lap)", nil, "Charles Leclerc")
+assertEq(#ControlTelemetry.getRecentEntries(), 1, "Duplicate continuous action within throttle window is throttled")
+
+-- Discrete / forced event is admitted
+ControlTelemetry.logEnergyDeployment(1, "Deployed overtake boost mode", nil, "Charles Leclerc")
+assertEq(#ControlTelemetry.getRecentEntries(), 2, "Discrete energy deployment event admitted")
+
+-- Clear buffer
+ControlTelemetry.clear()
+assertEq(#ControlTelemetry.getRecentEntries(), 0, "Clear buffer empties entries")
+print("  -> Passed: AI Control Telemetry Stream Toggle & Bypassing verified.")
+
+-- ==============================================================================
+-- [Test 32] Human-Readable Action Translation, Driver Tagging & Semantic Formatting
+-- ==============================================================================
+print("[Test 32] Testing Human-Readable Action Translation & Semantic Formatting...")
+-- 1. Test driver tag formatting
+assertEq(ControlTelemetry.formatDriverTag(1, nil, "Charles Leclerc"), "[#16 Leclerc]", "Format [#16 Leclerc] verified")
+assertEq(ControlTelemetry.formatDriverTag(2, nil, "Carlos Sainz"), "[#55 Sainz]", "Format [#55 Sainz] verified")
+assertEq(ControlTelemetry.formatDriverTag(0, nil, "Max Verstappen"), "[#1 Verstappen]", "Format [#1 Verstappen] verified")
+assertEq(ControlTelemetry.formatDriverTag(3, nil, "Lewis Hamilton"), "[#44 Hamilton]", "Format [#44 Hamilton] verified")
+
+-- 2. Test semantic dispatches
+ControlTelemetry.clear()
+ControlTelemetry.setEnabled(true)
+
+-- Pace & Aggression
+ControlTelemetry.dispatchPace(1, 0.98, 0.70, 98, "(Pushing lap)", nil, "Charles Leclerc")
+-- Pit Directives
+ControlTelemetry.dispatchPitStopRequest(2, true, "Hard", 42, nil, "Carlos Sainz")
+-- Overtake / Defense
+ControlTelemetry.dispatchSplineOffset(0, -0.08, false, "Set defensive lateral offset (Holding inside line)", nil, "Max Verstappen")
+-- DRS / ERS Mode
+ControlTelemetry.logEnergyDeployment(3, "Deployed overtake boost mode", nil, "Lewis Hamilton")
+
+local streamEntries = ControlTelemetry.getRecentEntries()
+assertEq(#streamEntries, 4, "Four semantic dispatches captured")
+
+-- Validate formatting against specification
+-- Example 1: [#16 Leclerc] Pace Override -> Set race pace target to 98% (Pushing lap)
+assertTrue(streamEntries[1].formattedLine:find("%[#16 Leclerc%] Pace Override %-> Set race pace target to 98%% %(Pushing lap%)") ~= nil,
+  "Pace Override formatted correctly: " .. streamEntries[1].formattedLine)
+
+-- Example 2: [#55 Sainz] Pit Control -> Instructed to box this lap (Compound: Hard, Fuel: 42L)
+assertTrue(streamEntries[2].formattedLine:find("%[#55 Sainz%] Pit Control %-> Instructed to box this lap %(Compound: Hard, Fuel: 42L%)") ~= nil,
+  "Pit Control formatted correctly: " .. streamEntries[2].formattedLine)
+
+-- Example 3: [#1 Verstappen] Defensive Bias -> Set defensive lateral offset (Holding inside line)
+assertTrue(streamEntries[3].formattedLine:find("%[#1 Verstappen%] Defensive Bias %-> Set defensive lateral offset %(Holding inside line%)") ~= nil,
+  "Defensive Bias formatted correctly: " .. streamEntries[3].formattedLine)
+
+-- Example 4: [#44 Hamilton] Energy Deployment -> Deployed overtake boost mode
+assertTrue(streamEntries[4].formattedLine:find("%[#44 Hamilton%] Energy Deployment %-> Deployed overtake boost mode") ~= nil,
+  "Energy Deployment formatted correctly: " .. streamEntries[4].formattedLine)
+
+-- Timestamp pattern check: [HH:mm:ss.fff]
+assertTrue(streamEntries[1].formattedLine:find("^%[%d%d:%d%d:%d%d%.%d%d%d%]") ~= nil,
+  "Timestamp matches [HH:mm:ss.fff] format")
+print("  -> Passed: Human-Readable Action Translation & Semantic Formatting confirmed.")
+
+-- ==============================================================================
+-- [Test 33] Exception & Failure Visibility & Distinct Error Formatting
+-- ==============================================================================
+print("[Test 33] Testing Exception & Failure Visibility...")
+ControlTelemetry.clear()
+ControlTelemetry.setEnabled(true)
+
+-- 1. Direct Error Feedback
+ControlTelemetry.logError(1, "Pit Stop Request", "Vehicle already committed in pit lane", nil, "Charles Leclerc")
+local errEntries = ControlTelemetry.getRecentEntries()
+assertEq(#errEntries, 1, "Error entry recorded")
+assertTrue(errEntries[1].isError, "Entry marked as error")
+
+-- Validate Error Format: [HH:mm:ss.fff] [ERROR] [#CarNum DriverName] Action Failed: [Action Description] | Reason: [Diagnostic Message / API Error]
+assertTrue(errEntries[1].formattedLine:find("%[ERROR%] %[#16 Leclerc%] Action Failed: Pit Stop Request | Reason: Vehicle already committed in pit lane") ~= nil,
+  "Error formatted correctly: " .. errEntries[1].formattedLine)
+
+-- 2. Precondition check inside dispatchPitStopRequest
+local inPitCar = { index = 2, isInPitlane = true, driverName = "Carlos Sainz" }
+ControlTelemetry.dispatchPitStopRequest(2, true, "Soft", 30, inPitCar, "Carlos Sainz")
+errEntries = ControlTelemetry.getRecentEntries()
+assertTrue(#errEntries >= 2, "Precondition error recorded for vehicle in pitlane")
+local lastErr = errEntries[#errEntries - 1]
+assertTrue(lastErr.isError, "Precondition check triggered error entry")
+
+-- 3. Diagnostics UI render testing (both with stream enabled and disabled)
+local DashboardUI = require("lib/ui/DashboardUI")
+local okRenderEnabled, errRenderEnabled = pcall(DashboardUI.renderLogsTab)
+assertTrue(okRenderEnabled, "renderLogsTab renders cleanly with stream enabled: " .. tostring(errRenderEnabled))
+
+ControlTelemetry.setEnabled(false)
+local okRenderDisabled, errRenderDisabled = pcall(DashboardUI.renderLogsTab)
+assertTrue(okRenderDisabled, "renderLogsTab renders cleanly with stream disabled: " .. tostring(errRenderDisabled))
+
+print("  -> Passed: Exception & Failure Visibility verified.")
+
 print("==================================================================")
-print("  ALL 30 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
+print("  ALL 33 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
 print("==================================================================")

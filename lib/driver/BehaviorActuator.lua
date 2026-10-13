@@ -15,6 +15,8 @@
        - Slew-rate filtering for Caution, Aggression, and Extra Grip
 ]]
 
+local ControlTelemetry = require("lib/core/ControlTelemetry")
+
 local M = {}
 
 local MAX_CARS = 24
@@ -192,50 +194,66 @@ function M.applyActuator(car, aiState, dt)
     -- DO NOT call physics.setAISplineOffset on the starting grid / launch phase!
     -- Calling setAISplineOffset forces cars out of their left/right grid slots
     -- and directly into each other on the centerline. Let native AC AI handle grid launch undisturbed!
-    if physics.setAICaution then
-      physics.setAICaution(idx, 1.0)
-    end
-    if physics.setAIAggression then
-      physics.setAIAggression(idx, 0.7)
-    end
+    ControlTelemetry.dispatchPace(idx, 0.7, 1.0, 70, "(Starting grid crawl)", car)
   else
-    if physics.setAISplineOffset then
-      -- Safe lateral corridor: clamp tactical offset to [-0.15, 0.15] to guarantee no wall collisions
-      local safeOffset = aiState.currentSplineOffset
-      if safeOffset > 0.15 then safeOffset = 0.15 end
-      if safeOffset < -0.15 then safeOffset = -0.15 end
+    -- Safe lateral corridor: clamp tactical offset to [-0.15, 0.15] to guarantee no wall collisions
+    local safeOffset = aiState.currentSplineOffset
+    if safeOffset > 0.15 then safeOffset = 0.15 end
+    if safeOffset < -0.15 then safeOffset = -0.15 end
 
-      -- Only apply spline offset if there is an intentional lateral tactical displacement.
-      -- If offset is effectively 0.0, leave it to native AC AI's own learned racing line.
-      -- ALWAYS false for overrideAwareness so native AC AI obstacle/collision avoidance is never blinded!
-      if math.abs(safeOffset) > 0.02 then
-        physics.setAISplineOffset(idx, safeOffset, false)
+    -- Only apply spline offset if there is an intentional lateral tactical displacement.
+    -- If offset is effectively 0.0, leave it to native AC AI's own learned racing line.
+    -- ALWAYS false for overrideAwareness so native AC AI obstacle/collision avoidance is never blinded!
+    if math.abs(safeOffset) > 0.02 then
+      local latDesc = nil
+      if aiState.isBreakingTow or aiState.activeSkill == "TOW_WEAVE" then
+        latDesc = string.format("Set defensive lateral offset (Breaking tow weave, offset: %+.2f)", safeOffset)
+      elseif aiState.state == "DEFEND" then
+        latDesc = (safeOffset < 0) and "Set defensive lateral offset (Holding inside line)"
+                                    or "Set defensive lateral offset (Guarding outer lane)"
+      elseif aiState.state == "ATTACK" or aiState.activeSkill == "LATE_BRAKE_DIVE" or aiState.activeSkill == "SWITCHBACK" then
+        latDesc = string.format("Dynamic apex dive counter-attack (Offset: %+.2f)", safeOffset)
+      elseif aiState.state == "YIELD" then
+        latDesc = "Moved off racing line for blue flag safe passage"
+      elseif aiState.isFeinting or aiState.activeSkill == "FEINT_DUMMY" then
+        latDesc = "Executing feint move outside to open inside pass lane"
       end
+      ControlTelemetry.dispatchSplineOffset(idx, safeOffset, false, latDesc, car)
     end
 
-    if physics.setAICaution then
-      local cVal = aiState.currentCaution
-      if cVal < 0.75 then cVal = 0.75 end
-      if cVal > 1.30 then cVal = 1.30 end
-      physics.setAICaution(idx, cVal)
+    local cVal = aiState.currentCaution
+    if cVal < 0.75 then cVal = 0.75 end
+    if cVal > 1.30 then cVal = 1.30 end
+
+    local aVal = aiState.currentAggression
+    if aVal < 0.40 then aVal = 0.40 end
+    if aVal > 0.85 then aVal = 0.85 end
+
+    local pacePct = math.floor(aVal * 100)
+    local paceDesc = nil
+    if aiState.radioCommand == "PUSH" then
+      pacePct = 98
+      paceDesc = "(Pushing lap)"
+    elseif aiState.radioCommand == "SAVE" then
+      pacePct = 72
+      paceDesc = "(Fuel saving cruise)"
+    elseif aiState.state == "ATTACK" then
+      pacePct = 95
+      paceDesc = "(Hunting car ahead)"
+    elseif aiState.state == "DEFEND" then
+      pacePct = 90
+      paceDesc = "(Holding defensive track position)"
     end
 
-    if physics.setAIAggression then
-      local aVal = aiState.currentAggression
-      if aVal < 0.40 then aVal = 0.40 end
-      if aVal > 0.85 then aVal = 0.85 end
-      physics.setAIAggression(idx, aVal)
-    end
+    ControlTelemetry.dispatchPace(idx, aVal, cVal, pacePct, paceDesc, car)
   end
 
   -- 5. Lift and Coast throttle cut (save tyre & fuel into deceleration phase)
   -- Guarantee throttle limit is reset to 1.0 when not in lift-and-coast mode
-  if physics.setAIThrottleLimit then
-    if aiState.isLiftAndCoast then
-      physics.setAIThrottleLimit(idx, 0.0)
-    else
-      physics.setAIThrottleLimit(idx, 1.0)
-    end
+  if aiState.isLiftAndCoast then
+    ControlTelemetry.dispatchThrottleLimit(idx, 0.0, "Engaged Lift and Coast into braking zone (Saving fuel & tyres)", car)
+  else
+    ControlTelemetry.dispatchThrottleLimit(idx, 1.0, "Restored 100% full throttle delivery", car)
   end
 end
 

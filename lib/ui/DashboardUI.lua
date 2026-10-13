@@ -20,6 +20,7 @@ local watchdog = require("lib/driver/watchdog")
 local TelemetryBridge = require("lib/bridge/TelemetryBridge")
 local strategyCalc = require("lib/strategy/strategy_calculator")
 local EventHub = require("lib/core/EventHub")
+local ControlTelemetry = require("lib/core/ControlTelemetry")
 
 local M = {}
 
@@ -970,7 +971,94 @@ end
 -- 9. Tab 5: Core System Diagnostic Logs
 --------------------------------------------------------------------------------
 function M.renderLogsTab()
-  drawTextColored(COLOR_CYAN, "【核心运行诊断日志流】")
+  drawTextColored(COLOR_CYAN, "【核心运行诊断与 AI 控制日志】")
+
+  -- 1. Toolbar & Controls
+  local isStreamActive = ControlTelemetry.isEnabled()
+  if ui and ui.checkbox then
+    local newStreamState = ui.checkbox("实时 AI 直接控制日志 (Live AI Control Stream)##ctrl_telemetry_toggle", isStreamActive)
+    if newStreamState ~= isStreamActive then
+      ControlTelemetry.setEnabled(newStreamState)
+    end
+  elseif ui and ui.button then
+    local toggleBtnText = isStreamActive and "[✔ 开启] 实时 AI 控制遥测流##ctrl_toggle" or "[  关闭] 实时 AI 控制遥测流##ctrl_toggle"
+    if ui.button(toggleBtnText) then
+      ControlTelemetry.setEnabled(not isStreamActive)
+    end
+  end
+  setTooltip("开启或关闭下发至 CSP 原生 AI 车手的动作遥测流。开启后实时解析配速、进站、防守及异常，关闭时零性能损耗。")
+
+  if ui and ui.sameLine then ui.sameLine() end
+  if isStreamActive then
+    drawInlineColored(COLOR_GREEN, "[2-4Hz 动态抽样监听中]")
+  else
+    drawInlineColored(COLOR_MUTED, "[已停用 - 零开销模式]")
+  end
+
+  if ui and ui.sameLine then ui.sameLine() end
+  if ui and ui.button and ui.button("清空控制流##clear_ctrl_stream") then
+    ControlTelemetry.clear()
+  end
+  setTooltip("清空已捕获的 AI 控制动作与异常条目")
+
+  if ui and ui.sameLine then ui.sameLine() end
+  if ui and ui.button and ui.button("清空系统日志##clear_sys_logs") then
+    Logger.reset()
+  end
+  setTooltip("清空常规诊断与策略服务日志")
+
+  if ui and ui.separator then ui.separator() end
+
+  -- 2. Live AI Control Stream Section (Streamed when enabled)
+  if isStreamActive then
+    drawTextColored(COLOR_CYAN, "=== 实时 AI 原生控制遥测流 (Live AI Control Telemetry Stream) ===")
+    local ctrlEntries = ControlTelemetry.getRecentEntries(30)
+    if #ctrlEntries == 0 then
+      drawTextColored(COLOR_MUTED, "  [监听中] 暂无控制动作下发。当战术策略系统下发油门、变道、配速或进站指令时将在此实时显示。")
+    else
+      for i = #ctrlEntries, 1, -1 do
+        local e = ctrlEntries[i]
+        if e then
+          if e.isError then
+            -- Error format: distinct warning/error style (amber/red)
+            drawInlineColored(COLOR_RED, string.format("[%s] [ERROR] ", e.timeStr))
+            if ui and ui.sameLine then ui.sameLine() end
+            drawInlineColored(COLOR_GOLD, e.driverLabel .. " ")
+            if ui and ui.sameLine then ui.sameLine() end
+            drawInlineColored(COLOR_RED, string.format("Action Failed: %s | Reason: %s", e.category or "Control Action", e.reason or "Precondition failure"))
+          else
+            if ui and ui.text then
+              ui.text(string.format("[%s] ", e.timeStr))
+            end
+            if ui and ui.sameLine then ui.sameLine() end
+            drawInlineColored(COLOR_CYAN, e.driverLabel .. " ")
+            if ui and ui.sameLine then ui.sameLine() end
+            local catCol = COLOR_WHITE
+            if e.category:find("Pit") or e.category:find("Fuel") or e.category:find("Tyre") then
+              catCol = COLOR_GREEN
+            elseif e.category:find("Defensive") or e.category:find("Attack") then
+              catCol = COLOR_GOLD
+            elseif e.category:find("Pace") or e.category:find("Energy") then
+              catCol = COLOR_BLUE
+            elseif e.category:find("Throttle") then
+              catCol = COLOR_CYAN
+            elseif e.category:find("Rescue") then
+              catCol = COLOR_RED
+            end
+            drawInlineColored(catCol, e.category .. " -> ")
+            if ui and ui.sameLine then ui.sameLine() end
+            if ui and ui.text then
+              ui.text(e.description)
+            end
+          end
+        end
+      end
+    end
+    if ui and ui.separator then ui.separator() end
+  end
+
+  -- 3. Standard Core System Diagnostic Logs
+  drawTextColored(COLOR_CYAN, "=== 系统诊断与服务日志 (System Service Logs) ===")
   local logs = Logger.getRecentLogs()
   if #logs == 0 then
     drawTextColored(COLOR_MUTED, "暂无已产生的日志记录。")
@@ -980,11 +1068,15 @@ function M.renderLogsTab()
     local l = logs[i]
     if l then
       local tagCol = (l.tag == "RADIO") and COLOR_CYAN or ((l.tag == "STRATEGY") and COLOR_GREEN or COLOR_MUTED)
-      ui.text(string.format("[%s] ", l.timeStr))
-      ui.sameLine()
+      if ui and ui.text then
+        ui.text(string.format("[%s] ", l.timeStr))
+      end
+      if ui and ui.sameLine then ui.sameLine() end
       drawInlineColored(tagCol, string.format("[%s]", l.tag))
-      ui.sameLine()
-      ui.text(l.message)
+      if ui and ui.sameLine then ui.sameLine() end
+      if ui and ui.text then
+        ui.text(l.message)
+      end
     end
   end
 end

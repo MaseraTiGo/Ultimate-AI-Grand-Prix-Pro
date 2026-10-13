@@ -8,6 +8,8 @@
     - Zero dynamic memory allocation in 10Hz/60Hz query paths
 ]]
 
+local ControlTelemetry = require("lib/core/ControlTelemetry")
+
 local M = {}
 
 local MAX_CARS = 24
@@ -595,13 +597,13 @@ function M.updateCarFromAc(carIndex, c)
     if wo.refuelLiters and wo.refuelLiters > 0 then
       local targetFuel = math.min(s.maxFuelCapacity, s.fuelInTank + wo.refuelLiters)
       if physics and physics.setCarFuel then
-        physics.setCarFuel(carIndex, targetFuel)
+        ControlTelemetry.dispatchCarFuel(carIndex, targetFuel, c, s.driverName)
       end
       s.fuelInTank = targetFuel
     end
     if wo.changeTyres then
       if physics and physics.setAITyres then
-        physics.setAITyres(carIndex, wo.targetCompoundIndex or 0)
+        ControlTelemetry.dispatchAITyres(carIndex, wo.targetCompoundIndex or 0, wo.targetCompoundName, c, s.driverName)
       end
       s.tyreWear = 0.0
       s.tyreCliffAlertSent = false
