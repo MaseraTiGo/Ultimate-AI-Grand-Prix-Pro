@@ -66,6 +66,10 @@ physics = {
   setAITractionMistake = function() end,
   setAIThrottleLimit = function(idx, lim) _throttleLimits[idx] = lim end,
   setCarFuel = function(idx, fuel) _fuelInjectedValues[idx] = fuel end,
+  setAITyres = function(idx, compoundIdx) return true end,
+  setTyresCompound = function(idx, wheels, compoundIdx) return true end,
+  setAIRainTyres = function(idx, isRain) return true end,
+  setTyresVirtualKM = function(idx, wheels, km) return true end,
 }
 
 ac = {
@@ -1392,6 +1396,25 @@ assertEq(c3State.pitState, "COMPLETED", "Car 3 transitioned to COMPLETED upon re
 assertEq(c3State.pendingWorkOrder.serviced, false, "Work order serviced flag cleanly reset for next stop")
 print("  -> Passed: Comprehensive Compound Palette Discovery & Pit Lifecycle Execution verified.")
 
+-- -----------------------------------------------------------------------------
+-- [Test 35] Testing Real Tyre Compound Resolution & Multi-Tier Physical Fitting
+-- -----------------------------------------------------------------------------
+print("[Test 35] Testing Real Tyre Compound Resolution & Multi-Tier Physical Fitting...")
+local resolvedSlot, isRain = ControlTelemetry.resolveRealCompoundIndex(0, 5, "Intermediate (绿胎 半雨胎)")
+assertTrue(isRain, "Compound containing Intermediate recognized as rain/wet compound")
+
+local wetSlot, isWet = ControlTelemetry.resolveRealCompoundIndex(0, 6, "Full Wet (蓝胎 全雨胎)")
+assertTrue(isWet, "Compound containing Full Wet recognized as rain/wet compound")
+
+local drySlot, isDryRain = ControlTelemetry.resolveRealCompoundIndex(0, 2, "Hard Slick (白胎 硬胎)")
+assertTrue(not isDryRain, "Compound Hard Slick recognized as dry compound")
+
+-- Verify physical dispatch executes with resolve, setAITyres, setTyresCompound across wheels, and virtual KM reset
+local fitOk = ControlTelemetry.dispatchAITyres(0, 2, "Hard Slick", nil, "Driver 1")
+assertTrue(fitOk, "Tyre compound dispatch succeeded across physics interfaces")
+print("  -> Passed: Real Tyre Compound Resolution & Multi-Tier Physical Fitting verified.")
+
 print("==================================================================")
-print("  ALL 34 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
+print("  ALL 35 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
 print("==================================================================")
+

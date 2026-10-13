@@ -445,8 +445,12 @@ function M.updateCarFromAc(carIndex, c)
 
         -- 2. One-shot tyre compound fitting
         if wo.changeTyres then
-          ControlTelemetry.dispatchAITyres(carIndex, wo.targetCompoundIndex or 0, wo.targetCompoundName, c, s.driverName)
-          s.compoundIndex = wo.targetCompoundIndex or 0
+          local realIdx = wo.targetCompoundIndex or 0
+          if ControlTelemetry and ControlTelemetry.resolveRealCompoundIndex then
+            realIdx = ControlTelemetry.resolveRealCompoundIndex(carIndex, wo.targetCompoundIndex or 0, wo.targetCompoundName)
+          end
+          ControlTelemetry.dispatchAITyres(carIndex, realIdx, wo.targetCompoundName, c, s.driverName)
+          s.compoundIndex = realIdx
           s.compoundName = wo.targetCompoundName or "Default"
           s.tyreWear = 0.0
           s.tyreWarmupProgress = 0.0
@@ -639,7 +643,32 @@ function M.updateCarFromAc(carIndex, c)
   -- Per-wheel telemetry & compound index
   local compIdx = safeCarGet(c, "compoundIndex")
   if compIdx and type(compIdx) == "number" then
-    s.compoundIndex = compIdx
+    if s.compoundIndex ~= compIdx or not s.compoundName or s.compoundName == "Default" then
+      s.compoundIndex = compIdx
+      -- Query true compound name from CSP API
+      local resolvedName = nil
+      if ac and ac.getTyresLongName then
+        local okL, lName = pcall(ac.getTyresLongName, carIndex, compIdx, false)
+        if okL and lName and type(lName) == "string" and lName ~= "" then
+          resolvedName = lName
+        end
+      end
+      if not resolvedName and ac and ac.getTyresName then
+        local okS, sName = pcall(ac.getTyresName, carIndex, compIdx)
+        if okS and sName and type(sName) == "string" and sName ~= "" then
+          resolvedName = sName
+        end
+      end
+      if not resolvedName and c and type(c.tyresLongName) == "function" then
+        local okMeth, mName = pcall(c.tyresLongName, c)
+        if okMeth and mName and type(mName) == "string" and mName ~= "" then
+          resolvedName = mName
+        end
+      end
+      if resolvedName then
+        s.compoundName = resolvedName
+      end
+    end
   end
   if wheels then
     for wIdx = 0, 3 do

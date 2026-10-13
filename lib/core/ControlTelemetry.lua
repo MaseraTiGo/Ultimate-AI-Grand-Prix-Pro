@@ -475,15 +475,77 @@ function M.dispatchCarFuel(carIdx, fuelLiters, car, driverName)
   return true
 end
 
---- Log Tyre Compound Fitting
+--- Resolve real tyre compound index recognized by AC/CSP physics for a car
+---@param carIdx number
+---@param requestedIdx number|nil
+---@param compoundName string|nil
+---@return number resolvedIndex, boolean isRainCompound
+function M.resolveRealCompoundIndex(carIdx, requestedIdx, compoundName)
+  local cIdx = carIdx or 0
+  local reqIdx = requestedIdx or 0
+  local nameStr = tostring(compoundName or "")
+  local upperName = string.upper(nameStr)
+  local isRain = upperName:find("WET") ~= nil or upperName:find("RAIN") ~= nil or upperName:find("INTER") ~= nil
+
+  -- 1. Try ac.getTyresIndex by short/long name
+  if ac and ac.getTyresIndex and nameStr ~= "" then
+    -- Try direct name or short name match
+    local idxByName = ac.getTyresIndex(cIdx, nameStr)
+    if idxByName and idxByName >= 0 then
+      return idxByName, isRain
+    end
+    -- Try extracted clean tokens (e.g. "SOFT", "MED", "HARD", "WET", "INTER")
+    local token = nameStr:match("(%a+)")
+    if token then
+      local idxByToken = ac.getTyresIndex(cIdx, token)
+      if idxByToken and idxByToken >= 0 then
+        return idxByToken, isRain
+      end
+    end
+  end
+
+  -- 2. Try matching against available compounds reported by ac.getTyresName
+  if ac and ac.getTyresName then
+    for probeIdx = 0, 15 do
+      local probeShort = ac.getTyresName(cIdx, probeIdx)
+      if probeShort and type(probeShort) == "string" and probeShort ~= "" then
+        local probeLong = nil
+        if ac.getTyresLongName then
+          probeLong = ac.getTyresLongName(cIdx, probeIdx, false)
+        end
+        local uProbeShort = string.upper(probeShort)
+        local uProbeLong = probeLong and string.upper(probeLong) or ""
+        if (upperName ~= "" and (uProbeShort:find(upperName, 1, true) or upperName:find(uProbeShort, 1, true)
+            or (uProbeLong ~= "" and (uProbeLong:find(upperName, 1, true) or upperName:find(uProbeLong, 1, true))))) then
+          return probeIdx, isRain
+        end
+      end
+    end
+  end
+
+  -- 3. Check if requested index is valid according to ac.getTyresName
+  if ac and ac.getTyresName then
+    local testName = ac.getTyresName(cIdx, reqIdx)
+    if testName and type(testName) == "string" and testName ~= "" then
+      return reqIdx, isRain
+    end
+  end
+
+  -- 4. Fallback to requested index
+  return reqIdx, isRain
+end
+
+--- Log & Dispatch Tyre Compound Fitting
 function M.dispatchAITyres(carIdx, compoundIdx, compoundName, car, driverName)
   local cIdx = carIdx or 0
   local applied = false
   local errStr = nil
 
-  -- 1. Primary CSP AI tyre selector
+  local validIdx, isRain = M.resolveRealCompoundIndex(cIdx, compoundIdx, compoundName)
+
+  -- 1. Primary CSP AI tyre selector (sets currently selected tyres & resets damage)
   if physics and physics.setAITyres then
-    local ok, err = pcall(physics.setAITyres, cIdx, compoundIdx)
+    local ok, err = pcall(physics.setAITyres, cIdx, validIdx)
     if ok then
       applied = true
     else
@@ -491,14 +553,33 @@ function M.dispatchAITyres(carIdx, compoundIdx, compoundName, car, driverName)
     end
   end
 
-  -- 2. Secondary direct compound injector (wheel-level fallback)
+  -- 2. Rain tyres hint flag (informs AC AI pit engine of wet/dry tyre intention)
+  if physics and physics.setAIRainTyres then
+    pcall(physics.setAIRainTyres, cIdx, isRain)
+  end
+
+  -- 3. Secondary direct compound injector (wheel-level direct assignment)
   if physics and physics.setTyresCompound then
     local wheelAll = (ac and ac.Wheel and ac.Wheel.All) or 60
-    local ok2, err2 = pcall(physics.setTyresCompound, cIdx, wheelAll, compoundIdx)
-    if ok2 then
+    local okAll, errAll = pcall(physics.setTyresCompound, cIdx, wheelAll, validIdx)
+    if okAll then
       applied = true
     elseif not errStr then
-      errStr = tostring(err2)
+      errStr = tostring(errAll)
+    end
+
+    -- Explicit individual wheel iteration to guarantee application across all 4 hubs
+    for wIdx = 0, 3 do
+      pcall(physics.setTyresCompound, cIdx, wIdx, validIdx)
+    end
+  end
+
+  -- 4. Reset tyre virtual KM (driven distance wear counter in CSP)
+  if physics and physics.setTyresVirtualKM then
+    local wheelAll = (ac and ac.Wheel and ac.Wheel.All) or 60
+    pcall(physics.setTyresVirtualKM, cIdx, wheelAll, 0)
+    for wIdx = 0, 3 do
+      pcall(physics.setTyresVirtualKM, cIdx, wIdx, 0)
     end
   end
 
@@ -510,8 +591,8 @@ function M.dispatchAITyres(carIdx, compoundIdx, compoundName, car, driverName)
   end
 
   if _enabled then
-    local cName = compoundName or string.format("Compound #%d", compoundIdx)
-    M.logAction(cIdx, "Tyre Fitting", string.format("Fitted fresh set of %s tyres", cName), car, driverName, true)
+    local cName = compoundName or string.format("Compound #%d", validIdx)
+    M.logAction(cIdx, "Tyre Fitting", string.format("Fitted fresh set of %s tyres (Slot #%d)", cName, validIdx), car, driverName, true)
   end
   return true
 end
