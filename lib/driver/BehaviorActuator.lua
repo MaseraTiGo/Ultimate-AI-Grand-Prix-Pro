@@ -174,10 +174,10 @@ function M.applyActuator(car, aiState, dt)
   aiState.currentAggression = curA
 
   -- 4. Push to CSP Physics Actuators
-  if curSpeed < 45.0 or (car.lapCount or 0) == 0 then
+  if curSpeed < 60.0 or (car.lapCount or 0) == 0 then
     aiState.currentSplineOffset = 0.0
-    -- DO NOT call physics.setAISplineOffset on the starting grid / Lap 0!
-    -- Calling setAISplineOffset(idx, 0.0) forces cars out of their left/right grid slots
+    -- DO NOT call physics.setAISplineOffset on the starting grid / launch phase!
+    -- Calling setAISplineOffset forces cars out of their left/right grid slots
     -- and directly into each other on the centerline. Let native AC AI handle grid launch undisturbed!
     if physics.setAICaution then
       physics.setAICaution(idx, 1.0)
@@ -185,46 +185,44 @@ function M.applyActuator(car, aiState, dt)
     if physics.setAIAggression then
       physics.setAIAggression(idx, 0.7)
     end
-    if physics.setExtraAIGrip then
-      physics.setExtraAIGrip(idx, 0.0)
-    end
   else
     if physics.setAISplineOffset then
+      -- Safe lateral corridor: clamp tactical offset to [-0.20, 0.20] to guarantee no wall collisions
+      local safeOffset = aiState.currentSplineOffset
+      if safeOffset > 0.20 then safeOffset = 0.20 end
+      if safeOffset < -0.20 then safeOffset = -0.20 end
+
       -- Only apply spline offset if there is an intentional lateral tactical displacement.
-      -- If offset is effectively 0.0, leave it to native AC AI's own racing line.
+      -- If offset is effectively 0.0, leave it to native AC AI's own learned racing line.
       -- ALWAYS false for overrideAwareness so native AC AI obstacle/collision avoidance is never blinded!
-      if math.abs(aiState.currentSplineOffset) > 0.02 then
-        physics.setAISplineOffset(idx, aiState.currentSplineOffset, false)
+      if math.abs(safeOffset) > 0.02 then
+        physics.setAISplineOffset(idx, safeOffset, false)
       end
     end
 
     if physics.setAICaution then
-      physics.setAICaution(idx, aiState.currentCaution)
+      local cVal = aiState.currentCaution
+      if cVal < 0.70 then cVal = 0.70 end
+      if cVal > 1.50 then cVal = 1.50 end
+      physics.setAICaution(idx, cVal)
     end
 
     if physics.setAIAggression then
-      physics.setAIAggression(idx, aiState.currentAggression)
-    end
-
-    -- 5. Grip Adjustments: Keep neutral (0.0) to prevent tyre snap spin
-    if physics.setExtraAIGrip then
-      physics.setExtraAIGrip(idx, 0.0)
+      local aVal = aiState.currentAggression
+      if aVal < 0.40 then aVal = 0.40 end
+      if aVal > 0.85 then aVal = 0.85 end
+      physics.setAIAggression(idx, aVal)
     end
   end
 
-  -- 6. Headlight Flashing Body Language
-  local isHunting = (aiState.state == "ATTACK" and (aiState.aheadDist or 999.0) < 15.0)
-  local flash = M.stepHeadlightFlashing(idx, isHunting, aiState.persona, dt)
-  if flash and ac and ac.overrideCarControls then
-    local ctrl = ac.overrideCarControls(idx)
-    if ctrl then
-      ctrl.headlightsFlash = true
+  -- 5. Lift and Coast throttle cut (save tyre & fuel into deceleration phase)
+  -- Guarantee throttle limit is reset to 1.0 when not in lift-and-coast mode
+  if physics.setAIThrottleLimit then
+    if aiState.isLiftAndCoast then
+      physics.setAIThrottleLimit(idx, 0.0)
+    else
+      physics.setAIThrottleLimit(idx, 1.0)
     end
-  end
-
-  -- 7. Lift and Coast throttle cut (save tyre & fuel into deceleration phase)
-  if aiState.isLiftAndCoast and physics.setAIThrottleLimit then
-    physics.setAIThrottleLimit(idx, 0.0)
   end
 end
 
