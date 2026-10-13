@@ -73,6 +73,23 @@ function M.rebuildFieldStrategy(totalLaps, defaultStops, baseFpl)
 
   for i = 0, MAX_CARS - 1 do
     local plan = _carPlans[i]
+    if not plan then
+      _carPlans[i] = {
+        plannedStops = 1,
+        targetLap = 15,
+        openLap = 13,
+        escalateLap = 18,
+        stints = {},
+        baseFpl = baseFpl,
+        dynamicFpl = baseFpl,
+        fuelInjectedAtStart = false,
+        pitInHandled = false,
+        activeRecommendation = "STAY_OUT",
+        confidence = 1.0,
+        reason = "Nominal Stint",
+      }
+      plan = _carPlans[i]
+    end
     if defaultStops then plan.plannedStops = defaultStops end
     local stops = plan.plannedStops or 1
     local stintCount = StrategyCalc.computeStintCount(stops, totalLaps)
@@ -118,14 +135,24 @@ function M.issueRadioOrder(carIndex, command)
   local cState = RaceContext.getCarState(carIndex)
   local dLabel = EventHub.formatDriverLabel(carIndex, cState.driverName)
   local cmd = command or "NONE"
-  cState.radioCommand = cmd
-  cState.radioOrderActive = (cmd ~= "NONE")
-  
   -- Immediately close the loop in Driver / Strategy state machine
   if cmd == "BOX_THIS_LAP" then
+    -- Idempotency protection & deduplication
+    if cState.pit_requested or cState.tacticalState == "BOXING" or cState.tacticalState == "PIT_BAY" or cState.isInPitlane or cState.isInPit or EventHub.isCarPitPending(carIndex) then
+      local msg = string.format("[CMD MERGED] %s 当前已处于进站流程中，指令自动合流（请勿重复下发）", dLabel)
+      EventHub.pushCommandEvent("RADIO", msg, "PENDING")
+      return true
+    end
+
+    cState.radioCommand = cmd
+    cState.radioOrderActive = true
+    cState.tacticalState = "BOXING"
+
     cState.tacticalState = "BOXING"
     cState.pit_requested = true
     cState.pit_stop_planned = true
+    EventHub.registerPitCommand(carIndex)
+
     local plan = _carPlans[carIndex]
     if plan then
       plan.activeRecommendation = "BOX_THIS_LAP"
@@ -139,17 +166,23 @@ function M.issueRadioOrder(carIndex, command)
     EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 确认指令 -> 执行 [BOX_THIS_LAP] (物理诱导激活)", dLabel), "SUCCESS")
     EventHub.pushAiEvent(carIndex, "RADIO", string.format("【进站指令】%s 车队无线电下达: 本圈立即进站换胎！赛车已进入进站准备姿态！", dLabel), "STRATEGY")
   elseif cmd == "PUSH" then
+    cState.radioCommand = "PUSH"
+    cState.radioOrderActive = true
     cState.tacticalState = "ATTACK"
     cState.pit_requested = false
     cState.pit_stop_planned = false
     EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 确认指令 -> 执行 [PUSH 全力推进]", dLabel), "SUCCESS")
   elseif cmd == "SAVE" then
+    cState.radioCommand = "SAVE"
+    cState.radioOrderActive = true
     cState.tacticalState = "CRUISE"
     cState.isLiftAndCoast = true
     cState.pit_requested = false
     cState.pit_stop_planned = false
     EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 确认指令 -> 执行 [SAVE 保胎节油]", dLabel), "SUCCESS")
   elseif cmd == "NONE" then
+    cState.radioCommand = "NONE"
+    cState.radioOrderActive = false
     cState.tacticalState = "CRUISE"
     cState.isLiftAndCoast = false
     cState.pit_requested = false
@@ -249,6 +282,7 @@ function M.stepStrategy(dt)
       if cState.isInPitlane or cState.isInPit then
         if not plan.pitInHandled then
           plan.pitInHandled = true
+          plan.activeRecommendation = "NONE"
           cState.actualStopsCount = cState.actualStopsCount + 1
           cState.lastPitLap = curLap
           cState.radioCommand = "NONE"

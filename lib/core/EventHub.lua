@@ -45,17 +45,22 @@ for i = 1, MAX_EVENTS_PER_TRACK do
   }
 end
 
+local _pendingPitCommands = {}
 for i = 0, 24 do
   _lastTacticalEventTime[i] = 0.0
   _lastTacticalState[i] = "CRUISE"
+  _pendingPitCommands[i] = 0
 end
 
 local function formatSimTime(sessionSec)
+  if os and os.date then
+    local ok, dStr = pcall(os.date, "%H:%M:%S")
+    if ok and dStr then return dStr end
+  end
   local total = math.max(0, math.floor(sessionSec or 0))
   local m = math.floor(total / 60)
   local s = total % 60
-  local ms = math.floor(((sessionSec or 0) - total) * 100)
-  return string.format("%02d:%02d:%02d", m, s, ms)
+  return string.format("%02d:%02d", m, s)
 end
 
 function M.init()
@@ -66,9 +71,34 @@ function M.init()
   for i = 0, 24 do
     _lastTacticalEventTime[i] = 0.0
     _lastTacticalState[i] = "CRUISE"
+    _pendingPitCommands[i] = 0
   end
   _lastHeartbeatTime = 0.0
   M.pushAiEvent(0, "SYSTEM", "【系统就绪】Ultimate AI Grand Prix Pro 拟人化决策网络已就绪，正在监听全场遥测！", "WORLD", 0.0)
+end
+
+--- Check if car has an ongoing pending pit command
+function M.isCarPitPending(carIdx)
+  if not carIdx or carIdx < 0 or carIdx > 24 then return false end
+  return (_pendingPitCommands[carIdx] or 0) > 0
+end
+
+--- Register new pit command for car
+function M.registerPitCommand(carIdx)
+  if carIdx and carIdx >= 0 and carIdx <= 24 then
+    _pendingPitCommands[carIdx] = (_pendingPitCommands[carIdx] or 0) + 1
+  end
+end
+
+--- Batch consume and settle all pending pit commands for a car
+function M.settleCarPitCommands(carIdx, dLabel)
+  if not carIdx or carIdx < 0 or carIdx > 24 then return end
+  local pendingCount = _pendingPitCommands[carIdx] or 0
+  _pendingPitCommands[carIdx] = 0
+  if pendingCount > 0 then
+    local msg = string.format("[CMD SETTLED] %s 待处理进站指令已全部批量结算出队 (共处理 %d 条指令)", dLabel or ("Car #" .. (carIdx + 1)), pendingCount)
+    M.pushCommandEvent("SETTLE", msg, "SUCCESS")
+  end
 end
 
 --- Standardized driver identifier: [#02] Driver Name
@@ -98,11 +128,15 @@ end
 --- Push player or system command execution event (Track 1)
 function M.pushCommandEvent(tag, msg, status, sessionSec)
   local slot = _cmdTrack[_cmdHead]
-  slot.timeStr = formatSimTime(sessionSec or os.clock())
+  slot.timeStr = formatSimTime(sessionSec)
   slot.tag = tag or "CMD"
   slot.msg = msg or ""
   slot.status = status or "SUCCESS"
   slot.priority = 0
+
+  if ac and ac.log then
+    ac.log(string.format("[CMD-ECHO][%s][%s] %s", slot.timeStr, status or "OK", msg or ""))
+  end
 
   _cmdHead = (_cmdHead % MAX_EVENTS_PER_TRACK) + 1
   if _cmdCount < MAX_EVENTS_PER_TRACK then
@@ -113,12 +147,16 @@ end
 --- Push AI tactical behavior, outcome or world event (Track 2)
 function M.pushAiEvent(carIdx, tag, msg, category, sessionSec)
   local slot = _aiTrack[_aiHead]
-  slot.timeStr = formatSimTime(sessionSec or os.clock())
+  slot.timeStr = formatSimTime(sessionSec)
   slot.carIdx = carIdx or -1
   slot.tag = tag or "AI"
   slot.msg = msg or ""
   slot.category = category or "TACTIC"
   slot.priority = 1
+
+  if ac and ac.log then
+    ac.log(string.format("[AI-BROADCAST][%s] %s", slot.timeStr, msg or ""))
+  end
 
   _aiHead = (_aiHead % MAX_EVENTS_PER_TRACK) + 1
   if _aiCount < MAX_EVENTS_PER_TRACK then
@@ -130,7 +168,8 @@ end
 function M.emitTacticalStateChange(carIdx, driverName, newState, oldState, skillName, sessionSec)
   if not carIdx or carIdx < 0 or carIdx > 24 then return end
   local now = sessionSec or os.clock()
-  if (now - (_lastTacticalEventTime[carIdx] or 0)) < 2.5 then
+  -- BOXING priority bypasses throttling
+  if newState ~= "BOXING" and (now - (_lastTacticalEventTime[carIdx] or 0)) < 2.5 then
     return
   end
 

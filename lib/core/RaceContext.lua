@@ -191,8 +191,60 @@ function M.updateCarFromAc(carIndex, c)
   s.splinePos = c.splinePosition or 0.0
   s.lapCount = c.lapCount or 0
   s.positionInRace = c.racePosition or (carIndex + 1)
+
+  local wasInPitlane = s.isInPitlane
+  local wasInPit = s.isInPit
   s.isInPitlane = c.isInPitlane == true
   s.isInPit = c.isInPit == true
+  local isNowInPit = s.isInPitlane or s.isInPit
+  local wasInAnyPit = wasInPitlane or wasInPit
+
+  local EventHub = package.loaded["lib/core/EventHub"]
+  local StrategyCoordinator = package.loaded["lib/strategy/StrategyCoordinator"]
+
+  -- Edge 1: Vehicle entering pitlane / pit bay
+  if not wasInAnyPit and isNowInPit then
+    local dLabel = EventHub and EventHub.formatDriverLabel(carIndex, s.driverName) or string.format("Car #%02d", carIndex + 1)
+    s.pit_requested = false
+    s.pit_stop_planned = false
+    s.radioCommand = "NONE"
+    s.radioOrderActive = false
+    s.tacticalState = "PIT_BAY"
+
+    if StrategyCoordinator and StrategyCoordinator.getCarPlan then
+      local plan = StrategyCoordinator.getCarPlan(carIndex)
+      if plan then
+        plan.activeRecommendation = "NONE"
+        plan.pitInHandled = true
+      end
+    end
+
+    if EventHub then
+      EventHub.pushAiEvent(carIndex, "PIT", string.format("[Broadcast] %s 进入维修区执行进站", dLabel), "STRATEGY", _raceState.sessionTime)
+      EventHub.settleCarPitCommands(carIndex, dLabel)
+    end
+  end
+
+  -- Edge 2: Vehicle exiting pitlane back to track
+  if wasInAnyPit and not isNowInPit then
+    local dLabel = EventHub and EventHub.formatDriverLabel(carIndex, s.driverName) or string.format("Car #%02d", carIndex + 1)
+    s.pit_requested = false
+    s.pit_stop_planned = false
+    s.tacticalState = "CRUISE"
+
+    if StrategyCoordinator and StrategyCoordinator.getCarPlan then
+      local plan = StrategyCoordinator.getCarPlan(carIndex)
+      if plan then
+        plan.activeRecommendation = "NONE"
+        plan.pitInHandled = false
+      end
+    end
+
+    if EventHub then
+      EventHub.pushAiEvent(carIndex, "PIT", string.format("[Broadcast] %s 离开维修区返回赛道", dLabel), "STRATEGY", _raceState.sessionTime)
+    end
+  end
+
   s.fuelInTank = c.fuel or s.fuelInTank
 
   if ac and ac.getDriverName then
