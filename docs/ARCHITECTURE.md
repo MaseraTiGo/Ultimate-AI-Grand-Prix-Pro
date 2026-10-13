@@ -1,21 +1,26 @@
-# 系统分层与架构设计说明 (ARCHITECTURE.md)
+# 系统分层与架构设计说明 (docs/ARCHITECTURE.md)
 
 ## 1. 整体架构全景
 
-`Ultimate AI Grand Prix Pro` 采用四层解耦的高性能异步驱动架构，彻底融合了微观车手神经反射与宏观车队策略决策：
+`Ultimate AI Grand Prix Pro` 采用五层解耦的高性能异步驱动架构，彻底融合了微观车手神经反射与宏观车队策略决策，并在底层具备 CSP 严格越界防护与单次幂等初始化机制：
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │                     Ultimate AI Grand Prix Pro 统一产品架构 (24 车高拟真)              │
 │                                                                                        │
 │  [1. 交互与指挥层 (UI & Head-Up Display)] (lib/ui/DashboardUI.lua)                     │
-│     ├─ Tab 1 [LIVE HUD]: 全场 24 车微观状态矩阵 (压力、士气 Flow/Tilt、战术动作)        │
-│     ├─ Tab 2 [PIT WALL]: 车队策略看板 (Stint 窗口、预估续航圈数、主动车队指令无线电)     │
-│     ├─ Tab 3 [GRID SETUP]: 连续基因图谱/预设人格手动覆写面板                           │
-│     └─ Tab 4 [LOGS]: 有界循环日志诊断流 (Bounded Ring Buffer)                          │
+│     ├─ Tab 1 [1. 实时HUD]: 全场 24 车微观状态矩阵 (压力、士气 Flow/Tilt、战术动作)        │
+│     ├─ Tab 2 [2. 车队指挥]: 车队策略看板 (Stint 窗口、预估续航圈数、主动车队指令无线电)   │
+│     ├─ Tab 3 [3. 策略工坊]: 圈数动态增减、基准单圈油耗预设、0停/1停/2停全局策略重构    │
+│     ├─ Tab 4 [4. 车手配置]: 连续基因图谱/预设人格手动覆写面板                           │
+│     ├─ Tab 5 [5. 诊断日志]: 有界循环诊断日志流 (Bounded Ring Buffer)                   │
+│     └─ 底部常驻联动 [实时指令响应与赛事广播流] (Pinned Live Dual-Track Feed):          │
+│          ├─ Track 1 [指令回执]: 玩家下达指令状态、毫秒回显与合流幂等确认               │
+│          └─ Track 2 [赛事广播]: AI 拟人超车/失误/过热/进站/黄旗/安全车全局广播事件     │
 │                                                                                        │
 │  [2. 核心状态与数据契约层 (Core & State Contract)]                                     │
-│     ├─ RaceContext.lua: 全局唯一样条圈数、旗语、安全车与预分配 24 车全局拓扑网络        │
+│     ├─ RaceContext.lua: 全局唯一样条圈数、旗语、安全车、动态圈数与 24 车拓扑网络       │
+│     ├─ EventHub.lua: 双轨实时事件总线 (Track 1 指令回显 / Track 2 拟人与赛事广播)      │
 │     ├─ Config.lua: 统一参数配置、范围校验与默认值回退保护                             │
 │     └─ Logger.lua: 结构化分级日志、高频节流保护与有界内存池                            │
 │                                                                                        │
@@ -54,8 +59,8 @@
 
 ## 2. 关键数据流与事件流
 
-1. **比赛时局采样**：每帧调用 `RaceContext.updateFromSim(sim)`，捕获全局圈数、比赛阶段、全场黄旗与安全车。
-2. **策略异步解算 (1Hz)**：`StrategyCoordinator.stepStrategy(dt)` 计算进站窗口与 Undercut 收益，若判定进站时机成熟或满足车队要求，将 `radioCommand` 标记为 `BOX_THIS_LAP`。
+1. **比赛时局动态采样**：每帧调用 `RaceContext.updateFromSim(sim)`，通过严格校验的 `safeGetCar` 与 `safeGetDriverName` 规避 CSP 越界崩溃；自动捕获全局赛局圈数（优先绑定 `sim.raceLaps`）、比赛阶段、全场黄旗与安全车。
+2. **策略异步解算 (1Hz)**：`StrategyCoordinator.stepStrategy(dt)` 计算进站窗口与 Undercut 收益，若判定进站时机成熟或满足车队要求，将 `radioCommand` 标记为 `BOX_THIS_LAP`，并同步推送事件至 `EventHub`。
 3. **车手战术响应 (10Hz)**：`TacticalTicker.stepCar(...)` 从 `RaceContext` 消费 `radioCommand`，更新生理感知环形缓冲区与压力/士气：
    - 收到 `PUSH`：caution 降低 60%，aggression 提升 25%，士气提升进入 Flow；
    - 收到 `SAVE`：触发 `isLiftAndCoast = true`，直道末端提前 50m 滑行断油；
@@ -65,12 +70,25 @@
    - **Phase 2 (效用函数综合评分)**：结合车手性格画像（激进、防守、球商、耐心）、心流状态（Flow/Tilt）与轮胎抓地力计算 utility 分数，竞争选出最高效用技能；
    - **承诺锁（Commitment Hold）与安全中止**：触发后维持至少 0.6s 决策稳定期防抖；若出现严重碰撞风险或弯道曲率危险，即刻触发 `checkAbort` 安全降级。
 5. **底层物理执行 (60Hz)**：`watchdog.stepPhysics(dt)` 负责瞬态微操控的安全沙盒熔断与逆向 J-Turn 物理自救。
+6. **双轨事件分发与 UI 回显**：`EventHub.lua` 负责指令确认回执与世界广播事件缓冲，UI 底部独立展示，保证操作反馈具备毫秒级可观测性。
 
 ---
 
-## 3. X-Skill 零修改插件化扩展机制
+## 3. CSP 底层运行时安全机制
+
+1. **零盲探越界隔离**：
+   Assetto Corsa CSP 环境中，调用 `ac.getCar(idx)` 或 `ac.getDriverName(idx)` 时，若 `idx >= sim.carsCount`，CSP 将抛出硬性 Lua 错误中断当前执行栈。
+   系统设计了严格的防护契约：
+   - 所有 car / driver 查询统一通过 `safeGetCar(idx)` / `safeGetDriverName(idx)`（内部封装 `pcall`）；
+   - 所有循环上限严格限定为 `math.min(simCars, MAX_CARS)`。
+2. **单次幂等初始化看门狗**：
+   UI 帧循环驱动的 `windowMain` 中采用 `_initAttempted` 保护，杜绝第一帧因异常导致逐帧重复触发 `script.init()`，确保 `EventHub` 与策略中枢不被循环清空。
+
+---
+
+## 4. X-Skill 零修改插件化扩展机制
 
 当需要新增全新战术技能时：
-1. 在任意路径创建符合契约的技能模块（提供 `id`, `name`, `category`, `checkPrerequisites`, `evaluateUtility`, `stepExecution`, `checkAbort`）。
-2. 在 `config/skills_manifest.txt` 中追加该文件路径，或者直接调用 `SkillRegistry.registerSkill(def)`。
+1. 在 `lib/skills/` 或任意相对路径创建符合契约的技能模块（实现 `id`, `name`, `category`, `checkPrerequisites`, `evaluateUtility`, `stepExecution`, `checkAbort`）。
+2. 在 `config/skills_manifest.txt` 中追加该脚本相对路径，或直接调用 `SkillRegistry.registerSkill(def)`。
 3. 系统在初始化时自动完成契约合法性校验并接入仲裁调度，**无需修改任何现有核心框架代码**。

@@ -59,7 +59,8 @@ lib/skills/LateBrakeDiveSkill.lua
     "enable_smart_driver": true,
     "enable_race_strategy": true,
     "enable_safety_watchdog": true,
-    "enable_telemetry_bridge": true
+    "enable_telemetry_bridge": true,
+    "enable_human_override": true
   },
   "strategy": {
     "default_reserve_laps": 0.8,

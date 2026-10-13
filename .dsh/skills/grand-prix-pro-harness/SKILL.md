@@ -104,15 +104,19 @@ For every code change:
 Configured regression command:
 
 ```powershell
+# 方案 A（标准 Lua 5.1）
 & "D:\Program Files (x86)\Lua\5.1\lua.exe" tests/test_grand_prix_pro.lua
+
+# 方案 B（Python Lupa 嵌入运行时，推荐）
+python -c "import lupa; from lupa import LuaRuntime; lua = LuaRuntime(unpack_returned_tuples=True); lua.execute(open('tests/test_grand_prix_pro.lua', 'r', encoding='utf-8').read())"
 ```
 
 Run from the verified project root. Confirm that the interpreter and test file exist before execution. If unavailable, use the project's verified test runner or report the limitation.
 
-The historical expected output is:
+The expected output is:
 
 ```
-ALL 15 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!
+ALL 18 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!
 ```
 
 Verify the current test count and output rather than assuming they remain unchanged. Never alter tests merely to hide a regression.
@@ -153,7 +157,4 @@ Before finishing, verify:
 - The final diff was reviewed.
 - Affected documentation and this skill are synchronized.
 
-Report changed files, actual test results, synchronization status, and remaining issues. Never claim completion of a check that was not performed.-- Correct scalar distance computation
-local dx = car.posX - other.posX
-local dz = car.posZ - other.posZ
-local distSq = dx * dx + dz * dz
+Report changed files, actual test results, synchronization status, and remaining issues. Never claim completion of a check that was not performed.

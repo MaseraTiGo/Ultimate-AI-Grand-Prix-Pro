@@ -1,18 +1,24 @@
 # Ultimate AI Grand Prix Pro - Agent 快速上手与总入口规范
 
 > **项目定位**：Assetto Corsa (CSP Lua) 统一拟人化 AI 车手大脑与动态车队策略指挥平台（Unified Anthropomorphic Driver & Pit Wall Engine）。  
-> **项目根目录**：`C:\Users\EDZ\Desktop\update-ac\app\Ultimate AI Grand Prix Pro\`  
-> **测试运行器**：`& "D:\Program Files (x86)\Lua\5.1\lua.exe" tests/test_grand_prix_pro.lua`
+> **项目根目录**：`.`（当前仓库根目录）  
+> **标准测试运行器**：
+> - 方案 A（标准 Lua 5.1）：`& "D:\Program Files (x86)\Lua\5.1\lua.exe" tests/test_grand_prix_pro.lua`
+> - 方案 B（Python Lupa 嵌入运行时，无需外部 Lua 环境）：`python -c "import lupa; from lupa import LuaRuntime; lua = LuaRuntime(unpack_returned_tuples=True); lua.execute(open('tests/test_grand_prix_pro.lua', 'r', encoding='utf-8').read())"`
 
 ---
 
 ## 1. 核心约束与工作准则
 
 1. **零全盘扫描原则**：严禁无目的检索全量文件。进行任何任务前，请先查阅下方的【文档与模块索引导航】。
-2. **零运行时内存分配**：在 60Hz 物理看门狗与 10Hz 战术步中，严禁动态创建表、闭包或字符串拼接操作。所有局部几何计算全部展开为纯标量局部变量。
-3. **保护源工程**：严禁修改同级目录的 `SmartAI` 与 `AI-PIT-PRO`。新项目为 100% 独立闭环产品。
-4. **单向依赖方向**：
-   $$\text{Core (Context/Config/Logger)} \longleftarrow \text{Driver / Strategy} \longleftarrow \text{Main App / UI}$$
+2. **相对路径原则**：所有文档索引、配置加载、脚本调用、测试执行一律采用相对路径（以仓库根目录为基准），严禁硬编码任何绝对物理路径。
+3. **零运行时内存分配**：在 60Hz 物理看门狗与 10Hz 战术步中，严禁动态创建表、闭包或字符串拼接操作。所有局部几何计算全部展开为纯标量局部变量。
+4. **CSP API 严格越界防护**：调用 `ac.getCar(idx)` 与 `ac.getDriverName(idx)` 必须先校验 `idx < sim.carsCount`，且必须通过 `safeGetCar` / `safeGetDriverName`（`pcall` 包装）进行访问，禁止对未参赛槽位进行盲探以防 C++ 级 `out of range` 抛错。
+5. **初始化单次幂等保护**：`ensureInitialized()` 必须保证 `script.init()` 只触发一次，严禁在渲染帧循环中递归或逐帧重试初始化，防止重置 `EventHub` 与策略中枢。
+6. **双脚本文件强同步**：根目录下的 `Ultimate AI Grand Prix Pro.lua` 与 `Ultimate-AI-Grand-Prix-Pro.lua` 必须保持 100% 字节一致。
+7. **保护源工程**：严禁修改同级目录的 `SmartAI` 与 `AI-PIT-PRO`。新项目为 100% 独立闭环产品。
+8. **单向依赖方向**：
+   $$\text{Core (Context/Config/Logger/EventHub)} \longleftarrow \text{Driver / Strategy} \longleftarrow \text{Main App / UI}$$
    Driver（车手层）与 Strategy（策略层）之间通过 `RaceContext` 和 `StrategyCoordinator` 明确契约解耦交互，禁止私自跨层访问内部私有状态。
 
 ---
@@ -21,13 +27,13 @@
 
 | 任务类型 | 必须首选阅读的文档 | 核心关联源码 |
 | :--- | :--- | :--- |
-| **系统架构与数据流** | [`docs/ARCHITECTURE.md`](file:///C:/Users/EDZ/Desktop/update-ac/app/Ultimate%20AI%20Grand%20Prix%20Pro/docs/ARCHITECTURE.md) | `Ultimate AI Grand Prix Pro.lua` |
-| **模块接口与职责** | [`docs/MODULES.md`](file:///C:/Users/EDZ/Desktop/update-ac/app/Ultimate%20AI%20Grand%20Prix%20Pro/docs/MODULES.md) | `lib/core/RaceContext.lua`, `lib/strategy/StrategyCoordinator.lua` |
-| **底层游戏与 CSP 交互**| [`docs/INTEGRATION.md`](file:///C:/Users/EDZ/Desktop/update-ac/app/Ultimate%20AI%20Grand%20Prix%20Pro/docs/INTEGRATION.md) | `lib/driver/watchdog.lua`, `lib/bridge/TelemetryBridge.lua` |
-| **配置项与合法范围** | [`docs/CONFIGURATION.md`](file:///C:/Users/EDZ/Desktop/update-ac/app/Ultimate%20AI%20Grand%20Prix%20Pro/docs/CONFIGURATION.md) | `config/personas.json`, `lib/core/Config.lua` |
-| **测试与验证指南** | [`docs/TESTING.md`](file:///C:/Users/EDZ/Desktop/update-ac/app/Ultimate%20AI%20Grand%20Prix%20Pro/docs/TESTING.md) | `tests/test_grand_prix_pro.lua` |
-| **性能基线与预算** | [`docs/PERFORMANCE.md`](file:///C:/Users/EDZ/Desktop/update-ac/app/Ultimate%20AI%20Grand%20Prix%20Pro/docs/PERFORMANCE.md) | `lib/driver/LODScheduler.lua` |
-| **项目演进与已知限制**| [`docs/DEVELOPMENT_STATUS.md`](file:///C:/Users/EDZ/Desktop/update-ac/app/Ultimate%20AI%20Grand%20Prix%20Pro/docs/DEVELOPMENT_STATUS.md) | - |
+| **系统架构与数据流** | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | `Ultimate AI Grand Prix Pro.lua`, `lib/core/EventHub.lua` |
+| **模块接口与职责** | [`docs/MODULES.md`](docs/MODULES.md) | `lib/core/RaceContext.lua`, `lib/strategy/StrategyCoordinator.lua`, `lib/ui/DashboardUI.lua` |
+| **底层游戏与 CSP 交互**| [`docs/INTEGRATION.md`](docs/INTEGRATION.md) | `lib/driver/watchdog.lua`, `lib/bridge/TelemetryBridge.lua` |
+| **配置项与合法范围** | [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) | `config/personas.json`, `lib/core/Config.lua` |
+| **测试与验证指南** | [`docs/TESTING.md`](docs/TESTING.md) | `tests/test_grand_prix_pro.lua` |
+| **性能基线与预算** | [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) | `lib/driver/LODScheduler.lua` |
+| **项目演进与已知限制**| [`docs/DEVELOPMENT_STATUS.md`](docs/DEVELOPMENT_STATUS.md) | `lib/skills/` |
 
 ---
 
@@ -35,10 +41,10 @@
 
 在修改任何代码后，必须在终端执行并通过回归测试：
 ```powershell
-cd "C:\Users\EDZ\Desktop\update-ac\app\Ultimate AI Grand Prix Pro"
-& "D:\Program Files (x86)\Lua\5.1\lua.exe" tests/test_grand_prix_pro.lua
+# 推荐使用 Python Lupa 或指定环境下的 lua.exe
+python -c "import lupa; from lupa import LuaRuntime; lua = LuaRuntime(unpack_returned_tuples=True); lua.execute(open('tests/test_grand_prix_pro.lua', 'r', encoding='utf-8').read())"
 ```
-预期输出：`ALL 17 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!`
+预期输出：`ALL 18 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!`
 
 ## 行为约束与执行纪律（Operational Guardrails & Execution Discipline）
 

@@ -28,7 +28,7 @@
   - 车队指令仲裁 (`strategy_authority.lua`)。
 - **已重写**：
   - `StrategyCoordinator.lua`：将原项目中冗长（5000+行）、多进程、双 App 磁盘 TXT/JSON 交换逻辑彻底重构为低开销、线程内单一真相源（`RaceContext`）驱动的单模块。
-  - UI 界面：整合为现代化 4-Tab ImGui 控制台（Live HUD / Pit Wall / Grid Setup / Logs），支持玩家一键向任意 AI 发送 PUSH、SAVE、BOX 等车队指令。
+  - UI 界面：整合为现代化 5-Tab ImGui 控制台（1. 实时HUD / 2. 车队指挥 / 3. 策略工坊 / 4. 车手配置 / 5. 诊断日志），配合底部常驻双轨实时信息广播台（Track 1 指令回执 + Track 2 拟人决策与突发赛况广播），支持玩家一键向任意 AI 发送 PUSH、SAVE、BOX 等车队指令。
 - **已废弃**：
   - 废除原工程中 Go 客户端（`vf1_strategist.exe`）及 Node.js WebSocket 服务端（`vf1_strategy_server.js`），彻底消除外部依赖和跨进程通信开销。
   - 废除 AppData 磁盘文件轮询协议（`ai_car_*_fuel.txt`）。
@@ -38,7 +38,10 @@
 ## 2. 验收状态与事实标记
 
 - **已验证事实**：
-  - **17 项核心集成与高阶赛车攻防测试 100% 通过**（`tests/test_grand_prix_pro.lua`）。
+  - **18 项核心集成与实机安全防护测试 100% 通过**（`tests/test_grand_prix_pro.lua`）。
+  - **CSP 严格越界防护与单次幂等初始化防护**：排查并彻底攻克了在不同车数房间下无界调用 `ac.getCar` / `ac.getDriverName` 导致底层 C++ 抛错断开 `script.init()` 的关键隐患。彻底解决圈数未同步、AI 车手假离线（0 AI detected）以及广播事件被逐帧重置清空的 Bug。
+  - **动态赛局总圈数自动绑定**：优先绑定 `sim.raceLaps`，与玩家设置的赛程严格保持同步。
+  - **车手轮换防卡死与 Tooltip 交互增强**：车手轮换按钮具备活动列表寻址与槽位循环兜底，全量操作按钮均增加鼠标 Hover 说明，车手长姓名自适应省略截断不破损。
   - **支持最高 24 辆赛车**零全盘扫描、零运行时 GC 内存分配与毫秒级拓扑解算。
   - **X-Skill 拟人化技能体系全面交付**：
     - 统一技能契约与零修改清单自动加载（`SkillRegistry.lua` + `config/skills_manifest.txt`）。
