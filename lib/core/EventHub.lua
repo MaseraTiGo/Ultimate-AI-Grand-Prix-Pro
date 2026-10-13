@@ -105,6 +105,13 @@ function M.settleCarPitCommands(carIdx, dLabel)
   M.pushCommandEvent("SETTLE", msg, "SUCCESS")
 end
 
+--- Standardized lap string formatter: 第{currentLap}/{totalLaps}圈 (e.g. 第3/13圈)
+function M.formatLapStr(curLap, totalLaps)
+  local cLap = math.max(1, math.floor(curLap or 1))
+  local tLaps = math.max(1, math.floor(totalLaps or 13))
+  return string.format("第%d/%d圈", cLap, tLaps)
+end
+
 --- Standardized driver identifier: [#02] Driver Name
 function M.formatDriverLabel(carIdx, driverName)
   local carNum = (carIdx or 0) + 1
@@ -122,9 +129,9 @@ function M.tickHeartbeat(sessionSec, activeCars, curLap, totalLaps)
   local now = sessionSec or os.clock()
   if (now - _lastHeartbeatTime) >= 15.0 then
     _lastHeartbeatTime = now
-    local totalStr = (totalLaps and totalLaps > 0) and string.format("/%d 圈", totalLaps) or ""
+    local lapStr = M.formatLapStr(curLap, totalLaps)
     local carsStr = string.format("%d 辆赛车", activeCars or 1)
-    local msg = string.format("【赛事速递】第 %d 圈%s 绿旗行车，全场 %s 状态平稳，AI 车手战术网络正常运转。", curLap or 1, totalStr, carsStr)
+    local msg = string.format("【赛事速递】%s 绿旗行车，全场 %s 状态平稳，AI 车手战术网络正常运转。", lapStr, carsStr)
     M.pushAiEvent(0, "HEARTBEAT", msg, "WORLD", now)
   end
 end

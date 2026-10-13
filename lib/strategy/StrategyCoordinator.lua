@@ -151,6 +151,7 @@ function M.issueRadioOrder(carIndex, command)
     cState.tacticalState = "BOXING"
     cState.pit_requested = true
     cState.pit_stop_planned = true
+    cState.pitState = "REQUESTED"
     EventHub.registerPitCommand(carIndex)
 
     local plan = _carPlans[carIndex]
@@ -171,6 +172,7 @@ function M.issueRadioOrder(carIndex, command)
     cState.tacticalState = "ATTACK"
     cState.pit_requested = false
     cState.pit_stop_planned = false
+    if cState.pitState == "REQUESTED" then cState.pitState = "NONE" end
     EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 确认指令 -> 执行 [PUSH 全力推进]", dLabel), "SUCCESS")
   elseif cmd == "SAVE" then
     cState.radioCommand = "SAVE"
@@ -179,6 +181,7 @@ function M.issueRadioOrder(carIndex, command)
     cState.isLiftAndCoast = true
     cState.pit_requested = false
     cState.pit_stop_planned = false
+    if cState.pitState == "REQUESTED" then cState.pitState = "NONE" end
     EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 确认指令 -> 执行 [SAVE 保胎节油]", dLabel), "SUCCESS")
   elseif cmd == "NONE" then
     cState.radioCommand = "NONE"
@@ -187,6 +190,7 @@ function M.issueRadioOrder(carIndex, command)
     cState.isLiftAndCoast = false
     cState.pit_requested = false
     cState.pit_stop_planned = false
+    cState.pitState = "NONE"
     local plan = _carPlans[carIndex]
     if plan then
       plan.activeRecommendation = "NONE"
@@ -244,7 +248,7 @@ function M.stepStrategy(dt)
       end
 
       -- 3. Dynamic Pit Window & Undercut/Overcut Evaluation
-      if not (cState.isInPitlane or cState.isInPit) and curLap >= plan.openLap and curLap <= plan.escalateLap then
+      if not (cState.isInPitlane or cState.isInPit) and (cState.pitState == "NONE" or not cState.pitState) and curLap >= plan.openLap and curLap <= plan.escalateLap then
         local fuelLaps = FuelModel.estimateLapsRemaining(cState.fuelInTank, dynFpl, 0.5)
         local evalInput = {
           currentLap = curLap,

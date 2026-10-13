@@ -387,10 +387,10 @@ function M.renderLiveHudTab()
       local stText = "标准巡航"
       local stColor = COLOR_GREEN
 
-      if c.tacticalState == "PIT_BAY" or c.isInPitlane or c.isInPit then
+      if c.pitState == "IN_BAY" or c.pitState == "IN_PITLANE" or c.tacticalState == "PIT_BAY" or c.isInPitlane or c.isInPit then
         stText = "停站作业"
         stColor = COLOR_CYAN
-      elseif c.tacticalState == "BOXING" or c.radioCommand == "BOX_THIS_LAP" or c.pit_requested then
+      elseif c.pitState == "REQUESTED" or c.tacticalState == "BOXING" or c.radioCommand == "BOX_THIS_LAP" or c.pit_requested then
         stText = "进站准备"
         stColor = COLOR_RED
       elseif c.tacticalState == "ATTACK" or c.tacticalState == "LATE_BRAKE_DIVE" or c.tacticalState == "FEINT_DUMMY" or c.tacticalState == "SWITCHBACK" then
@@ -591,9 +591,9 @@ function M.renderPitWallTab()
         fuel, fpl, estLaps, plan.openLap or 0, plan.escalateLap or 0))
       ui.sameLine()
 
-      if c.tacticalState == "PIT_BAY" or c.isInPitlane or c.isInPit then
+      if c.pitState == "IN_BAY" or c.pitState == "IN_PITLANE" or c.tacticalState == "PIT_BAY" or c.isInPitlane or c.isInPit then
         drawInlineColored(COLOR_CYAN, "[停站作业中 (BAY)]")
-      elseif plan.activeRecommendation == "BOX_THIS_LAP" or c.radioCommand == "BOX_THIS_LAP" or c.tacticalState == "BOXING" or c.pit_requested then
+      elseif c.pitState == "REQUESTED" or plan.activeRecommendation == "BOX_THIS_LAP" or c.radioCommand == "BOX_THIS_LAP" or c.tacticalState == "BOXING" or c.pit_requested then
         drawInlineColored(COLOR_RED, "[立即进站 (BOX)]")
       else
         drawInlineColored(COLOR_GREEN, "[继续留场 (STAY)]")

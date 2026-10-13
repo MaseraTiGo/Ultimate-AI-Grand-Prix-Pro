@@ -645,6 +645,42 @@ assertEq(scStatus, "GREEN", "safety_car module safely evaluated GREEN with zero 
 
 print("  -> Passed: CSP LuaJIT FFI Struct Safety for ac.StateSim verified.")
 
+-- Verify CSP LuaJIT FFI Struct Safety for ac.StateCar (ac.StateWheel instead of .tyres)
+local strictCarStruct = setmetatable({
+  isConnected = true,
+  isAIControlled = true,
+  isPlayer = false,
+  driverName = "Strict Pilot",
+  speedKmh = 160.0,
+  splinePosition = 0.5,
+  lapCount = 3,
+  racePosition = 2,
+  isInPitlane = false,
+  isInPit = false,
+  fuel = 28.5,
+  wheels = {
+    [0] = { tyreWear = 0.18 },
+    [1] = { tyreWear = 0.19 },
+    [2] = { tyreWear = 0.22 },
+    [3] = { tyreWear = 0.21 },
+  }
+}, {
+  __index = function(t, k)
+    if k == "tyres" then
+      error("'struct state_car' has no member named 'tyres'")
+    end
+    return rawget(t, k)
+  end
+})
+
+assertEq(RaceContext.safeCarGet(strictCarStruct, "tyres"), nil, "safeCarGet safely returns nil when probing nonexistent tyres field")
+assertEq(RaceContext.safeCarGet(strictCarStruct, "wheels")[0].tyreWear, 0.18, "safeCarGet retrieves valid wheels[0].tyreWear")
+
+local carUpdateOk, carUpdateErr = pcall(RaceContext.updateCarFromAc, 1, strictCarStruct)
+assertTrue(carUpdateOk, "updateCarFromAc executed without any struct member crash on .tyres: " .. tostring(carUpdateErr))
+local c1State = RaceContext.getCarState(1)
+assertEq(c1State.tyreWear, 0.18, "Car tyre wear successfully resolved from wheels[0].tyreWear without crash")
+
 -- ==============================================================================
 -- [Test 20] Pit State Machine Closed Loop & Idempotency Batch Settlement
 -- ==============================================================================
@@ -657,6 +693,10 @@ EventHub.init()
 StrategyCoordinator.init()
 StrategyCoordinator.rebuildFieldStrategy(13, 1, 2.5)
 
+-- Verify standardized lap formatter: 第{currentLap}/{totalLaps}圈
+assertEq(EventHub.formatLapStr(3, 13), "第3/13圈", "formatLapStr matches exact uniform specification 第3/13圈")
+assertEq(EventHub.formatLapStr(1, 13), "第1/13圈", "formatLapStr matches exact uniform specification 第1/13圈")
+
 -- 1. Issue Radio Order BOX_THIS_LAP to AI Car #02 (index 1)
 local c1 = RaceContext.getCarState(1)
 c1.driverName = "Max Pace"
@@ -665,6 +705,7 @@ assertTrue(orderOk, "Issued BOX_THIS_LAP radio command")
 assertEq(c1.pit_requested, true, "cState.pit_requested is true")
 assertEq(c1.radioCommand, "BOX_THIS_LAP", "cState.radioCommand is BOX_THIS_LAP")
 assertEq(c1.tacticalState, "BOXING", "cState.tacticalState transitioned to BOXING")
+assertEq(c1.pitState, "REQUESTED", "cState.pitState transitioned to REQUESTED")
 
 -- 2. Idempotency test: Re-issue same command to same car
 local reorderOk = StrategyCoordinator.issueRadioOrder(1, "BOX_THIS_LAP")
@@ -689,11 +730,13 @@ local mockCarInPit = {
   isInPitlane = true,
   isInPit = false,
   fuel = 20.0,
+  wheels = { [0] = { tyreWear = 0.25 } }
 }
 RaceContext.updateCarFromAc(1, mockCarInPit)
 assertEq(c1.pit_requested, false, "cState.pit_requested reset to false upon pitlane entry")
 assertEq(c1.radioCommand, "NONE", "cState.radioCommand cleared to NONE upon pitlane entry")
 assertEq(c1.tacticalState, "PIT_BAY", "cState.tacticalState set to PIT_BAY")
+assertEq(c1.pitState, "IN_PITLANE", "cState.pitState set to IN_PITLANE")
 
 -- Verify Track 1 received batch settlement receipt
 local cmdSettled = false
@@ -702,12 +745,13 @@ for _, cmd in ipairs(EventHub.getRecentCommands(3)) do
 end
 assertTrue(cmdSettled, "Track 1 received settlement confirmation [CMD SETTLED]")
 
--- Verify Track 2 received broadcast message
+-- Verify Track 2 received standardized pit broadcast message [第1/13圈] [#02] Max Pace 已进入维修区
 local pitBroadcast = false
+local expectedPitIn = "[#02] Max Pace 已进入维修区"
 for _, ev in ipairs(EventHub.getRecentAiEvents(5)) do
-  if ev.msg:find("进站作业") then pitBroadcast = true end
+  if ev.msg:find(expectedPitIn, 1, true) then pitBroadcast = true end
 end
-assertTrue(pitBroadcast, "Track 2 received pit entry broadcast [【进站作业】]")
+assertTrue(pitBroadcast, "Track 2 received standardized pit entry broadcast: " .. expectedPitIn)
 
 -- 4. Step strategy while in pit: verify plan targetLap was advanced and pit_requested remains false
 StrategyCoordinator.stepStrategy(1.0)
@@ -722,12 +766,14 @@ mockCarInPit.isInPit = false
 RaceContext.updateCarFromAc(1, mockCarInPit)
 assertEq(c1.tacticalState, "CRUISE", "cState.tacticalState reverted to CRUISE upon track re-entry")
 assertEq(c1.pit_requested, false, "cState.pit_requested remains false after exiting pit")
+assertEq(c1.pitState, "COMPLETED", "cState.pitState transitioned to COMPLETED")
 
 local exitBroadcast = false
+local expectedPitOut = "[#02] Max Pace 进站作业完成"
 for _, ev in ipairs(EventHub.getRecentAiEvents(5)) do
-  if ev.msg:find("出站重返") then exitBroadcast = true end
+  if ev.msg:find(expectedPitOut, 1, true) then exitBroadcast = true end
 end
-assertTrue(exitBroadcast, "Track 2 received pit exit broadcast [【出站重返】]")
+assertTrue(exitBroadcast, "Track 2 received standardized pit exit broadcast: " .. expectedPitOut)
 print("  -> Passed: Pit State Machine Closed Loop & Idempotency Settlement verified.")
 
 -- ==============================================================================

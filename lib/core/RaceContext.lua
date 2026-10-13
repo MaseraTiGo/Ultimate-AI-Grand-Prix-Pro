@@ -18,6 +18,13 @@ M.FLAG_SC     = "SC"
 M.FLAG_VSC    = "VSC"
 M.FLAG_RED    = "RED"
 
+-- Formal Pit State Machine Enums
+M.PIT_STATE_NONE       = "NONE"
+M.PIT_STATE_REQUESTED  = "REQUESTED"
+M.PIT_STATE_IN_PITLANE = "IN_PITLANE"
+M.PIT_STATE_IN_BAY     = "IN_BAY"
+M.PIT_STATE_COMPLETED  = "COMPLETED"
+
 local _raceState = {
   sessionType = "RACE",
   totalLaps = 13,
@@ -50,6 +57,7 @@ for i = 0, MAX_CARS - 1 do
     positionInRace = i + 1,
     isInPitlane = false,
     isInPit = false,
+    pitState = M.PIT_STATE_NONE,
     
     -- Fuel & Tyres
     fuelInTank = 30.0,
@@ -117,6 +125,15 @@ local function safeSimGet(sim, field)
   return nil
 end
 M.safeSimGet = safeSimGet
+
+--- Safely query a field from an AC/CSP car C-struct (struct state_car) without throwing FFI member errors
+local function safeCarGet(car, field)
+  if not car or not field then return nil end
+  local ok, val = pcall(function() return car[field] end)
+  if ok then return val end
+  return nil
+end
+M.safeCarGet = safeCarGet
 
 --- Safely resolve current session time in seconds
 local function getSimSessionTime(sim)
@@ -256,8 +273,8 @@ function M.updateFromSim(sim)
   local prevLap = _raceState.currentLap or 1
   if EventHub and currentLap > prevLap and prevLap > 0 then
     _raceState.currentLap = currentLap
-    local totalStr = (_raceState.totalLaps and _raceState.totalLaps > 0) and string.format("/%d 圈", _raceState.totalLaps) or ""
-    EventHub.pushAiEvent(0, "RACE", string.format("【赛程更新】头车冲线，比赛正式进入第 %d 圈%s！", currentLap, totalStr), "WORLD", _raceState.sessionTime)
+    local lapStr = EventHub.formatLapStr and EventHub.formatLapStr(currentLap, _raceState.totalLaps) or string.format("第%d/%d圈", currentLap, _raceState.totalLaps or 13)
+    EventHub.pushAiEvent(0, "RACE", string.format("【赛程更新】头车冲线，比赛正式进入%s！", lapStr), "WORLD", _raceState.sessionTime)
   else
     _raceState.currentLap = currentLap
   end
@@ -276,22 +293,28 @@ end
 function M.updateCarFromAc(carIndex, c)
   if not c or carIndex < 0 or carIndex >= MAX_CARS then return end
   local s = _carStates[carIndex]
-  s.isConnected = c.isConnected ~= false
-  s.isAIControlled = (c.isAIControlled == true) or (carIndex > 0 and not c.isPlayer)
-  s.speedKmh = c.speedKmh or 0.0
-  s.splinePos = c.splinePosition or 0.0
-  s.lapCount = c.lapCount or 0
-  s.positionInRace = c.racePosition or (carIndex + 1)
+  s.isConnected = safeCarGet(c, "isConnected") ~= false
+  local isAI = safeCarGet(c, "isAIControlled")
+  local isPlayer = safeCarGet(c, "isPlayer")
+  s.isAIControlled = (isAI == true) or (carIndex > 0 and not isPlayer)
+  s.speedKmh = safeCarGet(c, "speedKmh") or 0.0
+  s.splinePos = safeCarGet(c, "splinePosition") or 0.0
+  s.lapCount = safeCarGet(c, "lapCount") or 0
+  s.positionInRace = safeCarGet(c, "racePosition") or (carIndex + 1)
 
   local wasInPitlane = s.isInPitlane
   local wasInPit = s.isInPit
-  s.isInPitlane = c.isInPitlane == true
-  s.isInPit = c.isInPit == true
+  s.isInPitlane = safeCarGet(c, "isInPitlane") == true
+  s.isInPit = safeCarGet(c, "isInPit") == true
   local isNowInPit = s.isInPitlane or s.isInPit
   local wasInAnyPit = wasInPitlane or wasInPit
 
   local EventHub = package.loaded["lib/core/EventHub"]
   local StrategyCoordinator = package.loaded["lib/strategy/StrategyCoordinator"]
+
+  local curLap = _raceState.currentLap or 1
+  local totalLaps = _raceState.totalLaps or 13
+  local lapPrefix = (EventHub and EventHub.formatLapStr) and EventHub.formatLapStr(curLap, totalLaps) or string.format("第%d/%d圈", curLap, totalLaps)
 
   -- Edge 1: Vehicle entering pitlane / pit bay
   if not wasInAnyPit and isNowInPit then
@@ -301,13 +324,13 @@ function M.updateCarFromAc(carIndex, c)
     s.radioCommand = "NONE"
     s.radioOrderActive = false
     s.tacticalState = "PIT_BAY"
+    s.pitState = s.isInPit and M.PIT_STATE_IN_BAY or M.PIT_STATE_IN_PITLANE
 
     if StrategyCoordinator and StrategyCoordinator.getCarPlan then
       local plan = StrategyCoordinator.getCarPlan(carIndex)
       if plan then
         plan.activeRecommendation = "NONE"
         plan.pitInHandled = true
-        local curLap = _raceState.currentLap or 1
         local nextStintLaps = (plan.stints and plan.stints[2]) or 15
         plan.targetLap = curLap + nextStintLaps
         plan.openLap = math.max(curLap + 1, plan.targetLap - 2)
@@ -316,7 +339,9 @@ function M.updateCarFromAc(carIndex, c)
     end
 
     if EventHub then
-      EventHub.pushAiEvent(carIndex, "PIT", string.format("【进站作业】%s 已平稳驶入维修区，车组人员开始换胎与补油！", dLabel), "STRATEGY", _raceState.sessionTime)
+      -- Format: [第3/13圈] [#02] 车手姓名 已进入维修区
+      local pitInMsg = string.format("[%s] %s 已进入维修区", lapPrefix, dLabel)
+      EventHub.pushAiEvent(carIndex, "PIT", pitInMsg, "STRATEGY", _raceState.sessionTime)
       EventHub.settleCarPitCommands(carIndex, dLabel)
     end
   end
@@ -328,6 +353,11 @@ function M.updateCarFromAc(carIndex, c)
     if s.radioCommand == "BOX_THIS_LAP" then
       s.radioCommand = "NONE"
       s.radioOrderActive = false
+    end
+    if s.isInPit then
+      s.pitState = M.PIT_STATE_IN_BAY
+    else
+      s.pitState = M.PIT_STATE_IN_PITLANE
     end
     if s.tacticalState ~= "PIT_BAY" then
       s.tacticalState = "PIT_BAY"
@@ -342,6 +372,9 @@ function M.updateCarFromAc(carIndex, c)
     s.radioCommand = "NONE"
     s.radioOrderActive = false
     s.tacticalState = "CRUISE"
+    s.pitState = M.PIT_STATE_COMPLETED
+    s.actualStopsCount = (s.actualStopsCount or 0) + 1
+    s.lastPitLap = curLap
 
     if StrategyCoordinator and StrategyCoordinator.getCarPlan then
       local plan = StrategyCoordinator.getCarPlan(carIndex)
@@ -352,35 +385,62 @@ function M.updateCarFromAc(carIndex, c)
     end
 
     if EventHub then
-      EventHub.pushAiEvent(carIndex, "PIT", string.format("【出站重返】%s 进站作业完成，重返赛道全力推进！", dLabel), "STRATEGY", _raceState.sessionTime)
+      -- Format: [第3/13圈] [#02] 车手姓名 进站作业完成
+      local pitOutMsg = string.format("[%s] %s 进站作业完成", lapPrefix, dLabel)
+      EventHub.pushAiEvent(carIndex, "PIT", pitOutMsg, "STRATEGY", _raceState.sessionTime)
     end
   end
 
-  s.fuelInTank = c.fuel or s.fuelInTank
+  local fuelVal = safeCarGet(c, "fuel")
+  if fuelVal and type(fuelVal) == "number" then
+    s.fuelInTank = fuelVal
+  end
 
   local dName = safeGetDriverName(carIndex)
   if dName and dName ~= "" then
     s.driverName = dName
   end
   if (not s.driverName or s.driverName == "") and c then
-    local okName, cn = pcall(function()
-      if type(c.driverName) == "function" then return c:driverName() end
-      if type(c.driverName) == "string" then return c.driverName end
-      return nil
-    end)
-    if okName and cn and type(cn) == "string" and cn ~= "" then
+    local cn = safeCarGet(c, "driverName")
+    if type(cn) == "function" then
+      local okCall, resCall = pcall(cn, c)
+      if okCall and resCall and type(resCall) == "string" and resCall ~= "" then
+        s.driverName = resCall
+      end
+    elseif type(cn) == "string" and cn ~= "" then
       s.driverName = cn
     end
   end
 
-  if c.position then
-    s.posX = c.position.x or 0.0
-    s.posY = c.position.y or 0.0
-    s.posZ = c.position.z or 0.0
+  local pos = safeCarGet(c, "position")
+  if pos then
+    s.posX = pos.x or 0.0
+    s.posY = pos.y or 0.0
+    s.posZ = pos.z or 0.0
   end
 
-  if c.tyres and c.tyres[0] and c.tyres[0].wear then
-    s.tyreWear = c.tyres[0].wear
+  -- Safe tyre wear retrieval:
+  -- AC/CSP official: car.wheels[0].tyreWear (ac.StateWheel.tyreWear number 0~1)
+  -- Mock/fallback: car.tyres[0].wear
+  local wearVal = nil
+  local wheels = safeCarGet(c, "wheels")
+  if wheels and wheels[0] then
+    local okW, w = pcall(function() return wheels[0].tyreWear end)
+    if okW and type(w) == "number" then
+      wearVal = w
+    end
+  end
+  if not wearVal then
+    local tyres = safeCarGet(c, "tyres")
+    if tyres and tyres[0] then
+      local okT, tw = pcall(function() return tyres[0].wear end)
+      if okT and type(tw) == "number" then
+        wearVal = tw
+      end
+    end
+  end
+  if wearVal then
+    s.tyreWear = wearVal
   end
 end
 
@@ -393,6 +453,7 @@ function M.reset()
     s.lapCount = 0
     s.actualStopsCount = 0
     s.lastPitLap = -1
+    s.pitState = M.PIT_STATE_NONE
     s.stress = 0.0
     s.momentum = 0.0
     s.radioCommand = "NONE"
