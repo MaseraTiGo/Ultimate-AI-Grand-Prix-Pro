@@ -18,6 +18,12 @@
     [Test 13] TelemetryBridge LuaJIT FFI shared memory & binary fallback
     [Test 14] Hot loop zero memory allocation & LuaJIT NYI-Free validation (500 cycles)
     [Test 15] Full system update loop integration (simUpdate & update pipeline)
+    [Test 16] Advanced Racecraft (Topology, Feint, Cooking & Cold Out-Lap)
+    [Test 17] X-Skill Architecture (Registry, Gating, Personality & Safety Abort)
+    [Test 18] CSP Strict Bounds Safety, Dynamic Laps & AI Discovery
+    [Test 19] CSP LuaJIT FFI struct safety for ac.StateSim (Zero struct member crash)
+    [Test 20] Pit state machine closed loop & idempotency batch settlement
+    [Test 21] Blue flag yielding and Track 2 broadcast event pipeline
 ]]
 
 local function assertEq(val, expected, msg)
@@ -573,6 +579,200 @@ ac.getDriverName = origGetDriverName
 ac.getSim = origGetSim
 print("  -> Passed: CSP Strict Bounds Safety, Dynamic Laps & AI Discovery confirmed.")
 
+-- ==============================================================================
+-- [Test 19] CSP LuaJIT FFI Struct Safety for ac.StateSim (Zero Struct Member Crash)
+-- ==============================================================================
+print("[Test 19] Testing CSP LuaJIT FFI Struct Safety for ac.StateSim...")
+-- Emulate a real C-level struct state_sim where querying non-existent fields raises a fatal Lua error
+local allowedSimFields = {
+  carsCount = true,
+  gameTime = true,
+  time = true,
+  currentSessionTime = true,
+  currentSessionIndex = true,
+  leaderLapCount = true,
+  raceFlagType = true,
+  raceFlagCause = true,
+  isReplayActive = true,
+  isSessionStarted = true,
+  isSessionFinished = true,
+  speedLimitKmh = true,
+  dt = true,
+}
+local strictSimStruct = setmetatable({
+  carsCount = 8,
+  gameTime = 345.67,
+  time = 345670.0,
+  currentSessionTime = 345670.0,
+  currentSessionIndex = 0,
+  leaderLapCount = 6,
+  raceFlagType = 0,
+  raceFlagCause = -1,
+  isReplayActive = false,
+  isSessionStarted = true,
+  isSessionFinished = false,
+  speedLimitKmh = 80.0,
+  dt = 0.016,
+}, {
+  __index = function(t, k)
+    if not allowedSimFields[k] then
+      error(string.format("'struct state_sim' has no member named '%s'", tostring(k)))
+    end
+    return rawget(t, k)
+  end
+})
+
+-- Verify that safeSimGet never throws when probing nonexistent fields
+assertEq(RaceContext.safeSimGet(strictSimStruct, "sessionTime"), nil, "safeSimGet safely returns nil for nonexistent sessionTime")
+assertEq(RaceContext.safeSimGet(strictSimStruct, "raceLaps"), nil, "safeSimGet safely returns nil for nonexistent raceLaps")
+assertEq(RaceContext.safeSimGet(strictSimStruct, "currentLap"), nil, "safeSimGet safely returns nil for nonexistent currentLap")
+assertEq(RaceContext.safeSimGet(strictSimStruct, "carsCount"), 8, "safeSimGet retrieves valid carsCount")
+assertEq(RaceContext.safeSimGet(strictSimStruct, "gameTime"), 345.67, "safeSimGet retrieves valid gameTime")
+
+-- Test updateFromSim with strict C struct
+RaceContext.reset()
+local updateOk, updateErr = pcall(RaceContext.updateFromSim, strictSimStruct)
+assertTrue(updateOk, "RaceContext.updateFromSim executed without any struct member errors: " .. tostring(updateErr))
+local strictState = RaceContext.getRaceState()
+assertEq(strictState.sessionTime, 345.67, "Session time resolved safely from gameTime (345.67s)")
+assertEq(strictState.currentLap, 7, "Current lap resolved safely from leaderLapCount + 1 = 7")
+assertEq(strictState.carsCount, 8, "Cars count resolved safely as 8")
+
+-- Test safety_car module with strict C struct
+local safetyCarMod = require("lib/strategy/safety_car")
+local scStatus, scConf = safetyCarMod.detectSafetyCarCondition(strictSimStruct, {}, 180.0)
+assertEq(scStatus, "GREEN", "safety_car module safely evaluated GREEN with zero C struct errors")
+
+print("  -> Passed: CSP LuaJIT FFI Struct Safety for ac.StateSim verified.")
+
+-- ==============================================================================
+-- [Test 20] Pit State Machine Closed Loop & Idempotency Batch Settlement
+-- ==============================================================================
+print("[Test 20] Testing Pit State Machine Closed Loop & Idempotency Settlement...")
+local EventHub = require("lib/core/EventHub")
+local StrategyCoordinator = require("lib/strategy/StrategyCoordinator")
+
+RaceContext.reset()
+EventHub.init()
+StrategyCoordinator.init()
+StrategyCoordinator.rebuildFieldStrategy(13, 1, 2.5)
+
+-- 1. Issue Radio Order BOX_THIS_LAP to AI Car #02 (index 1)
+local c1 = RaceContext.getCarState(1)
+c1.driverName = "Max Pace"
+local orderOk = StrategyCoordinator.issueRadioOrder(1, "BOX_THIS_LAP")
+assertTrue(orderOk, "Issued BOX_THIS_LAP radio command")
+assertEq(c1.pit_requested, true, "cState.pit_requested is true")
+assertEq(c1.radioCommand, "BOX_THIS_LAP", "cState.radioCommand is BOX_THIS_LAP")
+assertEq(c1.tacticalState, "BOXING", "cState.tacticalState transitioned to BOXING")
+
+-- 2. Idempotency test: Re-issue same command to same car
+local reorderOk = StrategyCoordinator.issueRadioOrder(1, "BOX_THIS_LAP")
+assertTrue(reorderOk, "Duplicate radio command handled gracefully")
+local recentCmds = EventHub.getRecentCommands(2)
+local mergedFound = false
+for _, cmd in ipairs(recentCmds) do
+  if cmd.msg:find("CMD MERGED") then mergedFound = true end
+end
+assertTrue(mergedFound, "Duplicate pit order resulted in idempotency merge receipt (Track 1)")
+
+-- 3. Simulate car entering pitlane (acCar.isInPitlane = true)
+local mockCarInPit = {
+  isConnected = true,
+  isAIControlled = true,
+  isPlayer = false,
+  driverName = "Max Pace",
+  speedKmh = 75.0,
+  splinePosition = 0.05,
+  lapCount = 4,
+  positionInRace = 2,
+  isInPitlane = true,
+  isInPit = false,
+  fuel = 20.0,
+}
+RaceContext.updateCarFromAc(1, mockCarInPit)
+assertEq(c1.pit_requested, false, "cState.pit_requested reset to false upon pitlane entry")
+assertEq(c1.radioCommand, "NONE", "cState.radioCommand cleared to NONE upon pitlane entry")
+assertEq(c1.tacticalState, "PIT_BAY", "cState.tacticalState set to PIT_BAY")
+
+-- Verify Track 1 received batch settlement receipt
+local cmdSettled = false
+for _, cmd in ipairs(EventHub.getRecentCommands(3)) do
+  if cmd.msg:find("CMD SETTLED") then cmdSettled = true end
+end
+assertTrue(cmdSettled, "Track 1 received settlement confirmation [CMD SETTLED]")
+
+-- Verify Track 2 received broadcast message
+local pitBroadcast = false
+for _, ev in ipairs(EventHub.getRecentAiEvents(5)) do
+  if ev.msg:find("进站作业") then pitBroadcast = true end
+end
+assertTrue(pitBroadcast, "Track 2 received pit entry broadcast [【进站作业】]")
+
+-- 4. Step strategy while in pit: verify plan targetLap was advanced and pit_requested remains false
+StrategyCoordinator.stepStrategy(1.0)
+assertEq(c1.pit_requested, false, "pit_requested remains false during pit dwell")
+assertEq(c1.radioCommand, "NONE", "radioCommand remains NONE during pit dwell")
+local plan1 = StrategyCoordinator.getCarPlan(1)
+assertTrue(plan1.targetLap > 4, "Stint planned targetLap advanced to prevent re-arming BOX_THIS_LAP")
+
+-- 5. Simulate car exiting pitlane back to track
+mockCarInPit.isInPitlane = false
+mockCarInPit.isInPit = false
+RaceContext.updateCarFromAc(1, mockCarInPit)
+assertEq(c1.tacticalState, "CRUISE", "cState.tacticalState reverted to CRUISE upon track re-entry")
+assertEq(c1.pit_requested, false, "cState.pit_requested remains false after exiting pit")
+
+local exitBroadcast = false
+for _, ev in ipairs(EventHub.getRecentAiEvents(5)) do
+  if ev.msg:find("出站重返") then exitBroadcast = true end
+end
+assertTrue(exitBroadcast, "Track 2 received pit exit broadcast [【出站重返】]")
+print("  -> Passed: Pit State Machine Closed Loop & Idempotency Settlement verified.")
+
+-- ==============================================================================
+-- [Test 21] Blue Flag Yielding and Track 2 Broadcast Event Pipeline
+-- ==============================================================================
+print("[Test 21] Testing Blue Flag Yielding and Track 2 Broadcast Pipeline...")
+local TacticalTicker = require("lib/driver/TacticalTicker")
+local mockLappedCar = {
+  index = 2,
+  speedKmh = 190.0,
+  splinePosition = 0.40,
+  lapCount = 3,
+  position = vec3(0, 0, 100),
+  collisionDepth = 0.0,
+}
+local mockLeaderCar = {
+  index = 0,
+  speedKmh = 230.0,
+  splinePosition = 0.39,
+  lapCount = 4, -- 1 lap ahead
+  position = vec3(0, 0, 85),
+  collisionDepth = 0.0,
+}
+
+local blueCtx = {
+  isLastLap = false,
+  tyreWear = 0.3,
+  isBlueFlagged = true, -- Blue flag condition active
+  radioCommand = "NONE",
+}
+local personaRival = { base_caution = 1.0, aggression = 0.6 }
+local aiYieldState = TacticalTicker.stepCar(mockLappedCar, nil, mockLeaderCar, personaRival, 0.0, blueCtx, 0.1)
+assertEq(aiYieldState.state, "YIELD", "TacticalTicker transitioned to YIELD state under blue flag")
+assertEq(aiYieldState.activeSkill, "YIELD", "Active skill assigned to YIELD")
+assertTrue(aiYieldState.targetSplineOffset > 0.5, "Spline offset pulled to outer line to yield")
+
+-- Verify emission to EventHub
+EventHub.emitTacticalStateChange(2, "Backmarker Bob", "YIELD", "CRUISE", "YIELD", 360.0)
+local blueFlagBroadcast = false
+for _, ev in ipairs(EventHub.getRecentAiEvents(5)) do
+  if ev.msg:find("蓝旗避让") then blueFlagBroadcast = true end
+end
+assertTrue(blueFlagBroadcast, "Track 2 event stream broadcasted Blue Flag yielding event [【蓝旗避让】]")
+print("  -> Passed: Blue Flag Yielding and Track 2 Broadcast Pipeline confirmed.")
+
 print("==================================================================")
-print("  ALL 18 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
+print("  ALL 21 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
 print("==================================================================")

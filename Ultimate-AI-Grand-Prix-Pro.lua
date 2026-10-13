@@ -87,11 +87,8 @@ function script.init()
 
   if sim then
     pcall(RaceContext.updateFromSim, sim)
-    local laps = (sim.raceLaps and sim.raceLaps > 0 and sim.raceLaps)
-      or (sim.sessionLaps and sim.sessionLaps > 0 and sim.sessionLaps)
-      or (sim.totalLaps and sim.totalLaps > 0 and sim.totalLaps)
-      or (sim.laps and sim.laps > 0 and sim.laps)
-      or 13
+    local rState = RaceContext.getRaceState()
+    local laps = (rState and rState.totalLaps and rState.totalLaps > 0) and rState.totalLaps or 13
     pcall(StrategyCoordinator.rebuildFieldStrategy, laps, 1, 2.5)
   end
 
@@ -110,7 +107,7 @@ end
 function script.update(dt)
   if not _initialized then return end
   local sim = ac and ac.getSim and ac.getSim()
-  if not sim or sim.isReplayActive then return end
+  if not sim or RaceContext.safeSimGet(sim, "isReplayActive") then return end
 
   _tacticalTimer = _tacticalTimer + dt
   _strategyTimer = _strategyTimer + dt
@@ -129,7 +126,7 @@ function script.update(dt)
     RaceContext.updateFromSim(sim)
     StrategyCoordinator.stepStrategy(stratDt)
     local rState = RaceContext.getRaceState()
-    EventHub.tickHeartbeat(sim.sessionTime or 0.0, _activeAiCount + 1, rState.currentLap or 1, rState.totalLaps or 13)
+    EventHub.tickHeartbeat(rState.sessionTime or 0.0, _activeAiCount + 1, rState.currentLap or 1, rState.totalLaps or 13)
   end
 
   -- 3. Tactical Driver Decision Tick @ 10Hz (0.1s interval)
@@ -140,7 +137,7 @@ function script.update(dt)
 
     RaceContext.updateFromSim(sim)
     local raceState = RaceContext.getRaceState()
-    local carCount = math.max(sim.carsCount or 0, raceState.carsCount or 0)
+    local carCount = raceState.carsCount or 0
     if carCount > 24 then carCount = 24 end
     if carCount < 1 then carCount = 1 end
     _activeAiCount = 0
@@ -182,8 +179,8 @@ function script.update(dt)
         local persona = personaLoader.getPersonaForCar(i, cState.driverName)
 
         -- Standing start blunder & launch reaction handling on race green
-        if sim.sessionTime and sim.sessionTime < 10.0 then
-          local delay, blunder = MistakeEngine.evaluateStandingStart(i, persona, sim.sessionTime)
+        if raceState.sessionTime and raceState.sessionTime < 10.0 then
+          local delay, blunder = MistakeEngine.evaluateStandingStart(i, persona, raceState.sessionTime)
           if MistakeEngine.stepStandingStart(i, tacticalDt) then
             if physics.setAIThrottleLimit then
               physics.setAIThrottleLimit(i, 0.0)
@@ -199,7 +196,7 @@ function script.update(dt)
             local dz = c.position.z - playerCar.position.z
             local dPlayerSq = dx * dx + dy * dy + dz * dz
             if dPlayerSq < 16.0 then
-              rivalryMemory.recordContact(cState.driverName, playerDriverName, 1.5, sim.currentLap or 1)
+              rivalryMemory.recordContact(cState.driverName, playerDriverName, 1.5, raceState.currentLap or 1)
               LODScheduler.triggerWakeInterrupt(i)
             end
           end
@@ -220,17 +217,22 @@ function script.update(dt)
 
           -- Build Race Context
           local raceCtx = {
-            isLastLap = (sim.raceLaps and sim.raceLaps > 0 and (sim.currentLap or 0) >= sim.raceLaps),
+            isLastLap = (raceState.totalLaps and raceState.totalLaps > 0 and (raceState.currentLap or 0) >= raceState.totalLaps),
             tyreWear = cState.tyreWear,
             isBlueFlagged = false,
             radioCommand = cState.radioCommand,
             tyreWarmupProgress = cState.tyreWarmupProgress or 1.0,
             tyreTempNorm = cState.tyreTempNorm or 1.0,
           }
-          if playerCar and sim.currentLap and c.lapCount then
-            if (playerCar.lapCount or 0) > (c.lapCount or 0) and behindCar == playerCar then
+          if playerCar and c.lapCount then
+            local pLap = playerCar.lapCount or 0
+            local cLap = c.lapCount or 0
+            if pLap > cLap and behindCar == playerCar and behindDist < 25.0 then
               raceCtx.isBlueFlagged = true
             end
+          end
+          if raceState.blueFlagCarIdx and raceState.blueFlagCarIdx == i then
+            raceCtx.isBlueFlagged = true
           end
 
           -- Execute 10Hz Tactical Tick
@@ -255,7 +257,7 @@ function script.update(dt)
 
           -- Emit tactical behavior events if state transitioned or skill activated
           if cState.tacticalState ~= prevState or (cState.activeSkill ~= "NONE" and cState.activeSkill ~= prevState) then
-            EventHub.emitTacticalStateChange(i, cState.driverName, cState.tacticalState, prevState, cState.activeSkill, sim.sessionTime or 0.0)
+            EventHub.emitTacticalStateChange(i, cState.driverName, cState.tacticalState, prevState, cState.activeSkill, raceState.sessionTime or 0.0)
           end
 
           -- Apply Behavior Actuators
@@ -265,7 +267,7 @@ function script.update(dt)
     end
 
     -- Stamp telemetry packet for external ecosystem consumers
-    TelemetryBridge.stampPacket(_activeAiCount, sim.sessionTime or 0.0)
+    TelemetryBridge.stampPacket(_activeAiCount, raceState.sessionTime or 0.0)
 
     _perfMs = (os.clock() - t0) * 1000.0
   end

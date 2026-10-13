@@ -38,7 +38,10 @@
 ## 2. 验收状态与事实标记
 
 - **已验证事实**：
-  - **18 项核心集成与实机安全防护测试 100% 通过**（`tests/test_grand_prix_pro.lua`）。
+  - **21 项核心集成与实机安全防护测试 100% 通过**（`tests/test_grand_prix_pro.lua`）。
+  - **CSP LuaJIT FFI C 结构体严格防护与零崩溃**：排查并彻底攻克了底层 `ac.getSim()` 返回 C 结构体时，读取未定义字段引发的 fatal crash (`'struct state_sim' has no member named 'sessionTime'`)。引入 `safeSimGet(sim, field)` 防御性访问工具，官方标准时间从 `sim.gameTime` / `sim.currentSessionTime` 映射，主循环与策略模块 100% 免疫未知结构体成员抛错。
+  - **进站状态机全闭环与指令幂等批量结算**：进站指令自动合流防堆积；赛车跨入维修区通道（`isInPitlane`/`isInPit`）即刻解除 `pit_requested` 与 `radioCommand` 并批量结算出队所有待处理指令；实时向 Track 1 回显 `[CMD SETTLED]`，向 Track 2 广播进站作业与出站重返，自动推移下一赛段窗口杜绝重入死锁。
+  - **赛事广播全链路打通与蓝旗让行**：打通 CSP 蓝旗与套圈迫近检测，`TacticalTicker` 驱动车辆主动外切让出内线，并在 Track 2 广播金黄色高亮 `【蓝旗避让】` 战术事件。
   - **CSP 严格越界防护与单次幂等初始化防护**：排查并彻底攻克了在不同车数房间下无界调用 `ac.getCar` / `ac.getDriverName` 导致底层 C++ 抛错断开 `script.init()` 的关键隐患。彻底解决圈数未同步、AI 车手假离线（0 AI detected）以及广播事件被逐帧重置清空的 Bug。
   - **动态赛局总圈数自动绑定**：优先绑定 `sim.raceLaps`，与玩家设置的赛程严格保持同步。
   - **车手轮换防卡死与 Tooltip 交互增强**：车手轮换按钮具备活动列表寻址与槽位循环兜底，全量操作按钮均增加鼠标 Hover 说明，车手长姓名自适应省略截断不破损。

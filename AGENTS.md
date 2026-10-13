@@ -20,6 +20,7 @@
 8. **单向依赖方向**：
    $$\text{Core (Context/Config/Logger/EventHub)} \longleftarrow \text{Driver / Strategy} \longleftarrow \text{Main App / UI}$$
    Driver（车手层）与 Strategy（策略层）之间通过 `RaceContext` 和 `StrategyCoordinator` 明确契约解耦交互，禁止私自跨层访问内部私有状态。
+9. **CSP C-Struct (LuaJIT FFI) 严格字段防护**：底层 `ac.getSim()` 返回 C 结构体 `struct state_sim`。在 LuaJIT FFI 下直接访问结构体未定义的字段（如 `sim.sessionTime`、`sim.raceLaps`、`sim.currentLap` 等）会抛出不可恢复的运行时 Crash。必须统一使用 `RaceContext.safeSimGet(sim, field)` 进行防御性访问，或通过 `RaceContext.getRaceState()` 获取已规整好的数据。
 
 ---
 
@@ -44,7 +45,7 @@
 # 推荐使用 Python Lupa 或指定环境下的 lua.exe
 python -c "import lupa; from lupa import LuaRuntime; lua = LuaRuntime(unpack_returned_tuples=True); lua.execute(open('tests/test_grand_prix_pro.lua', 'r', encoding='utf-8').read())"
 ```
-预期输出：`ALL 18 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!`
+预期输出：`ALL 21 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!`
 
 ## 行为约束与执行纪律（Operational Guardrails & Execution Discipline）
 

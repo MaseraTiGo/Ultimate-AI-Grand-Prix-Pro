@@ -109,6 +109,34 @@ local function safeGetCar(idx)
   return nil
 end
 
+--- Safely query a field from a CSP C-struct or table without throwing FFI member errors
+local function safeSimGet(sim, field)
+  if not sim or not field then return nil end
+  local ok, val = pcall(function() return sim[field] end)
+  if ok then return val end
+  return nil
+end
+M.safeSimGet = safeSimGet
+
+--- Safely resolve current session time in seconds
+local function getSimSessionTime(sim)
+  if not sim then return 0.0 end
+  -- 1. Try gameTime (in seconds from AC start, standard official CSP field)
+  local gt = safeSimGet(sim, "gameTime")
+  if gt and gt > 0 then return gt end
+  -- 2. Try currentSessionTime (in ms -> sec, synced session time in online/offline)
+  local cst = safeSimGet(sim, "currentSessionTime")
+  if cst and cst > 0 then return cst / 1000.0 end
+  -- 3. Try time (in ms -> sec)
+  local t = safeSimGet(sim, "time")
+  if t and t > 0 then return t / 1000.0 end
+  -- 4. Try sessionTime (mock/fallback)
+  local st = safeSimGet(sim, "sessionTime")
+  if st and st > 0 then return st end
+  return (os and os.clock and os.clock()) or 0.0
+end
+M.getSimSessionTime = getSimSessionTime
+
 local function safeGetDriverName(idx)
   if not ac or not ac.getDriverName or not idx or idx < 0 then return nil end
   local ok, res = pcall(ac.getDriverName, idx)
@@ -119,14 +147,16 @@ end
 --- Update global race state snapshot once per frame (10Hz / 1Hz)
 function M.updateFromSim(sim)
   if not sim then return end
-  _raceState.isReplay = sim.isReplayActive or false
-  _raceState.sessionTime = sim.sessionTime or 0.0
+  _raceState.isReplay = (safeSimGet(sim, "isReplayActive") == true)
+  _raceState.sessionTime = getSimSessionTime(sim)
 
   -- Count connected cars: safely from sim.carsCount and bounded probing
-  local simCars = sim.carsCount or 0
+  local simCars = safeSimGet(sim, "carsCount") or 0
   if simCars == 0 and ac and ac.getSim then
     local okSim, s = pcall(ac.getSim)
-    if okSim and s and s.carsCount then simCars = s.carsCount end
+    if okSim and s then
+      simCars = safeSimGet(s, "carsCount") or 0
+    end
   end
 
   local probedCount = 0
@@ -143,11 +173,24 @@ function M.updateFromSim(sim)
   _raceState.carsCount = math.max(simCars, probedCount)
   if _raceState.carsCount > MAX_CARS then _raceState.carsCount = MAX_CARS end
 
-  -- Dynamic Session Laps: check sim.raceLaps, sim.sessionLaps, sim.totalLaps, sim.laps
-  local laps = (sim.raceLaps and sim.raceLaps > 0 and sim.raceLaps)
-    or (sim.sessionLaps and sim.sessionLaps > 0 and sim.sessionLaps)
-    or (sim.totalLaps and sim.totalLaps > 0 and sim.totalLaps)
-    or (sim.laps and sim.laps > 0 and sim.laps)
+  -- Dynamic Session Laps:
+  -- 1. Try official CSP ac.getSession(sim.currentSessionIndex).laps
+  local laps = nil
+  if ac and ac.getSession then
+    local sessIdx = safeSimGet(sim, "currentSessionIndex") or 0
+    local ok, sess = pcall(ac.getSession, sessIdx)
+    if ok and sess then
+      local sLaps = safeSimGet(sess, "laps")
+      if sLaps and sLaps > 0 then laps = sLaps end
+    end
+  end
+  -- 2. Fallbacks: safe query of raceLaps, sessionLaps, totalLaps, laps
+  if not laps or laps <= 0 then
+    laps = safeSimGet(sim, "raceLaps")
+      or safeSimGet(sim, "sessionLaps")
+      or safeSimGet(sim, "totalLaps")
+      or safeSimGet(sim, "laps")
+  end
 
   if laps and laps > 0 then
     if _raceState.totalLaps ~= laps then
@@ -158,18 +201,44 @@ function M.updateFromSim(sim)
       end
     end
   end
-  _raceState.currentLap = sim.currentLap or _raceState.currentLap or 1
 
-  -- Flags & Safety Car Edge Detection
+  -- Current Lap:
+  -- In CSP, leaderLapCount is completed laps by leader (0-indexed). So current lap = leaderLapCount + 1.
+  local leaderCompleted = safeSimGet(sim, "leaderLapCount")
+  local currentLap = nil
+  if leaderCompleted and leaderCompleted >= 0 then
+    currentLap = leaderCompleted + 1
+  else
+    local c0 = safeGetCar(0)
+    if c0 and c0.lapCount and c0.lapCount >= 0 then
+      currentLap = c0.lapCount + 1
+    else
+      currentLap = safeSimGet(sim, "currentLap") or _raceState.currentLap or 1
+    end
+  end
+
+  -- Flags & Safety Car Edge Detection:
+  -- CSP official: sim.raceFlagType (ac.FlagType.Caution = 2, ac.FlagType.FasterCar = 12, ac.FlagType.Finished = 13)
+  local raceFlagType = safeSimGet(sim, "raceFlagType")
   local prevFlag = _raceState.flagState
-  if sim.isYellowFlag or sim.hasYellowFlag then
+  local isYellow = (raceFlagType == 2) or (safeSimGet(sim, "isYellowFlag") == true) or (safeSimGet(sim, "hasYellowFlag") == true)
+  local isSC = (safeSimGet(sim, "safetyCarActive") == true) or (safeSimGet(sim, "isSafetyCar") == true)
+
+  if isYellow then
     _raceState.flagState = M.FLAG_YELLOW
-  elseif sim.safetyCarActive or sim.isSafetyCar then
+  elseif isSC then
     _raceState.flagState = M.FLAG_SC
     _raceState.scActive = true
   else
     _raceState.flagState = M.FLAG_GREEN
     _raceState.scActive = false
+  end
+
+  -- Blue flag tracking
+  if raceFlagType == 12 then -- ac.FlagType.FasterCar
+    _raceState.blueFlagCarIdx = safeSimGet(sim, "raceFlagCause") or -1
+  else
+    _raceState.blueFlagCarIdx = -1
   end
 
   local EventHub = package.loaded["lib/core/EventHub"]
@@ -185,13 +254,12 @@ function M.updateFromSim(sim)
 
   -- Lap progression edge detection
   local prevLap = _raceState.currentLap or 1
-  local newLap = sim.currentLap or _raceState.currentLap or 1
-  if EventHub and newLap > prevLap and prevLap > 0 then
-    _raceState.currentLap = newLap
+  if EventHub and currentLap > prevLap and prevLap > 0 then
+    _raceState.currentLap = currentLap
     local totalStr = (_raceState.totalLaps and _raceState.totalLaps > 0) and string.format("/%d 圈", _raceState.totalLaps) or ""
-    EventHub.pushAiEvent(0, "RACE", string.format("【赛程更新】头车冲线，比赛正式进入第 %d 圈%s！", newLap, totalStr), "WORLD", _raceState.sessionTime)
+    EventHub.pushAiEvent(0, "RACE", string.format("【赛程更新】头车冲线，比赛正式进入第 %d 圈%s！", currentLap, totalStr), "WORLD", _raceState.sessionTime)
   else
-    _raceState.currentLap = newLap
+    _raceState.currentLap = currentLap
   end
 
   -- Eager driver name sync from AC (strictly bound within known car count)
@@ -239,12 +307,30 @@ function M.updateCarFromAc(carIndex, c)
       if plan then
         plan.activeRecommendation = "NONE"
         plan.pitInHandled = true
+        local curLap = _raceState.currentLap or 1
+        local nextStintLaps = (plan.stints and plan.stints[2]) or 15
+        plan.targetLap = curLap + nextStintLaps
+        plan.openLap = math.max(curLap + 1, plan.targetLap - 2)
+        plan.escalateLap = plan.targetLap + 2
       end
     end
 
     if EventHub then
-      EventHub.pushAiEvent(carIndex, "PIT", string.format("[Broadcast] %s 进入维修区执行进站", dLabel), "STRATEGY", _raceState.sessionTime)
+      EventHub.pushAiEvent(carIndex, "PIT", string.format("【进站作业】%s 已平稳驶入维修区，车组人员开始换胎与补油！", dLabel), "STRATEGY", _raceState.sessionTime)
       EventHub.settleCarPitCommands(carIndex, dLabel)
+    end
+  end
+
+  -- Continuous invariant: while inside pitlane / pit box, stay cleared
+  if isNowInPit then
+    s.pit_requested = false
+    s.pit_stop_planned = false
+    if s.radioCommand == "BOX_THIS_LAP" then
+      s.radioCommand = "NONE"
+      s.radioOrderActive = false
+    end
+    if s.tacticalState ~= "PIT_BAY" then
+      s.tacticalState = "PIT_BAY"
     end
   end
 
@@ -253,6 +339,8 @@ function M.updateCarFromAc(carIndex, c)
     local dLabel = EventHub and EventHub.formatDriverLabel(carIndex, s.driverName) or string.format("Car #%02d", carIndex + 1)
     s.pit_requested = false
     s.pit_stop_planned = false
+    s.radioCommand = "NONE"
+    s.radioOrderActive = false
     s.tacticalState = "CRUISE"
 
     if StrategyCoordinator and StrategyCoordinator.getCarPlan then
@@ -264,7 +352,7 @@ function M.updateCarFromAc(carIndex, c)
     end
 
     if EventHub then
-      EventHub.pushAiEvent(carIndex, "PIT", string.format("[Broadcast] %s 离开维修区返回赛道", dLabel), "STRATEGY", _raceState.sessionTime)
+      EventHub.pushAiEvent(carIndex, "PIT", string.format("【出站重返】%s 进站作业完成，重返赛道全力推进！", dLabel), "STRATEGY", _raceState.sessionTime)
     end
   end
 
@@ -274,8 +362,15 @@ function M.updateCarFromAc(carIndex, c)
   if dName and dName ~= "" then
     s.driverName = dName
   end
-  if (not s.driverName or s.driverName == "") and c.driverName and c.driverName ~= "" then
-    s.driverName = c.driverName
+  if (not s.driverName or s.driverName == "") and c then
+    local okName, cn = pcall(function()
+      if type(c.driverName) == "function" then return c:driverName() end
+      if type(c.driverName) == "string" then return c.driverName end
+      return nil
+    end)
+    if okName and cn and type(cn) == "string" and cn ~= "" then
+      s.driverName = cn
+    end
   end
 
   if c.position then

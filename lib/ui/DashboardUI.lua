@@ -827,7 +827,7 @@ function M.renderEventFeed()
     drawTextColored(COLOR_MUTED, "  [监听中] 正在追踪全场 AI 攻防博弈、特技动作、失误修正与黄旗突发...")
   else
     for _, ev in ipairs(aiEvents) do
-      local isAlert = ev.msg:find("失误") or ev.msg:find("黄旗") or ev.msg:find("进站") or ev.msg:find("撞击") or ev.msg:find("Safety") or ev.msg:find("安全车")
+      local isAlert = ev.msg:find("失误") or ev.msg:find("黄旗") or ev.msg:find("进站") or ev.msg:find("撞击") or ev.msg:find("Safety") or ev.msg:find("安全车") or ev.msg:find("蓝旗")
       local evCol = isAlert and COLOR_GOLD or COLOR_BLUE
       ui.text(string.format("  [%s] ", ev.timeStr))
       ui.sameLine()

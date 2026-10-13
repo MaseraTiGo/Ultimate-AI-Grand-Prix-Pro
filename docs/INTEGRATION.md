@@ -62,16 +62,68 @@
   ```
 
 ### 2.3 动态赛局总圈数解析
-- Assetto Corsa 会话参数中，总圈数由 `sim.raceLaps`（正赛设定圈数）提供。在计时排位或自由练习中，该值为 0 或 nil。
-- 系统采用多源自适应解析：
+- Assetto Corsa 官方会话结构中，总圈数由 `ac.getSession(sim.currentSessionIndex).laps` 提供。
+- 系统采用多源自适应安全解析（通过 `RaceContext.updateFromSim`）：
   ```lua
-  local laps = (sim.raceLaps and sim.raceLaps > 0 and sim.raceLaps)
-    or (sim.sessionLaps and sim.sessionLaps > 0 and sim.sessionLaps)
-    or (sim.totalLaps and sim.totalLaps > 0 and sim.totalLaps)
-    or (sim.laps and sim.laps > 0 and sim.laps)
-    or 13
+  local laps = nil
+  if ac and ac.getSession then
+    local sessIdx = safeSimGet(sim, "currentSessionIndex") or 0
+    local ok, sess = pcall(ac.getSession, sessIdx)
+    if ok and sess then
+      local sLaps = safeSimGet(sess, "laps")
+      if sLaps and sLaps > 0 then laps = sLaps end
+    end
+  end
+  if not laps or laps <= 0 then
+    laps = safeSimGet(sim, "raceLaps")
+      or safeSimGet(sim, "sessionLaps")
+      or safeSimGet(sim, "totalLaps")
+      or safeSimGet(sim, "laps")
+  end
   ```
   有效圈数变更时即刻通知 `StrategyCoordinator.rebuildFieldStrategy(laps)` 重新解算进站窗口。
+
+### 2.4 CSP C-Struct (LuaJIT FFI) 严格字段访问规范
+- **C-Struct 运行时机理**：底层 `ac.getSim()` 返回 C 结构体 `struct state_sim`。在 LuaJIT FFI 机制下，如果代码尝试读取结构体未定义的字段（如 `sim.sessionTime`、`sim.raceLaps`、`sim.currentLap`、`sim.isYellowFlag` 等），会触发致命的 LuaJIT FFI Crash：`'struct state_sim' has no member named '...'`，且该错误会导致主更新帧循环立即崩断。
+- **防护规范与最佳实践**：
+  1. **防御性读取工具**：在 `lib/core/RaceContext.lua` 中封装 `safeSimGet(sim, field)`：
+     ```lua
+     local function safeSimGet(sim, field)
+       if not sim or not field then return nil end
+       local ok, val = pcall(function() return sim[field] end)
+       if ok then return val end
+       return nil
+     end
+     ```
+  2. **官方时间字段映射**：
+     - `sim.gameTime`：自 AC 启动以来的运行秒数（官方标准浮点数）。
+     - `sim.currentSessionTime`：当前 Session 同步时间（毫秒），换算为秒：`currentSessionTime / 1000.0`。
+     - `sim.time`：AC 启动以来的毫秒数。
+     - 统一由 `RaceContext.getSimSessionTime(sim)` 进行优先级解析并存入 `RaceContext.getRaceState().sessionTime`。
+  3. **官方旗语与事件映射**：
+     - `sim.raceFlagType` 枚举：`None = 0`, `Caution = 2` (全场黄旗), `FasterCar = 12` (蓝旗), `Finished = 13` (方格旗)。
+     - `sim.raceFlagCause`：触发旗语的 0 索引车号（-1 表示无）。
+
+### 2.5 进站状态机闭环与双轨回执链路 (Pit Lifecycle Closed Loop & Event Echo)
+- **触发与复位时机**：
+  - **进站请求期**：玩家或策略下达 `BOX_THIS_LAP`，车辆置位 `pit_requested = true`，战术进入 `BOXING` 状态并注入物理诱导。
+  - **维修区接管期**：当车辆跨入维修区通道（`isInPitlane == true` 或 `isInPit == true` 时）：
+    - 立即清除 `pit_requested = false`、`pit_stop_planned = false`、`radioCommand = "NONE"`。
+    - 战术状态锁定为 `PIT_BAY`（停站作业）。
+    - 自动推进下一赛段规划圈数（`plan.targetLap = curLap + stintLaps[2]`），杜绝出站瞬间被旧计划再次触发重入。
+    - 批量消费结算该车所有 Pending 指令并向 Track 1 发送回执：`[CMD SETTLED] [#%02d] Driver 进站作业已接管/批量完成`。
+    - 向 Track 2 广播：`【进站作业】[#%02d] Driver 已平稳驶入维修区，车组人员开始换胎与补油！`。
+  - **出站重返期**：当车辆出维修区（`wasInAnyPit and not isNowInPit` 时）：
+    - 战术状态复位为 `CRUISE`，刷新冷胎升温初始状态。
+    - 向 Track 2 广播：`【出站重返】[#%02d] Driver 进站作业完成，重返赛道全力推进！`。
+
+### 2.6 蓝旗让行与战术事件广播链路 (Blue Flag & Broadcast Pipeline)
+- **让行条件触发**：
+  - CSP 底层旗语：`sim.raceFlagType == 12` 且 `sim.raceFlagCause == carIdx`。
+  - 局部相对圈数拓扑：后车快车/头车套圈迫近时（`pLap > cLap and behindDist < 25.0`）。
+- **动作执行与广播**：
+  - `TacticalTicker` 将状态迁移至 `YIELD`，`activeSkill = "YIELD"`，偏航外线避让（`targetSplineOffset = 0.75`）。
+  - `EventHub.emitTacticalStateChange` 捕获 `YIELD` 边沿，向 Track 2 实时推送：`【蓝旗避让】[#%02d] Driver 被出示蓝旗，主动让出内线避让快车！`。
 
 ---
 

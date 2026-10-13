@@ -4,26 +4,31 @@
 
 ### `RaceContext.lua`
 - **职责**：全场比赛与最高 24 辆车单一真相数据仓库。维护圈数、旗语、安全车状态、微观车辆状态及全局拓扑关系。
-- **安全契约**：内置 `safeGetCar` 与 `safeGetDriverName` 包装，对 CSP API 实施严格的越界异常防护；赛局总圈数自动绑定底层 `sim.raceLaps`。
+- **安全契约**：内置 `safeSimGet`、`getSimSessionTime`、`safeGetCar` 与 `safeGetDriverName` 包装，对 CSP FFI C 结构体及底层 API 实施严格的成员安全防护与越界防穿透；赛局总圈数自动绑定底层 `sim.raceLaps` 或 `ac.getSession().laps`。
 - **公共接口**：
+  - `M.safeSimGet(sim, field)`: LuaJIT FFI C 结构体安全访问器（`pcall` 容错包装），避免 `'struct state_sim' has no member` 崩溃。
+  - `M.getSimSessionTime(sim)`: 官方标准会话秒数解析（优先级：`gameTime` -> `currentSessionTime / 1000` -> `time / 1000` -> `os.clock`）。
   - `M.getRaceState()`: 获取全局旗语、总圈数、当前圈、安全车状态。
   - `M.setTotalLaps(laps)`: 动态覆写总圈数并联动策略工坊。
   - `M.getCarState(carIndex)`: 获取指定赛车的动力学、轮胎、燃油与无线电指令快照。
   - `M.getAllCarStates()`: 获取全场赛车状态平坦数组。
   - `M.updateFromSim(sim)`: 增量更新时局与赛车连接状态（纯标量，零分配）。
-  - `M.updateCarFromAc(carIndex, acCar)`: 从 CSP 车辆对象更新动力学状态与真实车手名称。
+  - `M.updateCarFromAc(carIndex, acCar)`: 从 CSP 车辆对象更新动力学状态与真实车手名称，并处理进出站状态机闭环。
   - `M.updateTopology(carCount, acGetCar)`: 计算全场 AI-to-AI / AI-to-Player 24 车拓扑邻居环。
   - `M.getNeighbors(carIndex)`: O(1) 获取当前车辆最近前车、后车索引与米制间距。
 
 ### `EventHub.lua`
 - **职责**：双轨实时事件与指令回显总线。
-  - **Track 1**：用户/系统下发指令的回执与状态确认（PENDING / SUCCESS / MERGED / FAILED）。
-  - **Track 2**：AI 车手拟人化动作、攻防技能、微失误、爆胎/过热、进站作业以及全场旗语/赛程世界事件。
+  - **Track 1**：用户/系统下发指令的回执与状态确认（PENDING / SUCCESS / MERGED / SETTLED / FAILED）。
+  - **Track 2**：AI 车手拟人化动作、攻防技能、微失误、蓝旗避让、爆胎/过热、进站作业以及全场旗语/赛程世界事件。
 - **公共接口**：
   - `M.init()`: 重置事件池并添加系统就绪信标。
-  - `M.pushCommandEvent(source, msg, status, carIdx)`: 记录并回显操作指令。
-  - `M.pushAiEvent(carIdx, category, msg, scope, sessionTime)`: 广播 AI 拟人化决策与突发赛况。
-  - `M.emitTacticalStateChange(carIdx, dName, state, prevState, skill, time)`: 快捷广播战术姿态变更。
+  - `M.isCarPitPending(carIdx)`: 检查车辆是否有未完成的挂起进站指令。
+  - `M.registerPitCommand(carIdx)`: 登记该车的一条进站指令。
+  - `M.settleCarPitCommands(carIdx, dLabel)`: 批量结算该车所有待处理进站指令并向 Track 1 推送确认回执。
+  - `M.pushCommandEvent(tag, msg, status, sessionSec)`: 记录并回显操作指令。
+  - `M.pushAiEvent(carIdx, tag, msg, category, sessionSec)`: 广播 AI 拟人化决策与突发赛况。
+  - `M.emitTacticalStateChange(carIdx, dName, state, prevState, skill, time)`: 快捷广播战术姿态变更（含蓝旗 `YIELD`、进站 `BOXING` 等）。
   - `M.emitMistake(carIdx, dName, mistakeType, time)`: 快捷广播微失误事件。
   - `M.formatDriverLabel(carIdx, name)`: 统一格式化车手标识（`[#02] 车手名`）。
   - `M.getRecentCommands(limit)`: 提取最近指令回执列表。

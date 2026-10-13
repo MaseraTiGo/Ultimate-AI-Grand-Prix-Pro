@@ -95,10 +95,14 @@ function M.settleCarPitCommands(carIdx, dLabel)
   if not carIdx or carIdx < 0 or carIdx > 24 then return end
   local pendingCount = _pendingPitCommands[carIdx] or 0
   _pendingPitCommands[carIdx] = 0
+  local label = dLabel or ("Car #" .. (carIdx + 1))
+  local msg = nil
   if pendingCount > 0 then
-    local msg = string.format("[CMD SETTLED] %s 待处理进站指令已全部批量结算出队 (共处理 %d 条指令)", dLabel or ("Car #" .. (carIdx + 1)), pendingCount)
-    M.pushCommandEvent("SETTLE", msg, "SUCCESS")
+    msg = string.format("[CMD SETTLED] %s 待处理进站指令已全部批量结算出队 (共处理 %d 条指令)", label, pendingCount)
+  else
+    msg = string.format("[CMD SETTLED] %s 进站作业已接管确认 (状态已成功闭环)", label)
   end
+  M.pushCommandEvent("SETTLE", msg, "SUCCESS")
 end
 
 --- Standardized driver identifier: [#02] Driver Name
@@ -168,8 +172,8 @@ end
 function M.emitTacticalStateChange(carIdx, driverName, newState, oldState, skillName, sessionSec)
   if not carIdx or carIdx < 0 or carIdx > 24 then return end
   local now = sessionSec or os.clock()
-  -- BOXING priority bypasses throttling
-  if newState ~= "BOXING" and (now - (_lastTacticalEventTime[carIdx] or 0)) < 2.5 then
+  -- BOXING and YIELD bypass throttling
+  if newState ~= "BOXING" and newState ~= "YIELD" and (now - (_lastTacticalEventTime[carIdx] or 0)) < 2.5 then
     return
   end
 
@@ -197,6 +201,11 @@ function M.emitTacticalStateChange(carIdx, driverName, newState, oldState, skill
   elseif newState == "BOXING" then
     msg = string.format("%s 确认本圈进站指令，正贴靠外侧驶向维修通道！", dLabel)
     category = "STRATEGY"
+  elseif newState == "YIELD" or (skillName and skillName == "YIELD") then
+    if oldState ~= "YIELD" then
+      msg = string.format("【蓝旗避让】%s 被出示蓝旗，主动让出内线避让快车！", dLabel)
+      category = "TACTIC"
+    end
   end
 
   if msg then

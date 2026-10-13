@@ -15,13 +15,13 @@ python -c "import lupa; from lupa import LuaRuntime; lua = LuaRuntime(unpack_ret
 预期标准输出：
 ```text
 ==================================================================
-  ALL 18 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    
+  ALL 21 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    
 ==================================================================
 ```
 
 ---
 
-## 2. 覆盖的 18 项集成验证用例全览
+## 2. 覆盖的 21 项集成验证用例全览
 
 1. **Test 1：Core Config & Logger** - 参数加载、默认值回退、有界循环日志（Ring Buffer）防溢出。
 2. **Test 2：RaceContext** - 比赛圈数、旗语、安全车状态单一真相源及 24 车标量数据同步。
@@ -41,3 +41,6 @@ python -c "import lupa; from lupa import LuaRuntime; lua = LuaRuntime(unpack_ret
 16. **Test 16：24-Car AI Topology & Racecraft** - 24 车局部缠斗网格拓扑、两段式虚晃假动作、轮胎热衰竭与出站冷胎升温爬坡。
 17. **Test 17：X-Skill Architecture** - 技能契约合法性校验、无修改 manifest 自动注册、二阶段门控仲裁、0.6s 承诺锁防抖与安全熔断。
 18. **Test 18：CSP Strict Bounds Safety & Dynamic Laps** - 真实 CSP 环境越界抛错沙盒模拟、动态赛程圈数解析与无报错动态 AI 车手发现。
+19. **Test 19：CSP LuaJIT FFI Struct Safety for ac.StateSim** - 模拟底层 C 结构体对未定义成员抛错行为，检验 `safeSimGet` 与主帧循环零 Crash 鲁棒性。
+20. **Test 20：Pit State Machine Closed Loop & Idempotency Settlement** - 进站状态机闭环生命周期（指令合流、维修区接管复位 `pit_requested`、Track 1 批量出队回执、Track 2 进出站广播与下一赛段圈数自增）。
+21. **Test 21：Blue Flag Yielding and Track 2 Broadcast Pipeline** - 蓝旗触发判定、主动让出内线外切避让姿态与 Track 2 赛事广播金黄色高亮流全链路打通。

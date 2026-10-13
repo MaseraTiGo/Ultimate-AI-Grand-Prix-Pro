@@ -235,7 +235,7 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
   -- 0. Check Blue Flag yielding condition
   if raceContext and raceContext.isBlueFlagged and behindCar then
     s.state = M.STATE_YIELD
-    s.activeSkill = "NONE"
+    s.activeSkill = "YIELD"
     s.targetSplineOffset = 0.75 -- Pull to outer safe line
     s.targetCaution = 1.8
     s.targetAggression = 0.3

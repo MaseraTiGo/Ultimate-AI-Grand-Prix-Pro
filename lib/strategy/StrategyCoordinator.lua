@@ -187,6 +187,11 @@ function M.issueRadioOrder(carIndex, command)
     cState.isLiftAndCoast = false
     cState.pit_requested = false
     cState.pit_stop_planned = false
+    local plan = _carPlans[carIndex]
+    if plan then
+      plan.activeRecommendation = "NONE"
+    end
+    EventHub.settleCarPitCommands(carIndex, dLabel)
     EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 指令已解除 -> 恢复自主战术", dLabel), "SUCCESS")
   end
 
@@ -239,7 +244,7 @@ function M.stepStrategy(dt)
       end
 
       -- 3. Dynamic Pit Window & Undercut/Overcut Evaluation
-      if curLap >= plan.openLap and curLap <= plan.escalateLap then
+      if not (cState.isInPitlane or cState.isInPit) and curLap >= plan.openLap and curLap <= plan.escalateLap then
         local fuelLaps = FuelModel.estimateLapsRemaining(cState.fuelInTank, dynFpl, 0.5)
         local evalInput = {
           currentLap = curLap,
@@ -280,19 +285,25 @@ function M.stepStrategy(dt)
 
       -- 4. Pit Stop Detection & Fuel Refill Handling
       if cState.isInPitlane or cState.isInPit then
+        cState.pit_requested = false
+        cState.pit_stop_planned = false
+        cState.radioCommand = "NONE"
+        cState.radioOrderActive = false
+        cState.tacticalState = "PIT_BAY"
+        plan.activeRecommendation = "NONE"
+
         if not plan.pitInHandled then
           plan.pitInHandled = true
-          plan.activeRecommendation = "NONE"
           cState.actualStopsCount = cState.actualStopsCount + 1
           cState.lastPitLap = curLap
-          cState.radioCommand = "NONE"
-          cState.radioOrderActive = false
-          cState.tacticalState = "CRUISE"
-          cState.pit_requested = false
-          cState.pit_stop_planned = false
+
+          -- Advance plan target lap for next stint so it does not re-trigger
+          local nextStintLaps = (plan.stints and plan.stints[2]) or 15
+          plan.targetLap = curLap + nextStintLaps
+          plan.openLap = math.max(curLap + 1, plan.targetLap - 2)
+          plan.escalateLap = plan.targetLap + 2
 
           local dLabel = EventHub.formatDriverLabel(i, cState.driverName)
-          EventHub.pushAiEvent(i, "PIT", string.format("【进站作业】%s 已平稳驶入维修区，车组人员开始换胎与补油！", dLabel), "STRATEGY", race.sessionTime)
 
           -- Trigger realistic pit dwell pause if available (3.0 seconds service dwell)
           if physics and physics.setAIStopCounter then
@@ -310,7 +321,8 @@ function M.stepStrategy(dt)
             physics.setCarFuel(i, refillLiters)
             Logger.info("PIT", string.format("%s completed pit stop (Refilled: %.1fL, Next Stint Ready, Cold Out-Lap Active)", dLabel, refillLiters))
           end
-          EventHub.pushAiEvent(i, "PIT", string.format("【完成出站】%s 进站作业完成（加注 %.1fL 燃油，换装全新轮胎），安全出站重返赛道！", dLabel, refillLiters), "STRATEGY", race.sessionTime)
+
+          EventHub.settleCarPitCommands(i, dLabel)
         end
       else
         plan.pitInHandled = false

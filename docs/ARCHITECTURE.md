@@ -70,7 +70,7 @@
    - **Phase 2 (效用函数综合评分)**：结合车手性格画像（激进、防守、球商、耐心）、心流状态（Flow/Tilt）与轮胎抓地力计算 utility 分数，竞争选出最高效用技能；
    - **承诺锁（Commitment Hold）与安全中止**：触发后维持至少 0.6s 决策稳定期防抖；若出现严重碰撞风险或弯道曲率危险，即刻触发 `checkAbort` 安全降级。
 5. **底层物理执行 (60Hz)**：`watchdog.stepPhysics(dt)` 负责瞬态微操控的安全沙盒熔断与逆向 J-Turn 物理自救。
-6. **双轨事件分发与 UI 回显**：`EventHub.lua` 负责指令确认回执与世界广播事件缓冲，UI 底部独立展示，保证操作反馈具备毫秒级可观测性。
+6. **双轨事件分发与 UI 回显**：`EventHub.lua` 维护两路独立有界环形缓冲池（Track 1 玩家与系统下发指令的回执与合流/批量结算状态确认；Track 2 全场 AI 拟人化决策、蓝旗让行、攻防博弈、进出站作业广播）。UI 底部常驻独立展示，保证操作反馈具备毫秒级可观测性与闭环回执。
 
 ---
 
@@ -83,6 +83,8 @@
    - 所有循环上限严格限定为 `math.min(simCars, MAX_CARS)`。
 2. **单次幂等初始化看门狗**：
    UI 帧循环驱动的 `windowMain` 中采用 `_initAttempted` 保护，杜绝第一帧因异常导致逐帧重复触发 `script.init()`，确保 `EventHub` 与策略中枢不被循环清空。
+3. **CSP C-Struct (LuaJIT FFI) 严格字段防护**：
+   底层 `ac.getSim()` 返回 C 结构体 `struct state_sim`。在 LuaJIT FFI 下直接访问结构体未定义的字段（如不存在的 `sim.sessionTime`、`sim.raceLaps`、`sim.currentLap`、`sim.isYellowFlag` 等）会抛出不可恢复的运行时 Crash。系统在 `RaceContext.safeSimGet` 中采用保护性查询，并通过官方 `gameTime`、`currentSessionTime` 及 `ac.getSession(idx).laps` 映射标准赛时与赛程，彻底杜绝 FFI 字段缺失崩溃。
 
 ---
 

@@ -42,10 +42,16 @@ function M.detectSafetyCarCondition(sim, carsList, normalRaceSpeedKmh)
 
   -- Check direct CSP flags if present
   if sim then
-    if sim.isYellowFlag or sim.hasYellowFlag then
+    local okType, flagType = pcall(function() return sim.raceFlagType end)
+    if okType and flagType == 2 then
       return "YELLOW", 0.85
     end
-    if sim.safetyCarActive or sim.isSafetyCar then
+    local okYellow, yf = pcall(function() return sim.isYellowFlag or sim.hasYellowFlag end)
+    if okYellow and yf then
+      return "YELLOW", 0.85
+    end
+    local okSC, sc = pcall(function() return sim.safetyCarActive or sim.isSafetyCar end)
+    if okSC and sc then
       return "SC", 0.55
     end
   end
