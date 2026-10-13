@@ -102,35 +102,59 @@ function M.getAllCarStates()
   return _carStates
 end
 
+local function safeGetCar(idx)
+  if not ac or not ac.getCar or not idx or idx < 0 then return nil end
+  local ok, res = pcall(ac.getCar, idx)
+  if ok and res then return res end
+  return nil
+end
+
+local function safeGetDriverName(idx)
+  if not ac or not ac.getDriverName or not idx or idx < 0 then return nil end
+  local ok, res = pcall(ac.getDriverName, idx)
+  if ok and res and res ~= "" then return res end
+  return nil
+end
+
 --- Update global race state snapshot once per frame (10Hz / 1Hz)
 function M.updateFromSim(sim)
   if not sim then return end
   _raceState.isReplay = sim.isReplayActive or false
   _raceState.sessionTime = sim.sessionTime or 0.0
 
-  -- Count connected cars: either from sim.carsCount or by probing ac.getCar
+  -- Count connected cars: safely from sim.carsCount and bounded probing
+  local simCars = sim.carsCount or 0
+  if simCars == 0 and ac and ac.getSim then
+    local okSim, s = pcall(ac.getSim)
+    if okSim and s and s.carsCount then simCars = s.carsCount end
+  end
+
   local probedCount = 0
-  if ac and ac.getCar then
-    for probeIdx = 0, MAX_CARS - 1 do
-      local probeCar = ac.getCar(probeIdx)
-      if probeCar then
-        probedCount = probedCount + 1
-      end
+  local maxProbe = (simCars > 0) and math.min(simCars, MAX_CARS) or MAX_CARS
+  for probeIdx = 0, maxProbe - 1 do
+    local probeCar = safeGetCar(probeIdx)
+    if probeCar then
+      probedCount = probedCount + 1
+    else
+      if simCars == 0 then break end
     end
   end
 
-  local simCars = sim.carsCount or 0
   _raceState.carsCount = math.max(simCars, probedCount)
   if _raceState.carsCount > MAX_CARS then _raceState.carsCount = MAX_CARS end
 
   -- Dynamic Session Laps: check sim.raceLaps, sim.sessionLaps, sim.totalLaps, sim.laps
-  local laps = sim.raceLaps or sim.sessionLaps or sim.totalLaps or sim.laps
+  local laps = (sim.raceLaps and sim.raceLaps > 0 and sim.raceLaps)
+    or (sim.sessionLaps and sim.sessionLaps > 0 and sim.sessionLaps)
+    or (sim.totalLaps and sim.totalLaps > 0 and sim.totalLaps)
+    or (sim.laps and sim.laps > 0 and sim.laps)
+
   if laps and laps > 0 then
     if _raceState.totalLaps ~= laps then
       _raceState.totalLaps = laps
       local StrategyCoordinator = package.loaded["lib/strategy/StrategyCoordinator"]
       if StrategyCoordinator and StrategyCoordinator.rebuildFieldStrategy then
-        StrategyCoordinator.rebuildFieldStrategy(laps, nil, nil)
+        pcall(StrategyCoordinator.rebuildFieldStrategy, laps, nil, nil)
       end
     end
   end
@@ -170,13 +194,12 @@ function M.updateFromSim(sim)
     _raceState.currentLap = newLap
   end
 
-  -- Eager driver name sync from AC
-  if ac and ac.getDriverName then
-    for idx = 0, MAX_CARS - 1 do
-      local dName = ac.getDriverName(idx)
-      if dName and dName ~= "" then
-        _carStates[idx].driverName = dName
-      end
+  -- Eager driver name sync from AC (strictly bound within known car count)
+  local maxSync = math.min(_raceState.carsCount, MAX_CARS)
+  for idx = 0, maxSync - 1 do
+    local dName = safeGetDriverName(idx)
+    if dName and dName ~= "" then
+      _carStates[idx].driverName = dName
     end
   end
 end
@@ -247,11 +270,9 @@ function M.updateCarFromAc(carIndex, c)
 
   s.fuelInTank = c.fuel or s.fuelInTank
 
-  if ac and ac.getDriverName then
-    local dName = ac.getDriverName(carIndex)
-    if dName and dName ~= "" then
-      s.driverName = dName
-    end
+  local dName = safeGetDriverName(carIndex)
+  if dName and dName ~= "" then
+    s.driverName = dName
   end
   if (not s.driverName or s.driverName == "") and c.driverName and c.driverName ~= "" then
     s.driverName = c.driverName
@@ -316,8 +337,8 @@ function M.updateTopology(carsCount, acGetCar)
   if count < 2 then return end
 
   for i = 0, count - 1 do
-    local carI = acGetCar(i)
-    if carI and carI.isConnected ~= false and carI.position then
+    local okI, carI = pcall(acGetCar, i)
+    if okI and carI and carI.isConnected ~= false and carI.position then
       local sI = carI.splinePosition or 0.0
       local pxI = carI.position.x or 0.0
       local pyI = carI.position.y or 0.0
@@ -330,8 +351,8 @@ function M.updateTopology(carsCount, acGetCar)
 
       for j = 0, count - 1 do
         if i ~= j then
-          local carJ = acGetCar(j)
-          if carJ and carJ.isConnected ~= false and carJ.position then
+          local okJ, carJ = pcall(acGetCar, j)
+          if okJ and carJ and carJ.isConnected ~= false and carJ.position then
             local dx = carJ.position.x - pxI
             local dy = carJ.position.y - pyI
             local dz = carJ.position.z - pzI

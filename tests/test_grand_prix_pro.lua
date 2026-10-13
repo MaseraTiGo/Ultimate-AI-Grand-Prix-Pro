@@ -513,6 +513,66 @@ assertTrue(abortCheck == true, "Skill triggers abort when corner hazard or proxi
 
 print("  -> Passed: X-Skill Architecture verified (Registry, Dynamic Extension, Gating, Personality & Safety Abort).")
 
+-- [Test 18] CSP Strict Bounds Safety, Multi-frame Init Guard & Dynamic Laps Sync
+print("[Test 18] Testing CSP Strict Bounds Safety, Dynamic Laps & AI Discovery...")
+local origGetCar = ac.getCar
+local origGetDriverName = ac.getDriverName
+local origGetSim = ac.getSim
+
+-- Simulate real CSP environment where only 5 cars exist (0: Player, 1..4: AI)
+-- and any call to getCar(i) or getDriverName(i) for i >= 5 throws a hard Lua error!
+local mockSim5 = {
+  carsCount = 5,
+  raceLaps = 13,
+  currentLap = 2,
+  sessionTime = 250.0,
+  isReplayActive = false,
+  isYellowFlag = false,
+  safetyCarActive = false,
+}
+ac.getSim = function() return mockSim5 end
+ac.getCar = function(i)
+  if i >= 5 or i < 0 then
+    error("CSP out of range: " .. tostring(i))
+  end
+  return {
+    index = i,
+    isConnected = true,
+    isAIControlled = (i > 0),
+    isPlayer = (i == 0),
+    driverName = (i == 0) and "Player Driver" or ("Rival AI " .. i),
+    position = vec3(0, 0, i * 35),
+    speedKmh = 180 + i * 5,
+    splinePosition = 0.1 + (i * 0.05),
+    lapCount = 2,
+    fuel = 30.0,
+    tyres = { [0] = { wear = 0.1 } }
+  }
+end
+ac.getDriverName = function(i)
+  if i >= 5 or i < 0 then
+    error("CSP driver out of range: " .. tostring(i))
+  end
+  return (i == 0) and "Player Driver" or ("Rival AI " .. i)
+end
+
+RaceContext.reset()
+RaceContext.updateFromSim(mockSim5)
+local rState = RaceContext.getRaceState()
+assertEq(rState.totalLaps, 13, "RaceContext successfully synced 13 dynamic laps from sim")
+assertEq(rState.carsCount, 5, "RaceContext carsCount matches 5 connected cars")
+
+local DashboardUI = require("lib/ui/DashboardUI")
+DashboardUI.renderMain(0.05, 4)
+local c1 = RaceContext.getCarState(1)
+assertEq(c1.driverName, "Rival AI 1", "AI driver 1 name resolved safely")
+
+-- Restore mocks
+ac.getCar = origGetCar
+ac.getDriverName = origGetDriverName
+ac.getSim = origGetSim
+print("  -> Passed: CSP Strict Bounds Safety, Dynamic Laps & AI Discovery confirmed.")
+
 print("==================================================================")
-print("  ALL 17 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
+print("  ALL 18 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
 print("==================================================================")

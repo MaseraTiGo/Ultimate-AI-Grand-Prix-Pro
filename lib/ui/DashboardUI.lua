@@ -83,24 +83,37 @@ local function setTooltip(tipText)
   end
 end
 
+local function safeGetCar(idx)
+  if not ac or not ac.getCar or not idx or idx < 0 then return nil end
+  local ok, res = pcall(ac.getCar, idx)
+  if ok and res then return res end
+  return nil
+end
+
+local function safeGetDriverName(idx)
+  if not ac or not ac.getDriverName or not idx or idx < 0 then return nil end
+  local ok, res = pcall(ac.getDriverName, idx)
+  if ok and res and res ~= "" then return res end
+  return nil
+end
+
 --------------------------------------------------------------------------------
 -- 2. Driver Name Resolution & Formatting (Adaptive Ellipsis & Zero Wrap)
 --------------------------------------------------------------------------------
 local function getDriverNameDisplay(carIdx, maxLen)
   maxLen = maxLen or 10
   local rawName = ""
-  if ac and ac.getDriverName then
-    local n = ac.getDriverName(carIdx)
-    if n and n ~= "" then rawName = n end
-  end
+  local n = safeGetDriverName(carIdx)
+  if n and n ~= "" then rawName = n end
+
   if rawName == "" then
     local c = RaceContext.getCarState(carIdx)
     if c and c.driverName and c.driverName ~= "" and not c.driverName:find("^AI #") and not c.driverName:find("^Car #") and not c.driverName:find("^AI车手") then
       rawName = c.driverName
     end
   end
-  if rawName == "" and ac and ac.getCar then
-    local car = ac.getCar(carIdx)
+  if rawName == "" then
+    local car = safeGetCar(carIdx)
     if car and car.driverName and car.driverName ~= "" then
       rawName = car.driverName
     end
@@ -131,22 +144,29 @@ local function refreshActiveAiCars()
   _activeAiCount = 0
   local carStates = RaceContext.getAllCarStates()
   local race = RaceContext.getRaceState()
-  local simCars = (ac and ac.getSim and ac.getSim().carsCount) or 0
+  local simCars = 0
+  if ac and ac.getSim then
+    local okSim, s = pcall(ac.getSim)
+    if okSim and s and s.carsCount then simCars = s.carsCount end
+  end
   local totalCars = math.max(race.carsCount or 0, simCars)
 
-  -- Determine maximum index to probe
+  -- Determine maximum index to probe (never probe blindly with unprotected ac.getCar)
   local maxProbe = math.min(23, math.max(totalCars - 1, 0))
-  if ac and ac.getCar then
+  if maxProbe < 1 then
     for probeIdx = 1, 23 do
-      if ac.getCar(probeIdx) then
-        maxProbe = math.max(maxProbe, probeIdx)
+      local pCar = safeGetCar(probeIdx)
+      if pCar then
+        maxProbe = probeIdx
+      else
+        break
       end
     end
   end
 
   for i = 1, maxProbe do
     local c = carStates[i]
-    local acCar = ac and ac.getCar and ac.getCar(i)
+    local acCar = safeGetCar(i)
     local isAI = false
 
     if acCar then
@@ -300,13 +320,11 @@ function M.renderLiveHudTab()
   local pSpeed = 0.0
   local pGear = 0
   local pRpm = 0
-  if ac and ac.getCar then
-    local pCar = ac.getCar(0)
-    if pCar then
-      pSpeed = pCar.speedKmh or 0.0
-      pGear = pCar.gear or 0
-      pRpm = pCar.rpm or 0
-    end
+  local pCar = safeGetCar(0)
+  if pCar then
+    pSpeed = pCar.speedKmh or 0.0
+    pGear = pCar.gear or 0
+    pRpm = pCar.rpm or 0
   end
 
   local pFuel = (playerState and playerState.fuelInTank) or 0.0
@@ -441,6 +459,12 @@ function M.renderPitWallTab()
       local _, prevFullName = getDriverNameDisplay(_selectedCarForRadio, 16)
       local prevLabel = EventHub.formatDriverLabel(_selectedCarForRadio, prevFullName)
       EventHub.pushCommandEvent("UI", string.format("已切换指挥目标至: %s", prevLabel), "SUCCESS")
+    else
+      local cur = _selectedCarForRadio or 1
+      _selectedCarForRadio = (cur > 1) and (cur - 1) or 1
+      local _, prevFullName = getDriverNameDisplay(_selectedCarForRadio, 16)
+      local prevLabel = EventHub.formatDriverLabel(_selectedCarForRadio, prevFullName)
+      EventHub.pushCommandEvent("UI", string.format("已切换指挥目标至: %s", prevLabel), "SUCCESS")
     end
   end
   setTooltip("切换至上一位活跃 AI 车手")
@@ -457,6 +481,14 @@ function M.renderPitWallTab()
       end
       local nextSlot = (currentSlot % _activeAiCount) + 1
       _selectedCarForRadio = _activeAiIndices[nextSlot]
+      local _, nextFullName = getDriverNameDisplay(_selectedCarForRadio, 16)
+      local nextLabel = EventHub.formatDriverLabel(_selectedCarForRadio, nextFullName)
+      EventHub.pushCommandEvent("UI", string.format("已切换指挥目标至: %s", nextLabel), "SUCCESS")
+    else
+      local cur = _selectedCarForRadio or 1
+      local totalC = (RaceContext.getRaceState().carsCount or 2)
+      local maxC = math.max(1, totalC - 1)
+      _selectedCarForRadio = (cur % maxC) + 1
       local _, nextFullName = getDriverNameDisplay(_selectedCarForRadio, 16)
       local nextLabel = EventHub.formatDriverLabel(_selectedCarForRadio, nextFullName)
       EventHub.pushCommandEvent("UI", string.format("已切换指挥目标至: %s", nextLabel), "SUCCESS")

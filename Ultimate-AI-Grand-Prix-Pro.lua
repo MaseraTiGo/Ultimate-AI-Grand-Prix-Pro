@@ -27,24 +27,37 @@ local EventHub = require("lib/core/EventHub")
 local DashboardUI = require("lib/ui/DashboardUI")
 
 local _initialized = false
+local _initAttempted = false
 local _tacticalTimer = 0.0
 local _strategyTimer = 0.0
 local _flushTimer = 0.0
 local _perfMs = 0.0
 local _activeAiCount = 0
 
+local function safeGetCar(idx)
+  if not ac or not ac.getCar or not idx or idx < 0 then return nil end
+  local ok, res = pcall(ac.getCar, idx)
+  if ok and res then return res end
+  return nil
+end
+
+local function safeGetDriverName(idx)
+  if not ac or not ac.getDriverName or not idx or idx < 0 then return nil end
+  local ok, res = pcall(ac.getDriverName, idx)
+  if ok and res and res ~= "" then return res end
+  return nil
+end
+
 local function getCarDriverName(idx)
-  if ac and ac.getDriverName then
-    local n = ac.getDriverName(idx)
-    if n and n ~= "" then return n end
-  end
-  local c = ac and ac.getCar and ac.getCar(idx)
+  local n = safeGetDriverName(idx)
+  if n and n ~= "" then return n end
+  local c = safeGetCar(idx)
   if c and c.driverName and c.driverName ~= "" then return c.driverName end
-  return "AI #" .. (idx + 1)
+  return (idx == 0) and "Player" or string.format("Driver #%02d", idx + 1)
 end
 
 local function getCarPositionScalar(i)
-  local c = ac and ac.getCar and ac.getCar(i)
+  local c = safeGetCar(i)
   if c and c.position then
     return c.position.x or 0.0, c.position.y or 0.0, c.position.z or 0.0
   end
@@ -66,11 +79,20 @@ function script.init()
   TelemetryBridge.reset()
   EventHub.init()
 
-  local sim = ac and ac.getSim and ac.getSim()
+  local sim = nil
+  if ac and ac.getSim then
+    local okSim, res = pcall(ac.getSim)
+    if okSim and res then sim = res end
+  end
+
   if sim then
-    RaceContext.updateFromSim(sim)
-    local laps = (sim.raceLaps and sim.raceLaps > 0) and sim.raceLaps or (sim.laps and sim.laps > 0 and sim.laps or 13)
-    StrategyCoordinator.rebuildFieldStrategy(laps, 1, 2.5)
+    pcall(RaceContext.updateFromSim, sim)
+    local laps = (sim.raceLaps and sim.raceLaps > 0 and sim.raceLaps)
+      or (sim.sessionLaps and sim.sessionLaps > 0 and sim.sessionLaps)
+      or (sim.totalLaps and sim.totalLaps > 0 and sim.totalLaps)
+      or (sim.laps and sim.laps > 0 and sim.laps)
+      or 13
+    pcall(StrategyCoordinator.rebuildFieldStrategy, laps, 1, 2.5)
   end
 
   _initialized = true
@@ -123,7 +145,7 @@ function script.update(dt)
     if carCount < 1 then carCount = 1 end
     _activeAiCount = 0
 
-    local playerCar = ac.getCar(0)
+    local playerCar = safeGetCar(0)
     local playerDriverName = getCarDriverName(0)
 
     -- Update Spatial 3-Tier Dynamic LOD based on player position
@@ -131,10 +153,10 @@ function script.update(dt)
     LODScheduler.updateTiers(playerPos, carCount, getCarPositionScalar)
 
     -- Update Global 24-Car Topological Neighbor Ring (AI-to-AI Inter-Vehicle Awareness)
-    RaceContext.updateTopology(carCount, ac.getCar)
+    RaceContext.updateTopology(carCount, safeGetCar)
 
     for i = 0, carCount - 1 do
-      local c = ac.getCar(i)
+      local c = safeGetCar(i)
       if c then
         RaceContext.updateCarFromAc(i, c)
         local cState = RaceContext.getCarState(i)
@@ -190,10 +212,10 @@ function script.update(dt)
           local aheadIdx, aheadDist, behindIdx, behindDist = RaceContext.getNeighbors(i)
 
           if aheadIdx >= 0 and aheadDist < 35.0 then
-            aheadCar = ac.getCar(aheadIdx)
+            aheadCar = safeGetCar(aheadIdx)
           end
           if behindIdx >= 0 and behindDist < 35.0 then
-            behindCar = ac.getCar(behindIdx)
+            behindCar = safeGetCar(behindIdx)
           end
 
           -- Build Race Context
@@ -250,11 +272,19 @@ function script.update(dt)
 end
 
 local function ensureInitialized()
-  if not _initialized then
-    if script.init then
-      pcall(script.init)
+  if _initialized then return true end
+  if _initAttempted then return false end
+  _initAttempted = true
+
+  if script.init then
+    local ok, err = pcall(script.init)
+    if not ok then
+      _initialized = true -- Prevent recursive crash looping
+      Logger.error("LIFECYCLE", "Initialization error: " .. tostring(err))
+      return false
     end
   end
+  return _initialized
 end
 
 local _lastWindowTick = 0.0

@@ -11,6 +11,14 @@
 local M = {}
 
 local MAX_CARS = 24
+
+local function safeGetCar(idx)
+  if not ac or not ac.getCar or not idx or idx < 0 then return nil end
+  local ok, res = pcall(ac.getCar, idx)
+  if ok and res then return res end
+  return nil
+end
+
 local _activeOverrides = {}  -- carIndex -> { active, duration, elapsed, callback }
 local _stuckWatch = {}       -- carIndex -> { timer, lastPos }
 local _rejoinRamp = {}        -- carIndex -> { remainingTimer, totalTimer, initialCap }
@@ -80,7 +88,7 @@ function M.stepPhysics(dt)
         item.active = false
         item.callback = nil
       else
-        local car = ac.getCar(carIdx)
+        local car = safeGetCar(carIdx)
         if car and car.isAIControlled then
           local latGExceeded = false
           if car.acceleration and math.abs(car.acceleration.x or 0) > 29.4 then
@@ -116,7 +124,7 @@ function M.stepPhysics(dt)
       if ramp.remainingTimer <= 0 then
         ramp.active = false
       else
-        local car = ac.getCar(carIdx)
+        local car = safeGetCar(carIdx)
         if car and car.isAIControlled then
           local progress = 1.0 - (ramp.remainingTimer / ramp.totalTimer)
           -- Ramp throttle from 60% up to 100%
@@ -143,7 +151,7 @@ local function isCrowdedNearby(car)
   local count = sim and sim.carsCount or 0
   for i = 0, count - 1 do
     if i ~= car.index then
-      local other = ac.getCar(i)
+      local other = safeGetCar(i)
       if other and other.position and car.position then
         local dx = other.position.x - car.position.x
         local dy = other.position.y - car.position.y
