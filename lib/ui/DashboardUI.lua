@@ -204,19 +204,47 @@ local function refreshActiveAiCars()
   return _activeAiCount
 end
 
-local _availablePersonas = { "aggressive_bull", "tactical_master", "ice_man", "gentleman_driver", "balanced" }
+local _availablePersonas = { "aggressive_bull", "tactical_master", "ice_man", "gentleman_driver", "balanced", "f1_verstappen", "f1_hamilton", "f1_leclerc", "f1_alonso", "f1_norris" }
 local _personaNames = {
   ["aggressive_bull"] = "激进猛牛 (超进攻/高消耗)",
   ["tactical_master"] = "战术大师 (控场/精准卡位)",
   ["ice_man"] = "冰人 (极稳/极佳保胎)",
   ["gentleman_driver"] = "绅士车手 (留白/保守跟车)",
-  ["balanced"] = "均衡车手 (标称配置)"
+  ["balanced"] = "均衡车手 (标称配置)",
+  ["f1_verstappen"] = "Max Verstappen (红牛/极度侵略)",
+  ["f1_hamilton"] = "Lewis Hamilton (法拉利/极致保胎)",
+  ["f1_leclerc"] = "Charles Leclerc (法拉利/排位速度)",
+  ["f1_alonso"] = "Fernando Alonso (阿斯顿马丁/战术大师)",
+  ["f1_norris"] = "Lando Norris (迈凯伦/精准稳定)"
 }
 
--- Setup panel working state
-local _setupTargetLaps = 13
+local _personaButtons = {
+  { key = "aggressive_bull", label = "激进猛牛" },
+  { key = "tactical_master", label = "战术大师" },
+  { key = "ice_man", label = "冰人保胎" },
+  { key = "gentleman_driver", label = "绅士防守" },
+  { key = "balanced", label = "标称均衡" },
+  { key = "f1_verstappen", label = "Verstappen" },
+  { key = "f1_hamilton", label = "Hamilton" },
+  { key = "f1_leclerc", label = "Leclerc" },
+  { key = "f1_alonso", label = "Alonso" },
+  { key = "f1_norris", label = "Norris" },
+}
+
+-- Setup panel working state (Total laps is locked by FIA / session rules)
 local _setupStops = 1
 local _setupBaseFpl = 2.5
+
+-- Pit Wall Work Order Modal state
+local _showWorkOrderModal = false
+local _workOrderCarIndex = 1
+local _woChangeTyres = true
+local _woCompoundIndex = 0
+local _woCompoundName = "Default"
+local _woRefuelLiters = 0.0
+
+-- Persona grid selection state
+local _selectedCarForPersona = nil
 
 --------------------------------------------------------------------------------
 -- 4. Main Header & Entry Point
@@ -503,16 +531,66 @@ function M.renderPitWallTab()
   setTooltip("指令赛车提升激进侵略度，全力向前推进")
 
   ui.sameLine()
+  if ui.button("激进超车 (ATTACK)##cmd_attack") then
+    StrategyCoordinator.issueRadioOrder(_selectedCarForRadio, "ATTACK")
+  end
+  setTooltip("指令赛车开启超车通道，缩短跟车留白，执行晚刹车极限超越")
+
+  ui.sameLine()
+  if ui.button("极限防守 (DEFEND)##cmd_defend") then
+    StrategyCoordinator.issueRadioOrder(_selectedCarForRadio, "DEFEND")
+  end
+  setTooltip("指令赛车死守内线防守走线，大直道破坏后车尾流")
+
+  ui.sameLine()
   if ui.button("保胎节油 (SAVE)##cmd_save") then
     StrategyCoordinator.issueRadioOrder(_selectedCarForRadio, "SAVE")
   end
   setTooltip("指令赛车进入滑行断油模式 (Lift & Coast)，延长轮胎与燃油寿命")
 
+  local selCar = RaceContext.getCarState(_selectedCarForRadio)
+  local selPlan = StrategyCoordinator.getCarPlan(_selectedCarForRadio)
+  local selFuel = selCar and selCar.fuelInTank or 30.0
+  local selMaxFuel = selCar and selCar.maxFuelCapacity or 100.0
+  local selFpl = (selCar and selCar.empiricalFpl) or (selPlan and selPlan.dynamicFpl) or 2.5
+  local selEstLaps = (selFpl > 0) and math.floor(selFuel / selFpl) or 0
+
   ui.sameLine()
   if ui.button("本圈进站 (BOX)##cmd_box") then
+    _workOrderCarIndex = _selectedCarForRadio
+    _showWorkOrderModal = true
+    _woChangeTyres = true
+    _woCompoundIndex = selCar.compoundIndex or 0
+    local compounds = RaceContext.getCarCompounds(_selectedCarForRadio)
+    _woCompoundName = (compounds[1] and (compounds[1].longName or compounds[1].shortName)) or "默认配方"
+    for _, comp in ipairs(compounds) do
+      if comp.index == _woCompoundIndex then
+        _woCompoundName = comp.longName or comp.shortName
+        break
+      end
+    end
+    local room = math.max(0.0, selMaxFuel - selFuel)
+    local race = RaceContext.getRaceState()
+    local curLap = race.currentLap or 1
+    local totalLaps = race.totalLaps or 13
+    local remainLaps = math.max(0, totalLaps - curLap)
+    local fuelToFinish = math.max(0.0, (remainLaps * selFpl + 2.0) - selFuel)
+    _woRefuelLiters = math.min(room, math.floor(fuelToFinish * 10 + 0.5) / 10)
+  end
+  setTooltip("配置进站工单（选择轮胎配方、加油量）并向车手下达进站指令")
+
+  ui.sameLine()
+  if ui.button("极速进站 (FAST)##cmd_fastbox") then
+    RaceContext.setCarWorkOrder(_selectedCarForRadio, {
+      changeTyres = true,
+      targetCompoundIndex = selCar.compoundIndex or 0,
+      targetCompoundName = selCar.compoundName or "Default",
+      refuelLiters = 0.0,
+      isConfirmed = true,
+    })
     StrategyCoordinator.issueRadioOrder(_selectedCarForRadio, "BOX_THIS_LAP")
   end
-  setTooltip("强制要求赛车贴靠维修区入口并在本圈进站 (自动注入底层油量诱导激活原生进站)")
+  setTooltip("一键极速进站 (采用智能默认配置换胎不补油，无需手动配置工单)")
 
   ui.sameLine()
   if ui.button("解除指令 (CLEAR)##cmd_clear") then
@@ -532,6 +610,124 @@ function M.renderPitWallTab()
     drawInlineColored(statusCol, statusTag)
     ui.sameLine()
     ui.text(string.format("[%s] %s", latestCmd.timeStr, latestCmd.msg))
+  end
+
+  ui.separator()
+
+  -- 2. Synchronized Driver Telemetry & Vehicle Health Panel
+  drawTextColored(COLOR_CYAN, string.format("【#%02d %s 实时机械工况与车况遥测】", _selectedCarForRadio + 1, fullTargetName))
+  local engHealth = math.max(0.0, math.min(100.0, (selCar.engineLifeLeft or 1000.0) / 10.0))
+  local waterT = selCar.waterTemp or 90.0
+  local gbHealth = math.max(0.0, math.min(100.0, (1.0 - (selCar.gearboxDamage or 0.0)) * 100.0))
+  local bodyDmg = selCar.bodyDamagePct or 0.0
+  ui.text(string.format("  引擎寿命: %5.1f%% | 水温: %4.1f°C | 变速箱健康: %5.1f%% | 车身损伤: %4.1f%%",
+    engHealth, waterT, gbHealth, bodyDmg))
+
+  local fplTag = selCar.empiricalFpl and "[EMA实测]" or "[动态预估]"
+  ui.text(string.format("  燃油状态: %4.1f L / %4.1f L | 单圈能耗: %.2f L/圈 %s | 预计续航: ~%d 圈",
+    selFuel, selMaxFuel, selFpl, fplTag, selEstLaps))
+
+  local wWear = selCar.wheelWear or { 1.0, 1.0, 1.0, 1.0 }
+  local wCore = selCar.wheelCoreTemp or { 90.0, 90.0, 90.0, 90.0 }
+  local wBrake = selCar.wheelBrakeTemp or { 250.0, 250.0, 250.0, 250.0 }
+  local compName = selCar.compoundName or "Default"
+  ui.text(string.format("  四轮磨损与胎温 (左前/右前/左后/右后) [配方: %s]:", compName))
+  ui.text(string.format("    左前: %3d%% (%3d°C / 刹%3d°C)  |  右前: %3d%% (%3d°C / 刹%3d°C)",
+    math.floor(wWear[1] * 100 + 0.5), math.floor(wCore[1] + 0.5), math.floor(wBrake[1] + 0.5),
+    math.floor(wWear[2] * 100 + 0.5), math.floor(wCore[2] + 0.5), math.floor(wBrake[2] + 0.5)))
+  ui.text(string.format("    左后: %3d%% (%3d°C / 刹%3d°C)  |  右后: %3d%% (%3d°C / 刹%3d°C)",
+    math.floor(wWear[3] * 100 + 0.5), math.floor(wCore[3] + 0.5), math.floor(wBrake[3] + 0.5),
+    math.floor(wWear[4] * 100 + 0.5), math.floor(wCore[4] + 0.5), math.floor(wBrake[4] + 0.5)))
+
+  -- 3. Pre-Dispatch Pit Stop Work Order Modal
+  if _showWorkOrderModal and _workOrderCarIndex == _selectedCarForRadio then
+    ui.separator()
+    drawTextColored(COLOR_GOLD, string.format("【进站作业工单配置 (PIT WORK ORDER) - %s】", targetLabel))
+
+    -- Tire Change
+    ui.text("  1. 轮胎作业:")
+    if ui.button(_woChangeTyres and "[ 换新轮胎: 是 ]##wo_tyres_yes" or "  换新轮胎: 是  ##wo_tyres_yes") then
+      _woChangeTyres = true
+    end
+    ui.sameLine()
+    if ui.button(not _woChangeTyres and "[ 保持原胎: 否 ]##wo_tyres_no" or "  保持原胎: 否  ##wo_tyres_no") then
+      _woChangeTyres = false
+    end
+    setTooltip("选择本次进站是否更换一套全新轮胎")
+
+    if _woChangeTyres then
+      ui.sameLine()
+      ui.text(" 目标配方:")
+      local compounds = RaceContext.getCarCompounds(_selectedCarForRadio)
+      for cIdx, comp in ipairs(compounds) do
+        ui.sameLine()
+        local isSel = (_woCompoundIndex == comp.index)
+        local btnLabel = string.format("%s%s##wo_comp_%d", isSel and "[ " or " ", comp.longName or comp.shortName, comp.index)
+        if isSel then btnLabel = btnLabel .. " ]" else btnLabel = btnLabel .. " " end
+        if ui.button(btnLabel) then
+          _woCompoundIndex = comp.index
+          _woCompoundName = comp.longName or comp.shortName
+        end
+        setTooltip(string.format("选定轮胎配方: %s (%s)", comp.longName, comp.shortName))
+      end
+    end
+
+    -- Refueling
+    local room = math.max(0.0, selMaxFuel - selFuel)
+    local race = RaceContext.getRaceState()
+    local curLap = race.currentLap or 1
+    local totalLaps = race.totalLaps or 13
+    local remainLaps = math.max(0, totalLaps - curLap)
+    local fuelToFinish = math.max(0.0, (remainLaps * selFpl + 2.0) - selFuel)
+    local safeRecRefuel = math.min(room, math.floor(fuelToFinish * 10 + 0.5) / 10)
+
+    ui.text(string.format("  2. 燃油加注 (剩余容积: %.1f L | 跑完余赛建议: +%.1f L):", room, safeRecRefuel))
+    if ui.button(_woRefuelLiters == 0 and "[ 不加油 (0L) ]##wo_rf_0" or "  不加油 (0L)  ##wo_rf_0") then
+      _woRefuelLiters = 0.0
+    end
+    setTooltip("纯换胎不补油 (现代F1赛事规则 / 短停站)")
+    ui.sameLine()
+    if ui.button(string.format(" 安全跑完 (+%.1fL)##wo_rf_safe", safeRecRefuel)) then
+      _woRefuelLiters = safeRecRefuel
+    end
+    setTooltip("补加足够跑完剩余比赛加 2.0L 保底的安全燃油")
+    ui.sameLine()
+    if ui.button(" +10L##wo_rf_10 ") then
+      _woRefuelLiters = math.min(room, _woRefuelLiters + 10.0)
+    end
+    ui.sameLine()
+    if ui.button(" +25L##wo_rf_25 ") then
+      _woRefuelLiters = math.min(room, _woRefuelLiters + 25.0)
+    end
+    ui.sameLine()
+    if ui.button(" 加满油箱 (MAX)##wo_rf_max ") then
+      _woRefuelLiters = room
+    end
+
+    ui.text(string.format("    -> 计划加注油量: %.1f L (加注后预计油量: %.1f L)",
+      _woRefuelLiters, math.min(selMaxFuel, selFuel + _woRefuelLiters)))
+
+    -- Confirmation
+    if ui.button("【确认工单并下达进站 (CONFIRM & ISSUE BOX)】##wo_confirm") then
+      RaceContext.setCarWorkOrder(_selectedCarForRadio, {
+        changeTyres = _woChangeTyres,
+        targetCompoundIndex = _woCompoundIndex,
+        targetCompoundName = _woCompoundName,
+        refuelLiters = _woRefuelLiters,
+        isConfirmed = true,
+      })
+      StrategyCoordinator.issueRadioOrder(_selectedCarForRadio, "BOX_THIS_LAP")
+      _showWorkOrderModal = false
+      EventHub.pushCommandEvent("WORK_ORDER", string.format("已签发 %s 进站工单: 换胎=%s(%s), 补油=%.1fL",
+        targetLabel, _woChangeTyres and "是" or "否", _woCompoundName, _woRefuelLiters), "SUCCESS")
+    end
+    setTooltip("向机组签发该工单并立即通知车手本圈进站")
+
+    ui.sameLine()
+    if ui.button(" 取消 (CANCEL)##wo_cancel ") then
+      _showWorkOrderModal = false
+    end
+    setTooltip("取消工单配置，不发送进站指令")
   end
 
   ui.separator()
@@ -610,43 +806,28 @@ function M.renderSetup()
   ui.separator()
 
   local race = RaceContext.getRaceState()
-  local totalLaps = race.totalLaps or _setupTargetLaps or 13
+  local totalLaps = race.totalLaps or 13
 
-  ui.text("1. 比赛基础参数设定:")
-  ui.text(string.format("  当前比赛总圈数: %d 圈  |  基准预估单圈油耗: %.2f L/圈", totalLaps, _setupBaseFpl))
+  ui.text("1. 比赛基础参数设定 (FIA 官方正赛规程锁定):")
+  ui.text(string.format("  官方总圈数: %d 圈 (赛程已锁定)  |  基准预估单圈油耗: %.2f L/圈", totalLaps, _setupBaseFpl))
 
-  if ui.button("圈数 -1##setup_minus") then
-    _setupTargetLaps = math.max(1, totalLaps - 1)
-    RaceContext.setTotalLaps(_setupTargetLaps)
-    StrategyCoordinator.rebuildFieldStrategy(_setupTargetLaps, _setupStops, _setupBaseFpl)
-  end
-  setTooltip("将整场比赛总圈数减少 1 圈并重新计算全场进站窗口")
-  ui.sameLine()
-  if ui.button("圈数 +1##setup_plus") then
-    _setupTargetLaps = math.min(200, totalLaps + 1)
-    RaceContext.setTotalLaps(_setupTargetLaps)
-    StrategyCoordinator.rebuildFieldStrategy(_setupTargetLaps, _setupStops, _setupBaseFpl)
-  end
-  setTooltip("将整场比赛总圈数增加 1 圈并重新计算全场进站窗口")
-  ui.sameLine()
-  if ui.button("圈数 +5##setup_plus5") then
-    _setupTargetLaps = math.min(200, totalLaps + 5)
-    RaceContext.setTotalLaps(_setupTargetLaps)
-    StrategyCoordinator.rebuildFieldStrategy(_setupTargetLaps, _setupStops, _setupBaseFpl)
-  end
-  setTooltip("将整场比赛总圈数增加 5 圈")
-  ui.sameLine()
-  if ui.button("低油耗 (2.2L)##setup_fpl_low") then
-    _setupBaseFpl = 2.2
+  if ui.button("省油特性 (2.0L)##setup_fpl_low") then
+    _setupBaseFpl = 2.0
     StrategyCoordinator.rebuildFieldStrategy(totalLaps, _setupStops, _setupBaseFpl)
   end
   setTooltip("设定为省油车辆参数 (如 GT4 / 房车 / 高效调校)")
   ui.sameLine()
-  if ui.button("高油耗 (2.8L)##setup_fpl_high") then
-    _setupBaseFpl = 2.8
+  if ui.button("标准特性 (2.5L)##setup_fpl_med") then
+    _setupBaseFpl = 2.5
     StrategyCoordinator.rebuildFieldStrategy(totalLaps, _setupStops, _setupBaseFpl)
   end
-  setTooltip("设定为大排量/推圈车辆参数 (如 F1 / GT3 / 冲刺调校)")
+  setTooltip("设定为标准 GT3 / 单座方程式标称能耗")
+  ui.sameLine()
+  if ui.button("高耗特性 (3.2L)##setup_fpl_high") then
+    _setupBaseFpl = 3.2
+    StrategyCoordinator.rebuildFieldStrategy(totalLaps, _setupStops, _setupBaseFpl)
+  end
+  setTooltip("设定为大排量/推圈车辆参数 (如 F1 / GT3 / 斯帕长赛道调校)")
 
   ui.separator()
 
@@ -736,18 +917,33 @@ function M.renderGridSetupTab()
     drawInlineColored(COLOR_BLUE, string.format("[ %s ]", pDisplay))
     ui.sameLine()
 
-    if ui.button(string.format("切换性格模版##persona_%d", i)) then
-      local nextIdx = 1
-      for idx, key in ipairs(_availablePersonas) do
-        if curOverride == key then
-          nextIdx = (idx % #_availablePersonas) + 1
-          break
-        end
-      end
-      personaLoader.setManualOverride(i, _availablePersonas[nextIdx])
-      EventHub.pushCommandEvent("GRID", string.format("已将 %s 性格覆写为: %s", dLabel, _personaNames[_availablePersonas[nextIdx]] or _availablePersonas[nextIdx]), "SUCCESS")
+    local isEditing = (_selectedCarForPersona == i)
+    if ui.button(string.format("%s##btn_persona_%d", isEditing and "收起模版" or "自选模版", i)) then
+      _selectedCarForPersona = isEditing and nil or i
     end
-    setTooltip(string.format("循环切换 %s 的驾驶性格模版", dLabel))
+    setTooltip(string.format("展开/收起 %s 的性格模版选择面板", dLabel))
+
+    ui.sameLine()
+    if ui.button(string.format("恢复默认##reset_persona_%d", i)) then
+      personaLoader.setManualOverride(i, nil)
+      EventHub.pushCommandEvent("GRID", string.format("已将 %s 恢复为出厂原生性格", dLabel), "SUCCESS")
+    end
+    setTooltip("清除当前手动覆写，恢复该车手原厂名字对应的基因")
+
+    if isEditing then
+      ui.text("    -> 可选拟人流派与 F1 传奇基因:")
+      for _, pBtn in ipairs(_personaButtons) do
+        ui.sameLine()
+        local isCurrent = (curOverride == pBtn.key)
+        local btnTxt = string.format("%s%s##sel_p_%d_%s", isCurrent and "[ " or " ", pBtn.label, i, pBtn.key)
+        if isCurrent then btnTxt = btnTxt .. " ]" else btnTxt = btnTxt .. " " end
+        if ui.button(btnTxt) then
+          personaLoader.setManualOverride(i, pBtn.key)
+          EventHub.pushCommandEvent("GRID", string.format("已将 %s 性格覆写为: %s", dLabel, _personaNames[pBtn.key] or pBtn.key), "SUCCESS")
+        end
+        setTooltip(string.format("套用性格模版: %s", _personaNames[pBtn.key] or pBtn.key))
+      end
+    end
   end
 end
 

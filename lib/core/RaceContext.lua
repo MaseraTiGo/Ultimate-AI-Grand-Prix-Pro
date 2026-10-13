@@ -69,6 +69,34 @@ for i = 0, MAX_CARS - 1 do
     tyreWarmupProgress = 1.0, -- 0.0 (ice cold) ~ 1.0 (optimal)
     tyreTempNorm = 1.0,       -- 1.0 = nominal, >1.3 = cooked / overheated
 
+    -- Mechanical Health & Damage (CSP StateCar)
+    engineLifeLeft = 1000.0,
+    waterTemp = 90.0,
+    gearboxDamage = 0.0,
+    bodyDamagePct = 0.0,
+    suspensionDamagePct = 0.0,
+
+    -- Per-wheel Telemetry: LF (1), RF (2), LR (3), RR (4)
+    wheelWear = { 1.0, 1.0, 1.0, 1.0 },       -- 1.0 (new) to 0.0 (worn)
+    wheelCoreTemp = { 90.0, 90.0, 90.0, 90.0 }, -- °C
+    wheelBrakeTemp = { 250.0, 250.0, 250.0, 250.0 }, -- °C
+    compoundIndex = 0,
+    compoundName = "Default",
+
+    -- Empirical Fuel Tracking (EMA)
+    empiricalFpl = nil,
+    fuelAtLapStart = 30.0,
+    lastTrackedLap = 0,
+
+    -- Dynamic Pit Stop Work Order
+    pendingWorkOrder = {
+      changeTyres = true,
+      targetCompoundIndex = 0,
+      targetCompoundName = "Default",
+      refuelLiters = 0.0,
+      isConfirmed = false,
+    },
+
     -- Dynamic Racecraft & Strategy Integration
     tacticalState = "CRUISE",
     activeSkill = "NONE",
@@ -416,6 +444,59 @@ function M.updateCarFromAc(carIndex, c)
   if fuelVal and type(fuelVal) == "number" then
     s.fuelInTank = fuelVal
   end
+  local maxFuel = safeCarGet(c, "maxFuel")
+  if maxFuel and type(maxFuel) == "number" and maxFuel > 0 then
+    s.maxFuelCapacity = maxFuel
+  end
+
+  -- Empirical Fuel Tracking (EMA per completed lap)
+  if s.lapCount > (s.lastTrackedLap or 0) then
+    if s.fuelAtLapStart and s.fuelInTank then
+      local deltaF = s.fuelAtLapStart - s.fuelInTank
+      if deltaF > 0.1 and deltaF < 20.0 then
+        if s.empiricalFpl == nil then
+          s.empiricalFpl = deltaF
+        else
+          s.empiricalFpl = 0.70 * s.empiricalFpl + 0.30 * deltaF
+        end
+        s.fuelPerLap = s.empiricalFpl
+      end
+    end
+    s.fuelAtLapStart = s.fuelInTank
+    s.lastTrackedLap = s.lapCount
+  end
+
+  -- Mechanical Health & Damage Telemetry
+  local engLife = safeCarGet(c, "engineLifeLeft")
+  if engLife and type(engLife) == "number" then
+    s.engineLifeLeft = engLife
+  end
+  local wTemp = safeCarGet(c, "waterTemperature")
+  if wTemp and type(wTemp) == "number" then
+    s.waterTemp = wTemp
+  end
+  local gbDmg = safeCarGet(c, "gearboxDamage")
+  if gbDmg and type(gbDmg) == "number" then
+    s.gearboxDamage = gbDmg
+  end
+  local dmg = safeCarGet(c, "damage")
+  if dmg and type(dmg) == "table" then
+    local maxD = 0.0
+    for dIdx = 0, 3 do
+      local val = dmg[dIdx]
+      if type(val) == "number" and val > maxD then maxD = val end
+    end
+    s.bodyDamagePct = math.min(100.0, maxD)
+  end
+  local susp = safeCarGet(c, "suspensionDamage")
+  if susp and type(susp) == "table" then
+    local maxS = 0.0
+    for sIdx = 0, 3 do
+      local sVal = susp[sIdx]
+      if type(sVal) == "number" and sVal > maxS then maxS = sVal end
+    end
+    s.suspensionDamagePct = math.min(100.0, maxS * 100.0)
+  end
 
   local dName = safeGetDriverName(carIndex)
   if dName and dName ~= "" then
@@ -463,6 +544,53 @@ function M.updateCarFromAc(carIndex, c)
   if wearVal then
     s.tyreWear = wearVal
   end
+
+  -- Per-wheel telemetry & compound index
+  local compIdx = safeCarGet(c, "compoundIndex")
+  if compIdx and type(compIdx) == "number" then
+    s.compoundIndex = compIdx
+  end
+  if wheels then
+    for wIdx = 0, 3 do
+      local w = wheels[wIdx]
+      if w then
+        local wWear = safeCarGet(w, "tyreWear")
+        if type(wWear) == "number" then s.wheelWear[wIdx + 1] = wWear end
+        local wCore = safeCarGet(w, "tyreCoreTemperature")
+        if type(wCore) == "number" then s.wheelCoreTemp[wIdx + 1] = wCore end
+        local wBrake = safeCarGet(w, "brakeTemperature")
+        if type(wBrake) == "number" then s.wheelBrakeTemp[wIdx + 1] = wBrake end
+      end
+    end
+  end
+
+  -- Execute pending work order if confirmed upon entering/dwelling in pit bay
+  if s.isInPit and s.pendingWorkOrder and s.pendingWorkOrder.isConfirmed then
+    local wo = s.pendingWorkOrder
+    if wo.refuelLiters and wo.refuelLiters > 0 then
+      local targetFuel = math.min(s.maxFuelCapacity, s.fuelInTank + wo.refuelLiters)
+      if physics and physics.setCarFuel then
+        physics.setCarFuel(carIndex, targetFuel)
+      end
+      s.fuelInTank = targetFuel
+    end
+    if wo.changeTyres then
+      if physics and physics.setAITyres then
+        physics.setAITyres(carIndex, wo.targetCompoundIndex or 0)
+      end
+      s.tyreWear = 0.0
+      for wIdx = 1, 4 do s.wheelWear[wIdx] = 1.0 end
+      s.compoundIndex = wo.targetCompoundIndex or 0
+      s.compoundName = wo.targetCompoundName or "Default"
+    end
+    wo.isConfirmed = false
+    if EventHub then
+      local dLabel = EventHub.formatDriverLabel(carIndex, s.driverName)
+      local msg = string.format("[%s] %s 进站工单执行完毕: 配方 %s, 补油 %.1fL",
+        lapPrefix, dLabel, wo.targetCompoundName or "默认", wo.refuelLiters or 0.0)
+      EventHub.pushCommandEvent("PIT_WORK", msg, "SUCCESS")
+    end
+  end
 end
 
 function M.reset()
@@ -481,6 +609,9 @@ function M.reset()
     s.radioOrderActive = false
     s.tyreWarmupProgress = 1.0
     s.tyreTempNorm = 1.0
+    if s.pendingWorkOrder then s.pendingWorkOrder.isConfirmed = false end
+    s.empiricalFpl = nil
+    s.lastTrackedLap = 0
   end
 end
 
@@ -579,6 +710,70 @@ function M.getNeighbors(carIndex)
          _topoDistAhead[carIndex] or 999.0,
          _topoBehindIndex[carIndex] or -1,
          _topoDistBehind[carIndex] or 999.0
+end
+
+--- Dynamically query actual tire compound options for the vehicle
+local _compoundsCache = {}
+
+function M.getCarCompounds(carIndex)
+  if _compoundsCache[carIndex] then
+    return _compoundsCache[carIndex]
+  end
+
+  local list = {}
+  if ac and ac.getTyresName then
+    for idx = 0, 10 do
+      local okN, sName = pcall(ac.getTyresName, carIndex, idx)
+      if okN and sName and type(sName) == "string" and sName ~= "" then
+        local lName = sName
+        if ac.getTyresLongName then
+          local okL, resL = pcall(ac.getTyresLongName, carIndex, idx, false)
+          if okL and resL and type(resL) == "string" and resL ~= "" then
+            lName = resL
+          end
+        end
+        list[#list + 1] = {
+          index = idx,
+          shortName = sName,
+          longName = lName,
+        }
+      else
+        break
+      end
+    end
+  end
+
+  if #list == 0 then
+    list[1] = { index = 0, shortName = "SOFT", longName = "Soft Compound" }
+    list[2] = { index = 1, shortName = "MED", longName = "Medium Compound" }
+    list[3] = { index = 2, shortName = "HARD", longName = "Hard Compound" }
+  end
+
+  _compoundsCache[carIndex] = list
+  return list
+end
+
+--- Configure pit stop work order for a specific car
+function M.setCarWorkOrder(carIndex, workOrder)
+  if not carIndex or carIndex < 0 or carIndex >= MAX_CARS then return end
+  local s = _carStates[carIndex]
+  if not s or not workOrder then return end
+  s.pendingWorkOrder = s.pendingWorkOrder or {}
+  if workOrder.changeTyres ~= nil then
+    s.pendingWorkOrder.changeTyres = workOrder.changeTyres
+  end
+  if workOrder.targetCompoundIndex ~= nil then
+    s.pendingWorkOrder.targetCompoundIndex = workOrder.targetCompoundIndex
+  end
+  if workOrder.targetCompoundName ~= nil then
+    s.pendingWorkOrder.targetCompoundName = workOrder.targetCompoundName
+  end
+  if workOrder.refuelLiters ~= nil then
+    s.pendingWorkOrder.refuelLiters = math.max(0.0, workOrder.refuelLiters)
+  end
+  if workOrder.isConfirmed ~= nil then
+    s.pendingWorkOrder.isConfirmed = workOrder.isConfirmed
+  end
 end
 
 return M

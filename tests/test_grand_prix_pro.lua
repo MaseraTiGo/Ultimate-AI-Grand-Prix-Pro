@@ -520,6 +520,11 @@ local dangerGeo = { isStraight = false, aheadDist = 1.0 }
 local abortCheck = feintSkill.checkAbort(chaserCar, targetCar, nil, dangerGeo)
 assertTrue(abortCheck == true, "Skill triggers abort when corner hazard or proximity violation occurs")
 
+-- Restore built-in skill registry and reset arbitrator state
+SkillRegistry.reset()
+SkillRegistry.init()
+SkillArbitrator.reset()
+
 print("  -> Passed: X-Skill Architecture verified (Registry, Dynamic Extension, Gating, Personality & Safety Abort).")
 
 -- [Test 18] CSP Strict Bounds Safety, Multi-frame Init Guard & Dynamic Laps Sync
@@ -887,6 +892,129 @@ ac.getCar = origGetCarFunc
 assertTrue(not falseBroadcastFound, "EventHub strictly suppressed tactical combat broadcast when car is stationary on grid")
 print("  -> Passed: Launch / Low-Speed Safety Gating & Broadcast Plausibility confirmed.")
 
+-- ==============================================================================
+-- [Test 23] Adaptive Empirical Fuel Tracking (EMA) & Dynamic Pit Timing
+-- ==============================================================================
+print("[Test 23] Testing Adaptive Fuel Estimation (EMA) & Dynamic Pit Timing...")
+local c1State = RaceContext.getCarState(1)
+c1State.lapCount = 0
+c1State.fuelInTank = 50.0
+c1State.fuelAtLapStart = 50.0
+c1State.lastTrackedLap = 0
+c1State.empiricalFpl = nil
+
+-- Lap 1 completion: fuel burned = 50.0 - 47.0 = 3.0L
+local mockLap1Car = { isConnected = true, isAIControlled = true, lapCount = 1, fuel = 47.0 }
+RaceContext.updateCarFromAc(1, mockLap1Car)
+assertEq(c1State.empiricalFpl, 3.0, "Lap 1 empirical fuel consumption initialized to 3.0 L/lap")
+
+-- Lap 2 completion: fuel burned = 47.0 - 44.5 = 2.5L -> EMA = 0.70 * 3.0 + 0.30 * 2.5 = 2.85
+local mockLap2Car = { isConnected = true, isAIControlled = true, lapCount = 2, fuel = 44.5 }
+RaceContext.updateCarFromAc(1, mockLap2Car)
+assertTrue(math.abs(c1State.empiricalFpl - 2.85) < 0.001, string.format("Lap 2 EMA fuel burn rate updated to 2.85 L/lap (Got %.3f)", c1State.empiricalFpl))
+
+-- Verify StrategyCoordinator picks up dynamic empirical FPL
+StrategyCoordinator.rebuildFieldStrategy(24, 1)
+local dynPlan1 = StrategyCoordinator.getCarPlan(1)
+assertTrue(math.abs(dynPlan1.baseFpl - 2.85) < 0.001, "StrategyCoordinator adapts baseFpl from empirical tracking")
+print("  -> Passed: Adaptive Fuel Estimation (EMA) & Dynamic Pit Timing verified.")
+
+-- ==============================================================================
+-- [Test 24] Pre-Dispatch Pit Stop Work Order & Dynamic Compound Pipeline
+-- ==============================================================================
+print("[Test 24] Testing Pit Stop Work Order & Compound Execution...")
+local compList = RaceContext.getCarCompounds(1)
+assertTrue(#compList >= 1, "RaceContext returns available compound options for car 1")
+
+-- Configure Work Order for Car 1
+RaceContext.setCarWorkOrder(1, {
+  changeTyres = true,
+  targetCompoundIndex = 1,
+  targetCompoundName = "Hard Slick",
+  refuelLiters = 20.0,
+  isConfirmed = true,
+})
+
+-- Verify Car 2 work order is completely isolated
+local c2State = RaceContext.getCarState(2)
+assertTrue(not (c2State.pendingWorkOrder and c2State.pendingWorkOrder.isConfirmed), "Work order parameters strictly isolated to Car 1")
+
+-- Mock Car 1 entering pit box with confirmed work order
+local initialFuel = c1State.fuelInTank
+local mockCarInBox = {
+  isConnected = true,
+  isAIControlled = true,
+  isInPit = true,
+  isInPitlane = true,
+  fuel = initialFuel,
+  maxFuel = 100.0,
+}
+RaceContext.updateCarFromAc(1, mockCarInBox)
+assertEq(c1State.fuelInTank, initialFuel + 20.0, "Work order refuel executed: fuel injected into tank")
+assertEq(c1State.pendingWorkOrder.isConfirmed, false, "Work order cleared after execution in pit box")
+print("  -> Passed: Pit Stop Work Order & Compound Execution confirmed.")
+
+-- ==============================================================================
+-- [Test 25] Synchronized Vehicle Health & Mechanical Telemetry
+-- ==============================================================================
+print("[Test 25] Testing Vehicle Health & Mechanical Condition Telemetry...")
+local mockHealthCar = {
+  isConnected = true,
+  isAIControlled = true,
+  engineLifeLeft = 982.5,
+  waterTemperature = 88.5,
+  gearboxDamage = 0.04,
+  damage = { [0] = 5.0, [1] = 0.0, [2] = 0.0, [3] = 0.0 },
+  suspensionDamage = { [0] = 0.02, [1] = 0.0, [2] = 0.0, [3] = 0.0 },
+  wheels = {
+    [0] = { tyreWear = 0.92, tyreCoreTemperature = 94.0, brakeTemperature = 320.0 },
+    [1] = { tyreWear = 0.90, tyreCoreTemperature = 96.0, brakeTemperature = 340.0 },
+    [2] = { tyreWear = 0.88, tyreCoreTemperature = 91.0, brakeTemperature = 280.0 },
+    [3] = { tyreWear = 0.87, tyreCoreTemperature = 93.0, brakeTemperature = 290.0 },
+  }
+}
+RaceContext.updateCarFromAc(2, mockHealthCar)
+assertEq(c2State.engineLifeLeft, 982.5, "Engine life left correctly ingested")
+assertEq(c2State.waterTemp, 88.5, "Water temperature correctly ingested")
+assertEq(c2State.gearboxDamage, 0.04, "Gearbox damage correctly ingested")
+assertEq(c2State.wheelWear[1], 0.92, "LF wheel wear correctly ingested")
+assertEq(c2State.wheelCoreTemp[2], 96.0, "RF wheel core temperature correctly ingested")
+assertEq(c2State.wheelBrakeTemp[1], 320.0, "LF brake temperature correctly ingested")
+print("  -> Passed: Vehicle Health & Mechanical Telemetry verified.")
+
+-- ==============================================================================
+-- [Test 26] Driver Persona Selection & Radio Directives (ATTACK & DEFEND)
+-- ==============================================================================
+print("[Test 26] Testing Persona Template Selection & ATTACK/DEFEND Directives...")
+local personaLoader = require("lib/driver/persona_loader")
+
+-- Test manual persona override to F1 Verstappen
+personaLoader.setManualOverride(1, "f1_verstappen")
+local pOver = personaLoader.getPersonaForCar(1, "Unknown")
+assertEq(pOver.name, "Max Verstappen", "Manual override successfully assigned Max Verstappen persona")
+
+-- Test resetting to default
+personaLoader.setManualOverride(1, nil)
+assertEq(personaLoader.getManualOverride(1), nil, "Manual override cleared to default")
+
+-- Test ATTACK radio directive
+c1State.isInPit = false
+c1State.isInPitlane = false
+c1State.pitState = "NONE"
+StrategyCoordinator.issueRadioOrder(1, "ATTACK")
+assertEq(c1State.radioCommand, "ATTACK", "Radio command ATTACK set on Car 1")
+local atkCar = { index = 1, isConnected = true, isAIControlled = true, speedKmh = 160.0 }
+local atkState = TacticalTicker.stepCar(atkCar, nil, nil, pOver, 0.0, c1State, 0.1)
+assertTrue(atkState.targetAggression >= 0.95, "ATTACK directive boosts target aggression to >= 0.95")
+
+-- Test DEFEND radio directive
+StrategyCoordinator.issueRadioOrder(1, "DEFEND")
+assertEq(c1State.radioCommand, "DEFEND", "Radio command DEFEND set on Car 1")
+local defState = TacticalTicker.stepCar(atkCar, nil, nil, pOver, 0.0, c1State, 0.1)
+assertTrue(defState.targetAggression >= 0.90, "DEFEND directive maintains high defense aggression")
+
+print("  -> Passed: Persona Template Selection & ATTACK/DEFEND Directives confirmed.")
+
 print("==================================================================")
-print("  ALL 22 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
+print("  ALL 26 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
 print("==================================================================")

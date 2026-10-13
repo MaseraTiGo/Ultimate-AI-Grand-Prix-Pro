@@ -117,7 +117,7 @@ local _mistakeMap = {
 ---@param splineOffset number
 ---@param caution number
 function M.updateCarTelemetry(carIndex, stateStr, stress, momentum, tyreWear, isLiftAndCoast, isBreakingTow, mistakeStr, splineOffset, caution)
-  if carIndex < 0 or carIndex >= MAX_CARS then return end
+  if not carIndex or carIndex < 0 or carIndex >= MAX_CARS then return end
 
   local sId = _stateMap[stateStr or "CRUISE"] or 0
   local mId = _mistakeMap[mistakeStr or "NONE"] or 0

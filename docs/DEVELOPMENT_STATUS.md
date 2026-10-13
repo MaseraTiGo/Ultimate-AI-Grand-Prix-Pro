@@ -38,7 +38,13 @@
 ## 2. 验收状态与事实标记
 
 - **已验证事实**：
-  - **22 项核心集成与实机安全防护测试 100% 通过**（`tests/test_grand_prix_pro.lua`）。
+  - **26 项核心集成与实机安全防护测试 100% 通过**（`tests/test_grand_prix_pro.lua`）。
+  - **策略工坊赛制圈数锁定**：彻底废除策略工坊中易引发策略崩塌的手动圈数覆盖修改逻辑，严格将比赛总圈数与 FIA / CSP 官方 Session 实时同步，保护计算完整性。
+  - **自适应动态油耗（EMA）与非固定进站 Timing**：引入单圈实测燃油指数移动平均（EMA）追踪，杜绝机械硬编码 2.5L；进站时机动态考量油箱物理容积上限、车手 Undercut/Overcut 进站偏好基因及车队错峰差值。
+  - **全车手性格模板选择器与一键重置**：彻底修复车手配置中模板写死为激进猛牛的缺陷，完整开放 5 大性格原型（猛牛、冰人、战术大师、绅士车手、稳健平衡）与 5 位 F1 现役/传奇车手（Verstappen, Hamilton, Leclerc, Norris, Alonso）模板自由切换，并支持一键恢复默认程序化 DNA。
+  - **进站预派发工单弹窗（Pre-Dispatch Pit Work Order）**：在下发进站指令前唤出专业车队工单确认，支持换胎开关、基于 CSP `ac.getTyresName` 动态车型轮胎配方自适应查询（GT3/Cup/方程式自适应）、油箱剩余容积安全防溢出校验，并提供“极速进站”与“个性化配置”双轨派发。
+  - **同步车手遥测与整车机械健康监控面板**：实时监视引擎剩余寿命、水温、变速箱损耗、车体/悬挂外壳受损百分比，以及四轮独立磨损、胎面核心温度与刹车温度。
+  - **车队指令全维扩展**：在原 PUSH、SAVE、BOX 基础上扩展 `ATTACK`（全力进攻）与 `DEFEND`（战术防守）战术无线电指令。
   - **CSP LuaJIT FFI C 结构体严格防护与零崩溃**：排查并彻底攻克了底层 `ac.getSim()` 返回 C 结构体时，读取未定义字段引发的 fatal crash (`'struct state_sim' has no member named 'sessionTime'`)。引入 `safeSimGet(sim, field)` 防御性访问工具，官方标准时间从 `sim.gameTime` / `sim.currentSessionTime` 映射，主循环与策略模块 100% 免疫未知结构体成员抛错。
   - **进站状态机全闭环与 Drive-Through 根治**：确保 `physics.setAIPitStopRequest(carIndex, true)` 在维修通道及作业期间持续保持，杜绝过早置 false 导致原生 AI 取消停靠直接穿越；赛车跨入维修区通道（`isInPitlane`/`isInPit`）即刻解除 UI 层的 `pit_requested` 与 `radioCommand` 并批量结算出队所有待处理指令；完全驶出维修区时三重释放 `setAIPitStopRequest(false)`、`setAIStopCounter(0)` 与 `setAIThrottleLimit(1.0)`；实时向 Track 1 回显 `[CMD SETTLED]`，向 Track 2 广播进站作业与出站重返，自动推移下一赛段窗口杜绝重入死锁。
   - **赛事广播全链路打通与蓝旗让行**：打通 CSP 蓝旗与套圈迫近检测，`TacticalTicker` 驱动车辆主动外切让出内线，并在 Track 2 广播金黄色高亮 `【蓝旗避让】` 战术事件。

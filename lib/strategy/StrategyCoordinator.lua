@@ -69,7 +69,16 @@ function M.rebuildFieldStrategy(totalLaps, defaultStops, baseFpl)
   local race = RaceContext.getRaceState()
   totalLaps = math.max(1, math.floor(toNum(totalLaps, (race and race.totalLaps) or 13)))
   defaultStops = math.min(StrategyCalc.MAX_PIT_STOPS, math.max(0, math.floor(toNum(defaultStops, 1))))
-  baseFpl = toNum(baseFpl, 2.5)
+
+  -- Dynamic base FPL estimation from track length if not explicitly provided
+  local defaultFpl = 2.5
+  if ac and ac.getSim then
+    local okSim, sim = pcall(ac.getSim)
+    if okSim and sim and sim.trackLengthM and sim.trackLengthM > 0 then
+      defaultFpl = math.max(1.2, math.min(4.5, (sim.trackLengthM / 1000.0) * 0.55))
+    end
+  end
+  baseFpl = toNum(baseFpl, defaultFpl)
 
   for i = 0, MAX_CARS - 1 do
     local plan = _carPlans[i]
@@ -95,26 +104,37 @@ function M.rebuildFieldStrategy(totalLaps, defaultStops, baseFpl)
     local stintCount = StrategyCalc.computeStintCount(stops, totalLaps)
     local stintLaps = StrategyCalc.splitTotalLapsAcrossStints(totalLaps, stintCount)
     
+    local cState = RaceContext.getCarState(i)
+    local carBaseFpl = cState.empiricalFpl or baseFpl
     plan.stints = stintLaps
-    plan.baseFpl = baseFpl
-    plan.dynamicFpl = baseFpl
+    plan.baseFpl = carBaseFpl
+    plan.dynamicFpl = carBaseFpl
 
     if #stintLaps > 1 then
       local firstStintLaps = stintLaps[1]
+      local cFuel = cState.fuelInTank or 30.0
+      local maxFuelLaps = math.max(2, math.floor((cFuel - 1.0) / math.max(0.5, carBaseFpl)))
+
       local win = StrategyCalc.computePitWindowForStint(1, 1, firstStintLaps, firstStintLaps, totalLaps)
       local groupOffset = StrategyCalc.getF1PitSpreadGroupOffset(i, 0)
-      local lapOffset = math.floor(groupOffset * 4.0 + 0.5)
-      local staggeredTarget = math.max(1, math.min(totalLaps - 1, win.targetLap + lapOffset))
-      plan.openLap = math.max(1, win.openLap + lapOffset)
+      local lapOffset = math.floor(groupOffset * 2.0 + 0.5)
+
+      local personaLoader = package.loaded["lib/driver/persona_loader"]
+      local persona = personaLoader and personaLoader.getPersonaForCar(i, cState.driverName)
+      local undercutBias = (persona and persona.undercut_preference or 0.5) - 0.5
+      local personaShift = (undercutBias > 0.2 and -1) or (undercutBias < -0.2 and 1) or 0
+
+      local rawTarget = win.targetLap + lapOffset + personaShift
+      local staggeredTarget = math.max(win.openLap + 1, math.min(math.min(totalLaps - 1, maxFuelLaps), rawTarget))
+      plan.openLap = math.max(1, math.min(staggeredTarget, win.openLap + lapOffset + personaShift))
       plan.targetLap = staggeredTarget
-      plan.escalateLap = math.max(staggeredTarget, win.escalateLap + lapOffset)
+      plan.escalateLap = math.max(staggeredTarget, math.min(maxFuelLaps, win.escalateLap + lapOffset + personaShift))
     else
       plan.openLap = 999
       plan.targetLap = 999
       plan.escalateLap = 999
     end
 
-    local cState = RaceContext.getCarState(i)
     cState.plannedStops = stops
     cState.targetPitLap = plan.targetLap
     cState.openPitLap = plan.openLap
@@ -178,6 +198,28 @@ function M.issueRadioOrder(carIndex, command)
       physics.setAIPitStopRequest(carIndex, false)
     end
     EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 确认指令 -> 执行 [PUSH 全力推进]", dLabel), "SUCCESS")
+  elseif cmd == "ATTACK" then
+    cState.radioCommand = "ATTACK"
+    cState.radioOrderActive = true
+    cState.tacticalState = "ATTACK"
+    cState.pit_requested = false
+    cState.pit_stop_planned = false
+    if cState.pitState == "REQUESTED" then cState.pitState = "NONE" end
+    if physics and physics.setAIPitStopRequest then
+      physics.setAIPitStopRequest(carIndex, false)
+    end
+    EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 确认指令 -> 执行 [ATTACK 激进超车]", dLabel), "SUCCESS")
+  elseif cmd == "DEFEND" then
+    cState.radioCommand = "DEFEND"
+    cState.radioOrderActive = true
+    cState.tacticalState = "DEFEND"
+    cState.pit_requested = false
+    cState.pit_stop_planned = false
+    if cState.pitState == "REQUESTED" then cState.pitState = "NONE" end
+    if physics and physics.setAIPitStopRequest then
+      physics.setAIPitStopRequest(carIndex, false)
+    end
+    EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 确认指令 -> 执行 [DEFEND 极限卡位防守]", dLabel), "SUCCESS")
   elseif cmd == "SAVE" then
     cState.radioCommand = "SAVE"
     cState.radioOrderActive = true
@@ -231,11 +273,18 @@ function M.stepStrategy(dt)
       local plan = _carPlans[i]
       local auth = _carAuthority[i]
 
+      -- Update baseFpl if empirical measurement from completed laps is available
+      if cState.empiricalFpl then
+        plan.baseFpl = cState.empiricalFpl
+      end
+
       -- 1. Compute dynamic fuel consumption
       local trafficFactor = cState.isInDirtyAir and 0.8 or 0.0
       local paceDelta = 0.0
       if cState.radioCommand == "PUSH" then paceDelta = -0.04
-      elseif cState.radioCommand == "SAVE" then paceDelta = 0.05 end
+      elseif cState.radioCommand == "ATTACK" then paceDelta = -0.06
+      elseif cState.radioCommand == "SAVE" then paceDelta = 0.05
+      elseif cState.radioCommand == "DEFEND" then paceDelta = 0.02 end
 
       local dynFpl = FuelModel.calculateDynamicFuelPerLap(
         plan.baseFpl,

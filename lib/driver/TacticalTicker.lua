@@ -228,7 +228,7 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
     raceContext = nil
   end
   dt = dt or 0.1
-  local idx = car.index
+  local idx = (car and car.index) or (raceContext and raceContext.carIndex) or 0
   local s = _aiStates[idx] or _aiStates[0]
   s.persona = persona
 
@@ -628,6 +628,12 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
     s.targetAggression = math.min(0.98, (persona.base_aggression or 0.8) * 1.25)
     s.momentum = math.min(1.0, s.momentum + dt * 0.20)
     s.isInFlow = (s.momentum >= 0.50)
+  elseif radioCmd == "ATTACK" then
+    -- Team Attack Order: maximum aggression, late braking and hunt ahead car
+    s.targetCaution = math.max(0.12, (persona.base_caution or 0.7) * 0.3)
+    s.targetAggression = math.max(0.96, math.min(0.99, (persona.base_aggression or 0.8) * 1.35))
+    s.momentum = math.min(1.0, s.momentum + dt * 0.30)
+    s.isInFlow = (s.momentum >= 0.40)
   elseif radioCmd == "DEFEND" then
     -- Tactical Hold Position Order
     s.targetCaution = 0.20
@@ -726,7 +732,12 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
   elseif radioCmd == "PUSH" then
     s.targetSplineOffset = 0.0
     -- targetCaution and targetAggression already set by PUSH above
+  elseif radioCmd == "ATTACK" then
+    s.state = M.STATE_ATTACK
+    s.targetSplineOffset = 0.0
+    -- targetCaution and targetAggression already set by ATTACK above
   elseif radioCmd == "DEFEND" then
+    s.state = M.STATE_DEFEND
     -- targetCaution and targetAggression already set by DEFEND above
   end
   TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, tyreWear, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
