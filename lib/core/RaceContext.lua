@@ -42,6 +42,8 @@ local _raceState = {
   trackLengthM = 5000.0,
 }
 
+local _compoundsCache = {}
+
 local _carStates = {}
 for i = 0, MAX_CARS - 1 do
   _carStates[i] = {
@@ -591,22 +593,20 @@ function M.updateCarFromAc(carIndex, c)
     end
   end
 
-  -- Execute pending work order if confirmed upon entering/dwelling in pit bay
-  if s.isInPit and s.pendingWorkOrder and s.pendingWorkOrder.isConfirmed then
+  -- Execute pending work order if confirmed upon entering pit lane or pit bay
+  local isCarInPitZone = s.isInPit or s.isInPitlane or (s.pitState == M.PIT_STATE_IN_BAY) or (s.pitState == M.PIT_STATE_IN_PITLANE)
+  if isCarInPitZone and s.pendingWorkOrder and s.pendingWorkOrder.isConfirmed then
     local wo = s.pendingWorkOrder
     if wo.refuelLiters and wo.refuelLiters > 0 then
       local targetFuel = math.min(s.maxFuelCapacity, s.fuelInTank + wo.refuelLiters)
-      if physics and physics.setCarFuel then
-        ControlTelemetry.dispatchCarFuel(carIndex, targetFuel, c, s.driverName)
-      end
+      ControlTelemetry.dispatchCarFuel(carIndex, targetFuel, c, s.driverName)
       s.fuelInTank = targetFuel
     end
     if wo.changeTyres then
-      if physics and physics.setAITyres then
-        ControlTelemetry.dispatchAITyres(carIndex, wo.targetCompoundIndex or 0, wo.targetCompoundName, c, s.driverName)
-      end
+      ControlTelemetry.dispatchAITyres(carIndex, wo.targetCompoundIndex or 0, wo.targetCompoundName, c, s.driverName)
       s.tyreWear = 0.0
       s.tyreCliffAlertSent = false
+      s.tyreWarmupProgress = 0.0
       for wIdx = 1, 4 do s.wheelWear[wIdx] = 1.0 end
       s.compoundIndex = wo.targetCompoundIndex or 0
       s.compoundName = wo.targetCompoundName or "Default"
@@ -642,6 +642,9 @@ function M.reset()
     s.lastTrackedLap = 0
     s.tyreCliffAlertSent = false
     s.lastMechAlertTime = 0.0
+  end
+  for k in pairs(_compoundsCache) do
+    _compoundsCache[k] = nil
   end
 end
 
@@ -743,18 +746,18 @@ function M.getNeighbors(carIndex)
 end
 
 --- Dynamically query actual tire compound options for the vehicle
-local _compoundsCache = {}
-
 function M.getCarCompounds(carIndex)
-  if _compoundsCache[carIndex] then
+  if _compoundsCache[carIndex] and #_compoundsCache[carIndex] > 0 then
     return _compoundsCache[carIndex]
   end
 
   local list = {}
   if ac and ac.getTyresName then
-    for idx = 0, 10 do
+    local emptyStreak = 0
+    for idx = 0, 15 do
       local okN, sName = pcall(ac.getTyresName, carIndex, idx)
       if okN and sName and type(sName) == "string" and sName ~= "" then
+        emptyStreak = 0
         local lName = sName
         if ac.getTyresLongName then
           local okL, resL = pcall(ac.getTyresLongName, carIndex, idx, false)
@@ -768,19 +771,30 @@ function M.getCarCompounds(carIndex)
           longName = lName,
         }
       else
-        break
+        emptyStreak = emptyStreak + 1
+        if emptyStreak >= 2 and idx >= 4 then
+          break
+        end
       end
     end
   end
 
-  if #list == 0 then
-    list[1] = { index = 0, shortName = "SOFT", longName = "Soft Compound" }
-    list[2] = { index = 1, shortName = "MED", longName = "Medium Compound" }
-    list[3] = { index = 2, shortName = "HARD", longName = "Hard Compound" }
+  if #list > 0 then
+    _compoundsCache[carIndex] = list
+    return list
   end
 
-  _compoundsCache[carIndex] = list
-  return list
+  -- Comprehensive, rich motorsport compound presets (F1 & GT) when CSP does not expose custom compounds
+  local fallbackList = {
+    { index = 0, shortName = "SOFT",  longName = "Soft Slick (红胎 软胎)" },
+    { index = 1, shortName = "MED",   longName = "Medium Slick (黄胎 中性胎)" },
+    { index = 2, shortName = "HARD",  longName = "Hard Slick (白胎 硬胎)" },
+    { index = 3, shortName = "SS",    longName = "Super Soft (紫胎 超软胎)" },
+    { index = 4, shortName = "US",    longName = "Ultra Soft (粉胎 极软胎)" },
+    { index = 5, shortName = "INTER", longName = "Intermediate (绿胎 半雨胎)" },
+    { index = 6, shortName = "WET",   longName = "Full Wet (蓝胎 全雨胎)" },
+  }
+  return fallbackList
 end
 
 --- Configure pit stop work order for a specific car

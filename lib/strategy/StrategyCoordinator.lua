@@ -402,9 +402,10 @@ function M.stepStrategy(dt)
           cState.tyreWear = 0.0 -- fresh tyres fitted
           cState.tyreLapsAge = 0
 
-          -- Refill fuel for next stint
-          local refillLiters = math.min(cState.maxFuelCapacity, dynFpl * 15.0)
-          if physics and physics.setCarFuel then
+          -- Refill fuel for next stint (respecting work order if configured, otherwise calculate stint requirement)
+          local hasCustomRefuel = cState.pendingWorkOrder and (cState.pendingWorkOrder.refuelLiters ~= nil)
+          local refillLiters = hasCustomRefuel and math.min(cState.maxFuelCapacity, cState.fuelInTank + cState.pendingWorkOrder.refuelLiters) or math.min(cState.maxFuelCapacity, dynFpl * 15.0)
+          if not hasCustomRefuel and physics and physics.setCarFuel then
             ControlTelemetry.dispatchCarFuel(i, refillLiters, nil, cState.driverName)
             Logger.info("PIT", string.format("%s completed pit stop (Refilled: %.1fL, Next Stint Ready, Cold Out-Lap Active)", dLabel, refillLiters))
           end

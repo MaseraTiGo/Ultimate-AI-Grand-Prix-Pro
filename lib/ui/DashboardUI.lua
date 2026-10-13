@@ -45,6 +45,39 @@ local COLOR_BLUE  = makeColor(0.25, 0.77, 1.00, 1.0) -- #40C4FF
 local COLOR_GOLD  = makeColor(1.00, 0.72, 0.30, 1.0) -- #FFB74D
 local COLOR_RED   = makeColor(1.00, 0.32, 0.32, 1.0) -- #FF5252
 local COLOR_MUTED = makeColor(0.58, 0.64, 0.69, 1.0) -- #90A4AE
+local COLOR_WHITE = makeColor(1.00, 1.00, 1.00, 1.0) -- #FFFFFF
+local COLOR_PURPLE = makeColor(0.85, 0.20, 1.00, 1.0) -- #D500F9
+local COLOR_WET_BLUE = makeColor(0.16, 0.47, 1.00, 1.0) -- #2979FF
+
+local function getCompoundVisual(compName, compIndex)
+  local nameUpper = string.upper(tostring(compName or ""))
+  if string.find(nameUpper, "SOFT") and not string.find(nameUpper, "SUPER") and not string.find(nameUpper, "ULTRA") then
+    return COLOR_RED, "● [SOFT]"
+  elseif string.find(nameUpper, "MED") then
+    return COLOR_GOLD, "● [MED]"
+  elseif string.find(nameUpper, "HARD") then
+    return COLOR_WHITE, "● [HARD]"
+  elseif string.find(nameUpper, "SUPER") or string.find(nameUpper, "SS") then
+    return COLOR_PURPLE, "● [SUPER-SOFT]"
+  elseif string.find(nameUpper, "ULTRA") or string.find(nameUpper, "HYPER") or string.find(nameUpper, "US") then
+    return COLOR_PURPLE, "● [ULTRA-SOFT]"
+  elseif string.find(nameUpper, "INTER") then
+    return COLOR_GREEN, "● [INTER]"
+  elseif string.find(nameUpper, "WET") or string.find(nameUpper, "RAIN") then
+    return COLOR_WET_BLUE, "● [WET]"
+  end
+  -- Fallback by index
+  local idx = compIndex or 0
+  if idx == 0 then return COLOR_RED, "● [SOFT]"
+  elseif idx == 1 then return COLOR_GOLD, "● [MED]"
+  elseif idx == 2 then return COLOR_WHITE, "● [HARD]"
+  elseif idx == 3 then return COLOR_PURPLE, "● [SS]"
+  elseif idx == 4 then return COLOR_PURPLE, "● [US]"
+  elseif idx == 5 then return COLOR_GREEN, "● [INTER]"
+  elseif idx == 6 then return COLOR_WET_BLUE, "● [WET]"
+  end
+  return COLOR_CYAN, "● [TYRE]"
+end
 
 local function getTextColorEnum()
   if ui and ui.StyleColor and ui.StyleColor.Text then
@@ -657,19 +690,37 @@ function M.renderPitWallTab()
     setTooltip("选择本次进站是否更换一套全新轮胎")
 
     if _woChangeTyres then
-      ui.sameLine()
-      ui.text(" 目标配方:")
       local compounds = RaceContext.getCarCompounds(_selectedCarForRadio)
+      local selCol, selBadge = getCompoundVisual(_woCompoundName, _woCompoundIndex)
+      ui.text("     目标轮胎配方: ")
+      ui.sameLine()
+      drawInlineColored(selCol, string.format("【已选: %s %s】", selBadge, _woCompoundName or "默认"))
+
       for cIdx, comp in ipairs(compounds) do
-        ui.sameLine()
         local isSel = (_woCompoundIndex == comp.index)
-        local btnLabel = string.format("%s%s##wo_comp_%d", isSel and "[ " or " ", comp.longName or comp.shortName, comp.index)
-        if isSel then btnLabel = btnLabel .. " ]" else btnLabel = btnLabel .. " " end
-        if ui.button(btnLabel) then
+        local cCol, cBadge = getCompoundVisual(comp.longName or comp.shortName, comp.index)
+        local btnLabel = string.format("%s %s %s##wo_comp_%d",
+          isSel and "▶ [✔ 选用]" or "  [更换]",
+          cBadge,
+          comp.longName or comp.shortName,
+          comp.index)
+
+        local pushedCol = false
+        if isSel and ui.pushStyleColor and ui.popStyleColor and ui.StyleColor and ui.StyleColor.Button then
+          ui.pushStyleColor(ui.StyleColor.Button, cCol)
+          pushedCol = true
+        end
+
+        local clicked = ui.button(btnLabel)
+        if pushedCol then
+          ui.popStyleColor(1)
+        end
+
+        if clicked then
           _woCompoundIndex = comp.index
           _woCompoundName = comp.longName or comp.shortName
         end
-        setTooltip(string.format("选定轮胎配方: %s (%s)", comp.longName, comp.shortName))
+        setTooltip(string.format("选定进站更换配方: %s (%s)", comp.longName or "", comp.shortName or ""))
       end
     end
 

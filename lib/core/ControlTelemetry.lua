@@ -452,51 +452,67 @@ end
 --- Log Fuel Delivery
 function M.dispatchCarFuel(carIdx, fuelLiters, car, driverName)
   local cIdx = carIdx or 0
-  if not physics or not physics.setCarFuel then
+  local hasPhysicsFuel = physics and physics.setCarFuel
+
+  if not hasPhysicsFuel then
     if _enabled then
       M.logError(cIdx, "Fuel Delivery", "CSP physics.setCarFuel API unavailable", car, driverName)
     end
     return false
   end
 
-  if not _enabled then
-    physics.setCarFuel(cIdx, fuelLiters)
-    return true
-  end
-
   local ok, err = pcall(physics.setCarFuel, cIdx, fuelLiters)
   if not ok then
-    M.logError(cIdx, "Fuel Delivery", tostring(err), car, driverName)
+    if _enabled then
+      M.logError(cIdx, "Fuel Delivery", tostring(err), car, driverName)
+    end
     return false
   end
 
-  M.logAction(cIdx, "Fuel Delivery", string.format("Refueled %dL into fuel cell", math.floor(fuelLiters)), car, driverName, true)
+  if _enabled then
+    M.logAction(cIdx, "Fuel Delivery", string.format("Refueled %dL into fuel cell", math.floor(fuelLiters)), car, driverName, true)
+  end
   return true
 end
 
 --- Log Tyre Compound Fitting
 function M.dispatchAITyres(carIdx, compoundIdx, compoundName, car, driverName)
   local cIdx = carIdx or 0
-  if not physics or not physics.setAITyres then
+  local applied = false
+  local errStr = nil
+
+  -- 1. Primary CSP AI tyre selector
+  if physics and physics.setAITyres then
+    local ok, err = pcall(physics.setAITyres, cIdx, compoundIdx)
+    if ok then
+      applied = true
+    else
+      errStr = tostring(err)
+    end
+  end
+
+  -- 2. Secondary direct compound injector (wheel-level fallback)
+  if physics and physics.setTyresCompound then
+    local wheelAll = (ac and ac.Wheel and ac.Wheel.All) or 60
+    local ok2, err2 = pcall(physics.setTyresCompound, cIdx, wheelAll, compoundIdx)
+    if ok2 then
+      applied = true
+    elseif not errStr then
+      errStr = tostring(err2)
+    end
+  end
+
+  if not applied then
     if _enabled then
-      M.logError(cIdx, "Tyre Fitting", "CSP physics.setAITyres API unavailable", car, driverName)
+      M.logError(cIdx, "Tyre Fitting", errStr or "CSP physics tyre APIs unavailable", car, driverName)
     end
     return false
   end
 
-  if not _enabled then
-    physics.setAITyres(cIdx, compoundIdx)
-    return true
+  if _enabled then
+    local cName = compoundName or string.format("Compound #%d", compoundIdx)
+    M.logAction(cIdx, "Tyre Fitting", string.format("Fitted fresh set of %s tyres", cName), car, driverName, true)
   end
-
-  local ok, err = pcall(physics.setAITyres, cIdx, compoundIdx)
-  if not ok then
-    M.logError(cIdx, "Tyre Fitting", tostring(err), car, driverName)
-    return false
-  end
-
-  local cName = compoundName or string.format("Compound #%d", compoundIdx)
-  M.logAction(cIdx, "Tyre Fitting", string.format("Fitted fresh set of %s tyres", cName), car, driverName, true)
   return true
 end
 

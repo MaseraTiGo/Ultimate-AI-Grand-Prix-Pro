@@ -1296,8 +1296,49 @@ assertEq(ControlTelemetry.isEnabled(), false, "Checkbox click toggles stream bac
 
 ui = nil
 
-print("  -> Passed: Exception & Failure Visibility verified.")
+-- ==============================================================================
+-- [Test 34] Comprehensive Compound Palette Discovery & Pit Zone Execution
+-- ==============================================================================
+print("[Test 34] Testing Comprehensive Compound Palette Discovery & Pit Zone Execution...")
+-- 1. Test rich motorsport compound options returned when car has no custom tyres
+local compounds = RaceContext.getCarCompounds(3)
+assertTrue(#compounds >= 5, "RaceContext returns comprehensive motorsport compound options (Soft/Med/Hard/SS/US/Inter/Wet)")
+local foundSoft, foundHard, foundWet = false, false, false
+for _, c in ipairs(compounds) do
+  if c.shortName == "SOFT" then foundSoft = true end
+  if c.shortName == "HARD" then foundHard = true end
+  if c.shortName == "WET" or c.shortName == "INTER" then foundWet = true end
+end
+assertTrue(foundSoft and foundHard and foundWet, "Compound palette contains Soft, Hard, and Wet/Inter tyre choices")
+
+-- 2. Test Work Order execution triggered reliably in pitlane zone (isInPitlane = true, isInPit = false)
+local c3State = RaceContext.getCarState(3)
+c3State.fuelInTank = 15.0
+c3State.maxFuelCapacity = 100.0
+RaceContext.setCarWorkOrder(3, {
+  changeTyres = true,
+  targetCompoundIndex = 2,
+  targetCompoundName = "Hard Slick",
+  refuelLiters = 25.0,
+  isConfirmed = true,
+})
+assertTrue(c3State.pendingWorkOrder.isConfirmed, "Car 3 pendingWorkOrder is confirmed before pit entry")
+
+local mockCarEnteringPitLane = {
+  isConnected = true,
+  isAIControlled = true,
+  isInPit = false,
+  isInPitlane = true,
+  fuel = 15.0,
+  maxFuel = 100.0,
+}
+RaceContext.updateCarFromAc(3, mockCarEnteringPitLane)
+assertEq(c3State.fuelInTank, 40.0, "Car 3 refueled +25L upon entering pitlane zone")
+assertEq(c3State.compoundIndex, 2, "Car 3 fitted with Hard compound (#2)")
+assertEq(c3State.compoundName, "Hard Slick", "Car 3 compound name updated to Hard Slick")
+assertEq(c3State.pendingWorkOrder.isConfirmed, false, "Car 3 work order marked executed and cleared")
+print("  -> Passed: Comprehensive Compound Palette Discovery & Pit Zone Execution verified.")
 
 print("==================================================================")
-print("  ALL 33 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
+print("  ALL 34 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
 print("==================================================================")
