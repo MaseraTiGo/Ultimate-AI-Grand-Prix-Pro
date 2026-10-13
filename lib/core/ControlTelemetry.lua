@@ -96,6 +96,21 @@ function M.formatTimestamp(sessionSec)
   return string.format("%s.%03d", wall, ms)
 end
 
+--- Safely query a field from a CSP C-struct (struct state_car) without throwing FFI member errors
+local function safeCarGet(car, field)
+  if not car or not field then return nil end
+  local ok, val = pcall(function() return car[field] end)
+  if ok then return val end
+  return nil
+end
+
+local function safeGetDriverName(idx)
+  if not ac or not ac.getDriverName or not idx or idx < 0 then return nil end
+  local ok, res = pcall(ac.getDriverName, idx)
+  if ok and res and res ~= "" then return res end
+  return nil
+end
+
 --- Format driver tag: [#CarNum DriverName] (e.g. [#16 Leclerc], [#55 Sainz], [#1 Verstappen])
 ---@param carIdx number
 ---@param car table|nil
@@ -104,27 +119,49 @@ end
 function M.formatDriverTag(carIdx, car, driverName)
   local cIdx = carIdx or 0
   local dName = driverName
-  if (not dName or dName == "") and car and car.driverName then
-    dName = car.driverName
+  if not dName or dName == "" then
+    dName = safeGetDriverName(cIdx)
+  end
+  if (not dName or dName == "") and car then
+    local cd = safeCarGet(car, "driverName")
+    if type(cd) == "function" then
+      local okCall, resCall = pcall(cd, car)
+      if okCall and resCall and type(resCall) == "string" and resCall ~= "" then
+        dName = resCall
+      end
+    elseif type(cd) == "string" and cd ~= "" then
+      dName = cd
+    end
   end
   if not dName or dName == "" then
     dName = (cIdx == 0) and "Player" or string.format("Driver #%02d", cIdx + 1)
   end
 
   local carNum = nil
-  if car and car.carNumber and type(car.carNumber) == "number" and car.carNumber > 0 then
-    carNum = car.carNumber
-  elseif car and car.number and type(car.number) == "number" and car.number > 0 then
-    carNum = car.number
-  end
-
-  if not carNum and dName then
+  if dName then
     local lower = dName:lower()
     carNum = F1_DRIVER_NUMBERS[lower]
     if not carNum then
       local surname = lower:match("(%S+)$")
       if surname then
         carNum = F1_DRIVER_NUMBERS[surname]
+      end
+    end
+  end
+
+  if not carNum and car then
+    local cn = safeCarGet(car, "carNumber")
+    if type(cn) == "number" and cn > 0 then
+      carNum = cn
+    else
+      local num = safeCarGet(car, "number")
+      if type(num) == "number" and num > 0 then
+        carNum = num
+      else
+        local sn = safeCarGet(car, "skinNumber")
+        if type(sn) == "number" and sn > 0 then
+          carNum = sn
+        end
       end
     end
   end
@@ -325,7 +362,8 @@ function M.dispatchPitStopRequest(carIdx, request, compoundName, fuelLiters, car
     return false
   end
 
-  if request and car and (car.isInPitlane or car.isInPit) then
+  local inPit = safeCarGet(car, "isInPitlane") or safeCarGet(car, "isInPit")
+  if request and car and inPit then
     if _enabled then
       M.logError(cIdx, "Pit Stop Directive", "Vehicle already committed in pit lane", car, driverName)
     end

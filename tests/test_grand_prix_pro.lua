@@ -1208,6 +1208,23 @@ assertTrue(streamEntries[4].formattedLine:find("%[#44 Hamilton%] Energy Deployme
 -- Timestamp pattern check: [HH:mm:ss.fff]
 assertTrue(streamEntries[1].formattedLine:find("^%[%d%d:%d%d:%d%d%.%d%d%d%]") ~= nil,
   "Timestamp matches [HH:mm:ss.fff] format")
+
+-- 3. Strict LuaJIT FFI C-struct protection for struct state_car
+local strictCarStruct = setmetatable({
+  index = 1,
+  speedKmh = 240.0,
+  driverName = "Charles Leclerc",
+  isInPitlane = false,
+  isInPit = false,
+}, {
+  __index = function(t, k)
+    error(string.format("'struct state_car' has no member named '%s'", tostring(k)))
+  end
+})
+local tagWithStrictCar = ControlTelemetry.formatDriverTag(1, strictCarStruct, nil)
+assertEq(tagWithStrictCar, "[#16 Leclerc]", "Strict struct state_car handled safely without FFI member crash")
+local paceOk, paceErr = pcall(ControlTelemetry.dispatchPace, 1, 0.95, 0.75, 95, "(Pushing lap)", strictCarStruct, nil)
+assertTrue(paceOk, "dispatchPace with strict struct state_car succeeded: " .. tostring(paceErr))
 print("  -> Passed: Human-Readable Action Translation & Semantic Formatting confirmed.")
 
 -- ==============================================================================
