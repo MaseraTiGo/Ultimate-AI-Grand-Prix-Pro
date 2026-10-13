@@ -56,7 +56,31 @@ python -c "import lupa; from lupa import LuaRuntime; lua = LuaRuntime(unpack_ret
 ```
 预期输出：`ALL 22 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!`
 
-## 行为约束与执行纪律（Operational Guardrails & Execution Discipline）
+---
+
+## 4. 专属 Skills 工具链与 Token 极致效率控制规范（Skills Workflow & Token Optimization）
+
+为了最大化 AI Agent 的工作效率并最小化上下文 Token 消耗，项目内置了 6 大专项目标 Skills（存放于 `.agents/skills/`），Agent 在不同工作阶段应严格按需调度对应工具：
+
+| 阶段 / 意图 | 推荐专属 Skill | 核心执行脚本 / 工具 | 赋能与 Token 节约机制 |
+| :--- | :--- | :--- | :--- |
+| **架构与依赖感知** | `repo-map` | `python .agents/skills/repo-map/scripts/build_repo_map.py` | 提取模块符号、导出表与 `require` 依赖关系图。**节约 85%+ Context Token**，彻底消除无目的盲目开大文件。 |
+| **影响面与调用链追踪**| `diff-aware-ripper` | `python .agents/skills/diff-aware-ripper/scripts/diff_ripper.py` | 针对当前 git diff 自动提取变动符号，扫描下游所有消费者调用点，秒级定位关联文件，防止遗漏改动点。 |
+| **结构化 AST 语法萃取**| `tree-sitter-ast` | `python .agents/skills/tree-sitter-ast/scripts/ast_analyzer.py` | 免除阅读全文直接提取函数签名、作用域边界与 C-Struct 成员访问，精确圈定行号区间。 |
+| **上下文多行锚点替换**| `search-replace-block`| `python .agents/skills/search-replace-block/scripts/search_replace.py` | 高保真块替换，确保上下文唯一性，杜绝整文件盲写带来的漂移与误伤。 |
+| **手术式补丁与双脚本校验**| `patch-editor` | `python .agents/skills/patch-editor/scripts/patch_validator.py` | 自动验证双主入口脚本（`Ultimate AI Grand Prix Pro.lua` ↔ `Ultimate-AI-Grand-Prix-Pro.lua`）100% 字节一致性及语法无误。 |
+| **质量门禁与全量回归**| `review-gate` | `python .agents/skills/review-gate/scripts/review_gate.py` | 统一执行全量 22 项回归测试与规则核验，一键阻断违规代码合并。 |
+
+### Token 极致节省与高效工作纪律（Token Conservation Guardrails）
+1. **按需切片读取（Slice-based Reading）**：严禁无行号限制直接加载 300+ 行的大型文件。必须先通过 `repo-map` 或 AST 分析器定位关键符号，仅使用 `StartLine` 与 `EndLine` 精确读取 30~80 行核心逻辑块。
+2. **渐进式取证（Progressive Evidence Acquisition）**：单次任务严禁连续探测超过 3 个非直接关联文件。若需跨模块调用追踪，优先通过 `diff_ripper` 精准圈定 callers/callees，不逐个文件盲开。
+3. **零重复读取（Zero Redundant Reads）**：严禁在未修改文件的情况下重复使用查看工具读取同一文件内容。充分复用 Context 历史。
+4. **局部原子补丁（Minimal Atomic Edit）**：禁止为了修改几行代码而重写整个文件，必须使用 `replace_file_content` 进行最小范围局部替换。
+5. **自动化门禁闭环（Automated Gate Loop）**：任务结束前，必须直接运行 `review_gate.py` 和 `patch_validator.py`，以极低命令开销完成全量规范与测试核验，无需将大量冗余验证文本写入上下文。
+
+---
+
+## 5. 行为约束与执行纪律（Operational Guardrails & Execution Discipline）
 
 ### 1. 文件访问与范围控制（File Scope & Read Efficiency）
 
