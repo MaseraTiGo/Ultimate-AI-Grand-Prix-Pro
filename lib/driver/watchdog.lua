@@ -217,34 +217,14 @@ function M.checkStuckCars(car, dt, sessionTime)
        w.timer = 0
        _activeOverrides[idx] = nil -- Release overrides
 
-       -- If car is stopped or facing backwards, clear stop counter first
+       -- If car is stopped or facing backwards, clear stop counter to prompt native AC AI restart
        if physics.setAIStopCounter then
-         physics.setAIStopCounter(idx, 0) -- Clear stop counter
+         physics.setAIStopCounter(idx, 0)
        end
 
-       -- Reposition onto track spline only when genuine mid-race stoppage occurs
        local okEv, EventHub = pcall(require, "lib/core/EventHub")
        if okEv and EventHub then
-         EventHub.pushAiEvent(idx, "WATCHDOG", string.format("赛车 #%02d 遭遇严重停滞！看门狗完成赛道安全复位与起步平滑恢复。", idx + 1), "WORLD")
-       end
-
-       if physics.setAICarPosition then
-         -- Reposition to current position aligned along spline
-         physics.setAICarPosition(idx, car.position, nil)
-       end
-
-       -- Record reposition drop for self-judging assessment
-       _dropHistory.drops = _dropHistory.drops + 1
-       w.dropPending = true
-       w.judgeTimer = 0.0
-
-       -- Activate Rejoin Throttle Ramp for 3.0s (ramp up from 0.60 to 1.0)
-       local r = _rejoinRamp[idx]
-       if r then
-         r.active = true
-         r.remainingTimer = 3.0
-         r.totalTimer = 3.0
-         r.initialCap = 0.60
+         EventHub.pushAiEvent(idx, "WATCHDOG", string.format("赛车 #%02d 遭遇停滞，看门狗已清空停止计时重置原生AI寻路。", idx + 1), "WORLD")
        end
      end
    else

@@ -121,30 +121,23 @@ function M.applyActuator(car, aiState, dt)
   if not physics or not physics.allowed or not physics.allowed() then return end
   local idx = car.index
 
-  -- 1. Velocity-dependent lateral transition rate
-  local baseRate = 1.2
-  local refSpeed = 80.0
+  -- 1. Velocity-dependent lateral transition rate (gentle and smooth, max 0.40 units/s)
+  local baseRate = 0.35
   local curSpeed = car.speedKmh or 80.0
-  if curSpeed < 30.0 then curSpeed = 30.0 end
-  local speedScale = refSpeed / curSpeed
-  if speedScale < 0.35 then speedScale = 0.35 end
-  if speedScale > 1.80 then speedScale = 1.80 end
-  local stepRate = dt * (baseRate * speedScale)
+  local stepRate = dt * baseRate
 
-  -- 2. Target Spline Offset with Corridor Clamping & Visual Twitch
+  -- 2. Target Spline Offset with Corridor Clamping & Lap 0 / Pack Protection
   local targetOff = aiState.targetSplineOffset or 0.0
-  if aiState.overlapRatio and aiState.overlapRatio > 0.30 and aiState.rivalRelX then
+  if (car.lapCount or 0) == 0 or curSpeed < 75.0 then
+    -- During start formation / first lap crawl: clamp target offset strictly to [-0.10, 0.10]
+    if targetOff > 0.10 then targetOff = 0.10 end
+    if targetOff < -0.10 then targetOff = -0.10 end
+  elseif aiState.overlapRatio and aiState.overlapRatio > 0.30 and aiState.rivalRelX then
     targetOff = M.enforceCarWidthRule(targetOff, aiState.rivalRelX, aiState.overlapRatio)
   end
 
-  -- Apply Micro-correction twitch if near grip limits (high lat G or understeer)
-  local latG = 0.0
-  if car.acceleration and car.acceleration.x then
-    latG = math.abs(car.acceleration.x)
-  end
-  local isAtLimit = (latG > 9.8) or (aiState.state == "MISTAKE")
-  local twitch = M.computeVisualTwitch(idx, dt, isAtLimit)
-  local finalTarget = targetOff + twitch
+  -- Pure smooth transition without artificial high-frequency twitch oscillations
+  local finalTarget = targetOff
 
   if aiState.currentSplineOffset < finalTarget then
     local nextVal = aiState.currentSplineOffset + stepRate
@@ -156,8 +149,8 @@ function M.applyActuator(car, aiState, dt)
     aiState.currentSplineOffset = nextVal
   end
 
-  -- 3. Slew-limiting for Caution and Aggression (max 1.5 units/s)
-  local slew = dt * 1.5
+  -- 3. Slew-limiting for Caution and Aggression (max 1.0 units/s)
+  local slew = dt * 1.0
   local curC = aiState.currentCaution or aiState.targetCaution or 1.0
   local tgtC = aiState.targetCaution or 1.0
   if curC < tgtC then
@@ -180,9 +173,8 @@ function M.applyActuator(car, aiState, dt)
   end
   aiState.currentAggression = curA
 
-  -- 4. Push to CSP Physics Actuators (Gated at low speed to prevent grid crab-walk & spinout)
+  -- 4. Push to CSP Physics Actuators
   if curSpeed < 45.0 then
-    -- On starting grid / launch phase: let native AC AI follow track centerline / grid slot directly
     aiState.currentSplineOffset = 0.0
     if physics.setAISplineOffset then
       physics.setAISplineOffset(idx, 0.0, false)
@@ -198,8 +190,8 @@ function M.applyActuator(car, aiState, dt)
     end
   else
     if physics.setAISplineOffset then
-      local overrideAwareness = (aiState.state == "DEFEND" or aiState.state == "ATTACK")
-      physics.setAISplineOffset(idx, aiState.currentSplineOffset, overrideAwareness)
+      -- ALWAYS false for overrideAwareness so native AC AI obstacle/collision avoidance is never blinded!
+      physics.setAISplineOffset(idx, aiState.currentSplineOffset, false)
     end
 
     if physics.setAICaution then
@@ -210,25 +202,9 @@ function M.applyActuator(car, aiState, dt)
       physics.setAIAggression(idx, aiState.currentAggression)
     end
 
-    -- 5. Grip Adjustments (Dirty Air + Mistake Grip + Tyre Overheat & Cold Tyre Warmup)
-    local totalGripPenalty = 0.0
-    if aiState.dirtyAirLoss then totalGripPenalty = totalGripPenalty + aiState.dirtyAirLoss end
-    if aiState.mistakeGripPenalty then totalGripPenalty = totalGripPenalty + aiState.mistakeGripPenalty end
-    if aiState.tireTempNorm and aiState.tireTempNorm > 1.15 then
-      -- Overheated tyre grip drop (up to 7% loss when cooked)
-      totalGripPenalty = totalGripPenalty + (aiState.tireTempNorm - 1.15) * 0.20
-    end
-    if aiState.outLapColdGrip and aiState.outLapColdGrip < 1.0 then
-      -- Fresh tyre warmup ramp (cold tyre grip loss)
-      totalGripPenalty = totalGripPenalty + (1.0 - aiState.outLapColdGrip)
-    end
-
+    -- 5. Grip Adjustments: Keep neutral (0.0) to prevent tyre snap spin
     if physics.setExtraAIGrip then
-      if totalGripPenalty > 0.001 then
-        physics.setExtraAIGrip(idx, -totalGripPenalty)
-      else
-        physics.setExtraAIGrip(idx, 0.0)
-      end
+      physics.setExtraAIGrip(idx, 0.0)
     end
   end
 
