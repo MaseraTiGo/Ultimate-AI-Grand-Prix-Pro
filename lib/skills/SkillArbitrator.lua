@@ -153,7 +153,7 @@ local function populateGeoState(car, aheadCar, behindCar, sState, raceCtx)
   if car.acceleration and car.acceleration.x then
     latG = math.abs(car.acceleration.x)
   end
-  _geoState.isStraight = (latG < 4.0)
+  _geoState.isStraight = (latG < 2.0) and ((car.speedKmh or 0.0) > 90.0)
   _geoState.isCurvatureSafe = (latG < 9.8)
 
   -- Tyre & Grip

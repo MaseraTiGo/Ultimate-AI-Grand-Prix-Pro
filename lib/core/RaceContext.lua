@@ -55,6 +55,9 @@ for i = 0, MAX_CARS - 1 do
     splinePos = 0.0,
     lapCount = 0,
     positionInRace = i + 1,
+    prevPositionInRace = i + 1,
+    tyreCliffAlertSent = false,
+    lastMechAlertTime = 0.0,
     isInPitlane = false,
     isInPit = false,
     pitState = M.PIT_STATE_NONE,
@@ -328,7 +331,18 @@ function M.updateCarFromAc(carIndex, c)
   s.speedKmh = safeCarGet(c, "speedKmh") or 0.0
   s.splinePos = safeCarGet(c, "splinePosition") or 0.0
   s.lapCount = safeCarGet(c, "lapCount") or 0
-  s.positionInRace = safeCarGet(c, "racePosition") or (carIndex + 1)
+  local prevPos = s.positionInRace
+  local newPos = safeCarGet(c, "racePosition") or (carIndex + 1)
+  s.positionInRace = newPos
+
+  local EventHub = package.loaded["lib/core/EventHub"]
+  local StrategyCoordinator = package.loaded["lib/strategy/StrategyCoordinator"]
+
+  if prevPos and prevPos > 0 and newPos < prevPos and s.speedKmh > 50.0 and (s.lapCount or 0) > 0 and (_raceState.sessionTime or 0) > 8.0 then
+    if EventHub and EventHub.emitOvertake then
+      EventHub.emitOvertake(carIndex, s.driverName, newPos, _raceState.sessionTime)
+    end
+  end
 
   local wasInPitlane = s.isInPitlane
   local wasInPit = s.isInPit
@@ -336,9 +350,6 @@ function M.updateCarFromAc(carIndex, c)
   s.isInPit = safeCarGet(c, "isInPit") == true
   local isNowInPit = s.isInPitlane or s.isInPit
   local wasInAnyPit = wasInPitlane or wasInPit
-
-  local EventHub = package.loaded["lib/core/EventHub"]
-  local StrategyCoordinator = package.loaded["lib/strategy/StrategyCoordinator"]
 
   local curLap = _raceState.currentLap or 1
   local totalLaps = _raceState.totalLaps or 13
@@ -543,6 +554,20 @@ function M.updateCarFromAc(carIndex, c)
   end
   if wearVal then
     s.tyreWear = wearVal
+    if s.tyreWear >= 0.65 and not s.tyreCliffAlertSent and not isNowInPit and (_raceState.sessionTime or 0) > 10.0 then
+      s.tyreCliffAlertSent = true
+      if EventHub and EventHub.emitTyreCliffAlert then
+        EventHub.emitTyreCliffAlert(carIndex, s.driverName, s.tyreWear, _raceState.sessionTime)
+      end
+    end
+  end
+
+  -- Thermal health monitoring
+  if s.waterTemp and s.waterTemp > 105.0 and ((_raceState.sessionTime or 0) - (s.lastMechAlertTime or 0)) > 35.0 and (_raceState.sessionTime or 0) > 10.0 then
+    s.lastMechAlertTime = _raceState.sessionTime or 0
+    if EventHub and EventHub.emitMechanicalAlert then
+      EventHub.emitMechanicalAlert(carIndex, s.driverName, "WATER_TEMP", s.waterTemp, _raceState.sessionTime)
+    end
   end
 
   -- Per-wheel telemetry & compound index
@@ -579,6 +604,7 @@ function M.updateCarFromAc(carIndex, c)
         physics.setAITyres(carIndex, wo.targetCompoundIndex or 0)
       end
       s.tyreWear = 0.0
+      s.tyreCliffAlertSent = false
       for wIdx = 1, 4 do s.wheelWear[wIdx] = 1.0 end
       s.compoundIndex = wo.targetCompoundIndex or 0
       s.compoundName = wo.targetCompoundName or "Default"
@@ -612,6 +638,8 @@ function M.reset()
     if s.pendingWorkOrder then s.pendingWorkOrder.isConfirmed = false end
     s.empiricalFpl = nil
     s.lastTrackedLap = 0
+    s.tyreCliffAlertSent = false
+    s.lastMechAlertTime = 0.0
   end
 end
 

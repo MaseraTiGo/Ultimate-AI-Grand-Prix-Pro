@@ -16,15 +16,30 @@ M.category = "DEFENSE"
 function M.checkPrerequisites(car, aheadCar, behindCar, geoState, memState)
   if not behindCar or not car then return false end
   local behindDist = geoState.behindDist or 999.0
-  if behindDist > 30.0 or behindDist < 5.0 then return false end
+  -- Strict proximity window on high-speed straights: 4.5m to 22.0m
+  if behindDist > 22.0 or behindDist < 4.5 then return false end
 
-  -- Must be on a high-speed straight
-  if not geoState.isStraight or (car.speedKmh or 0.0) < 110.0 then
+  -- Must be on an active high-speed straight
+  if not geoState.isStraight or (car.speedKmh or 0.0) < 115.0 then
+    return false
+  end
+
+  -- Trailing car must be aligned in the slipstream corridor (< 1.2m lateral offset)
+  local relX = math.abs(geoState.behindRelX or 0.0)
+  if relX > 1.2 then
+    return false
+  end
+
+  -- Trailing car must be a real threat (closing in or low TTC)
+  local ttc = geoState.ttcBehind or 999.0
+  local vBehind = behindCar.speedKmh or 0.0
+  local vMe = car.speedKmh or 0.0
+  if ttc > 2.8 and vBehind < vMe - 0.5 then
     return false
   end
 
   -- Ahead must be clear
-  if (geoState.aheadDist or 999.0) < 35.0 then
+  if (geoState.aheadDist or 999.0) < 30.0 then
     return false
   end
 

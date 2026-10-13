@@ -919,7 +919,11 @@ function M.renderGridSetupTab()
 
     local isEditing = (_selectedCarForPersona == i)
     if ui.button(string.format("%s##btn_persona_%d", isEditing and "收起模版" or "自选模版", i)) then
-      _selectedCarForPersona = isEditing and nil or i
+      if isEditing then
+        _selectedCarForPersona = nil
+      else
+        _selectedCarForPersona = i
+      end
     end
     setTooltip(string.format("展开/收起 %s 的性格模版选择面板", dLabel))
 
@@ -931,8 +935,9 @@ function M.renderGridSetupTab()
     setTooltip("清除当前手动覆写，恢复该车手原厂名字对应的基因")
 
     if isEditing then
-      ui.text("    -> 可选拟人流派与 F1 传奇基因:")
-      for _, pBtn in ipairs(_personaButtons) do
+      ui.text("    [性格流派]:")
+      for idx = 1, 5 do
+        local pBtn = _personaButtons[idx]
         ui.sameLine()
         local isCurrent = (curOverride == pBtn.key)
         local btnTxt = string.format("%s%s##sel_p_%d_%s", isCurrent and "[ " or " ", pBtn.label, i, pBtn.key)
@@ -941,7 +946,21 @@ function M.renderGridSetupTab()
           personaLoader.setManualOverride(i, pBtn.key)
           EventHub.pushCommandEvent("GRID", string.format("已将 %s 性格覆写为: %s", dLabel, _personaNames[pBtn.key] or pBtn.key), "SUCCESS")
         end
-        setTooltip(string.format("套用性格模版: %s", _personaNames[pBtn.key] or pBtn.key))
+        setTooltip(string.format("套用原型模版: %s", _personaNames[pBtn.key] or pBtn.key))
+      end
+
+      ui.text("    [F1 传奇]:")
+      for idx = 6, 10 do
+        local pBtn = _personaButtons[idx]
+        ui.sameLine()
+        local isCurrent = (curOverride == pBtn.key)
+        local btnTxt = string.format("%s%s##sel_p_%d_%s", isCurrent and "[ " or " ", pBtn.label, i, pBtn.key)
+        if isCurrent then btnTxt = btnTxt .. " ]" else btnTxt = btnTxt .. " " end
+        if ui.button(btnTxt) then
+          personaLoader.setManualOverride(i, pBtn.key)
+          EventHub.pushCommandEvent("GRID", string.format("已将 %s 性格覆写为: %s", dLabel, _personaNames[pBtn.key] or pBtn.key), "SUCCESS")
+        end
+        setTooltip(string.format("套用 F1 传奇基因: %s", _personaNames[pBtn.key] or pBtn.key))
       end
     end
   end

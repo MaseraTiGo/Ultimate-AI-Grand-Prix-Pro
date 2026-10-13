@@ -112,8 +112,8 @@ function M.rebuildFieldStrategy(totalLaps, defaultStops, baseFpl)
 
     if #stintLaps > 1 then
       local firstStintLaps = stintLaps[1]
-      local cFuel = cState.fuelInTank or 30.0
-      local maxFuelLaps = math.max(2, math.floor((cFuel - 1.0) / math.max(0.5, carBaseFpl)))
+      local cFuel = (cState.fuelInTank and cState.fuelInTank > 5.0) and cState.fuelInTank or (cState.maxFuelCapacity or 80.0)
+      local maxFuelLaps = math.max(4, math.floor((cFuel - 1.0) / math.max(0.5, carBaseFpl)))
 
       local win = StrategyCalc.computePitWindowForStint(1, 1, firstStintLaps, firstStintLaps, totalLaps)
       local groupOffset = StrategyCalc.getF1PitSpreadGroupOffset(i, 0)
@@ -309,23 +309,41 @@ function M.stepStrategy(dt)
       -- 3. Dynamic Pit Window & Undercut/Overcut Evaluation
       if not (cState.isInPitlane or cState.isInPit) and (cState.pitState == "NONE" or not cState.pitState) and curLap >= plan.openLap and curLap <= plan.escalateLap then
         local fuelLaps = FuelModel.estimateLapsRemaining(cState.fuelInTank, dynFpl, 0.5)
+
+        -- Resolve real telemetry and persona for accurate tactical evaluation
+        local aheadIdx, aheadDist = RaceContext.getNeighbors(i)
+        local mySpdMs = math.max(15.0, (cState.speedKmh or 120.0) / 3.6)
+        local gapAheadSec = (aheadDist < 200.0) and (aheadDist / mySpdMs) or 999.0
+
+        local personaLoader = package.loaded["lib/driver/persona_loader"]
+        local persona = personaLoader and personaLoader.getPersonaForCar(i, cState.driverName) or {}
+
         local evalInput = {
           currentLap = curLap,
           plannedPitLap = plan.targetLap,
           fuelLapsRemaining = fuelLaps,
-          currentTyrePaceLoss = cState.tyreWear * 2.0,
+          currentTyrePaceLoss = cState.tyreWear * 2.5,
           freshTyreAdvantage = 1.0,
-          gapAheadSec = 2.0,
-          gapBehindSec = 3.0,
+          gapAheadSec = gapAheadSec,
+          gapBehindSec = 4.0,
           exitTrafficPenaltyNow = 0.0,
-          exitTrafficPenaltyLater = 0.5,
-          persona = {},
+          exitTrafficPenaltyLater = 0.0,
+          persona = persona,
           scActive = race.scActive
         }
 
         local decision = PitStrategy.evaluatePitTimingOptions(evalInput)
         if decision and decision.bestOption then
-          if decision.bestOption.action == "PIT_NOW" or curLap >= plan.targetLap or fuelLaps <= 1.2 then
+          -- Strict Gating: Prevent premature pit stops unless critical conditions are met
+          local isTargetLapReached = (curLap >= plan.targetLap)
+          local isFuelEmergency = (fuelLaps <= 1.2)
+          local isTyreCliff = (cState.tyreWear >= 0.58)
+          local isSafetyCarCheapStop = (race.scActive == true)
+          local isRealUndercut = (decision.bestOption.action == "PIT_NOW") and (curLap >= plan.targetLap - 1) and (gapAheadSec < 1.6) and ((persona.undercut_preference or 0.5) >= 0.65)
+
+          local shouldBox = isTargetLapReached or isFuelEmergency or isTyreCliff or isSafetyCarCheapStop or isRealUndercut
+
+          if shouldBox then
             plan.activeRecommendation = "BOX_THIS_LAP"
             -- Autonomous AI Strategic Pit Decision:
             -- Pure recommendation NEVER mutates cState.radioCommand (which is reserved for Human / Pit Wall orders).
@@ -344,7 +362,7 @@ function M.stepStrategy(dt)
             plan.activeRecommendation = "STAY_OUT"
           end
           plan.confidence = decision.bestOption.score or 1.0
-          plan.reason = decision.bestOption.reason or "Stint window"
+          plan.reason = decision.bestOption.reason or (isRealUndercut and "Undercut window" or "Stint window")
         end
       else
         if curLap > plan.escalateLap and not plan.pitInHandled then

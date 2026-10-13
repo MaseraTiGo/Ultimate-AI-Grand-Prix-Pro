@@ -1015,6 +1015,119 @@ assertTrue(defState.targetAggression >= 0.90, "DEFEND directive maintains high d
 
 print("  -> Passed: Persona Template Selection & ATTACK/DEFEND Directives confirmed.")
 
+-- ==============================================================================
+-- [Test 27] Driver Persona Accordion Toggle State
+-- ==============================================================================
+print("[Test 27] Testing Driver Persona Accordion Toggle State...")
+local mockEditingState = nil
+local function toggleAccordion(carIdx)
+  if mockEditingState == carIdx then
+    mockEditingState = nil
+  else
+    mockEditingState = carIdx
+  end
+end
+assertEq(mockEditingState, nil, "Initial state is collapsed")
+toggleAccordion(2)
+assertEq(mockEditingState, 2, "First click expands car 2")
+toggleAccordion(2)
+assertEq(mockEditingState, nil, "Second click cleanly collapses car 2 (Lua nil ternary bug resolved)")
+print("  -> Passed: Driver Persona Accordion Toggle State verified.")
+
+-- ==============================================================================
+-- [Test 28] Broadcast False Positives Suppression (Attack Window & Weaving Gating)
+-- ==============================================================================
+print("[Test 28] Testing Broadcast False Positives Suppression...")
+-- 1. When aheadDist is 35m (drafting), state must remain CRUISE (not premature ATTACK)
+local draftingLeadCar = { index = 5, position = vec3(0, 0, 135), speedKmh = 190.0, isAIControlled = true }
+local draftingChaserCar = { index = 6, position = vec3(0, 0, 100), speedKmh = 195.0, isAIControlled = true }
+local chaserState = TacticalTicker.stepCar(draftingChaserCar, draftingLeadCar, nil, proceduralDriver, 0.0, nil, 0.1)
+assertEq(chaserState.state, TacticalTicker.STATE_CRUISE, "35m drafting gap must remain STATE_CRUISE, not premature STATE_ATTACK")
+assertTrue(chaserState.slipstreamActive == true, "Slipstream drafting flag active at 35m")
+
+-- 2. When trailing car is 28m behind (too far) or cornering, breaking the tow must NOT trigger
+local gentleCurveCar = {
+  index = 7,
+  position = vec3(0, 0, 100),
+  speedKmh = 180.0,
+  acceleration = vec3(3.5, 0, 0), -- Lateral G > 2.0 (cornering)
+  isAIControlled = true
+}
+local farTailCar = {
+  index = 8,
+  position = vec3(0, 0, 72), -- 28m behind (> 22m)
+  speedKmh = 180.0,
+  isAIControlled = true
+}
+local curveState = TacticalTicker.stepCar(gentleCurveCar, nil, farTailCar, mappedVerstappen, 0.0, nil, 0.1)
+assertEq(curveState.isBreakingTow, false, "Straight weaving defense strictly suppressed on curved sections or > 22m gap")
+print("  -> Passed: Broadcast False Positives Suppression verified.")
+
+-- ==============================================================================
+-- [Test 29] EventHub Event Pipeline Diversity & Rate-Limiting
+-- ==============================================================================
+print("[Test 29] Testing EventHub Event Pipeline Diversity & Rate-Limiting...")
+EventHub.clearAll()
+-- 1. Overtake broadcast
+EventHub.emitOvertake(1, "Max Verstappen", 2, 120.0)
+local recentEvts = EventHub.getRecentAiEvents(5)
+assertTrue(#recentEvts >= 1, "Overtake event pushed to Track 2")
+assertEq(recentEvts[1].category, "OUTCOME", "Overtake classified as OUTCOME")
+assertTrue(recentEvts[1].msg:find("超车完成") ~= nil, "Overtake message contains keyword")
+
+-- 2. Tyre cliff alert
+EventHub.emitTyreCliffAlert(2, "Lewis Hamilton", 0.68, 122.0)
+recentEvts = EventHub.getRecentAiEvents(5)
+assertEq(recentEvts[1].category, "STRATEGY", "Tyre alert classified as STRATEGY")
+assertTrue(recentEvts[1].msg:find("轮胎警报") ~= nil, "Tyre alert message contains keyword")
+
+-- 3. Mechanical health alert
+EventHub.emitMechanicalAlert(3, "Charles Leclerc", "WATER_TEMP", 108.0, 125.0)
+recentEvts = EventHub.getRecentAiEvents(5)
+assertEq(recentEvts[1].category, "WORLD", "Health alert classified as WORLD")
+assertTrue(recentEvts[1].msg:find("水温异常偏高") ~= nil, "Mechanical alert message contains keyword")
+
+-- 4. Debouncing test: rapid consecutive ATTACK emissions for the same car within 10s must be suppressed
+local initCount = #recentEvts
+EventHub.emitTacticalStateChange(1, "Max Verstappen", "ATTACK", "CRUISE", "ATTACK", 130.0)
+local afterOne = #EventHub.getRecentAiEvents(10)
+assertTrue(afterOne > initCount, "First ATTACK event admitted")
+EventHub.emitTacticalStateChange(1, "Max Verstappen", "ATTACK", "CRUISE", "ATTACK", 133.0) -- only 3s later
+local afterTwo = #EventHub.getRecentAiEvents(10)
+assertEq(afterOne, afterTwo, "Second ATTACK event within 15s suppressed by debouncing gate")
+print("  -> Passed: EventHub Event Pipeline Diversity & Rate-Limiting confirmed.")
+
+-- ==============================================================================
+-- [Test 30] Autonomous AI Pit Timing Protection against Premature Box
+-- ==============================================================================
+print("[Test 30] Testing Autonomous AI Pit Timing Protection...")
+StrategyCoordinator.rebuildFieldStrategy(13, 1, 2.5) -- 13 laps, 1 stop (target lap around 7)
+local pCarState = RaceContext.getCarState(2)
+local pCarPlan = StrategyCoordinator.getCarPlan(2)
+pCarState.isInPitlane = false
+pCarState.isInPit = false
+pCarState.pitState = "NONE"
+pCarState.pit_requested = false
+pCarState.radioCommand = "NONE"
+pCarState.radioOrderActive = false
+pCarState.fuelInTank = 35.0 -- Plenty of fuel (~14 laps remaining)
+pCarState.tyreWear = 0.18   -- Pristine tyres (far from cliff)
+
+-- Simulate Lap 3 (curLap < plan.targetLap, e.g. targetLap is 7)
+RaceContext.getRaceState().currentLap = 3
+RaceContext.getRaceState().scActive = false
+StrategyCoordinator.stepStrategy(1.0)
+
+assertEq(pCarState.pit_requested, false, "AI must NOT request pit stop on Lap 3 with healthy tyres and fuel")
+assertEq(pCarPlan.activeRecommendation, "STAY_OUT", "Recommendation remains STAY_OUT before target lap")
+
+-- Simulate reaching targetLap: now the AI scheduled stop triggers
+RaceContext.getRaceState().currentLap = pCarPlan.targetLap
+StrategyCoordinator.stepStrategy(1.0)
+assertEq(pCarState.pit_requested, true, "AI executes pit request when targetLap is reached")
+assertEq(pCarPlan.activeRecommendation, "BOX_THIS_LAP", "Recommendation becomes BOX_THIS_LAP on target lap")
+print("  -> Passed: Autonomous AI Pit Timing Protection verified.")
+
 print("==================================================================")
-print("  ALL 26 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
+print("  ALL 30 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
 print("==================================================================")

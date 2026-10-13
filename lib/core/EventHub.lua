@@ -13,7 +13,7 @@
 
 local M = {}
 
-local MAX_EVENTS_PER_TRACK = 32
+local MAX_EVENTS_PER_TRACK = 64
 
 -- Preallocated event pools
 local _cmdTrack = {}
@@ -26,6 +26,9 @@ local _aiCount = 0
 -- Rate-limiting memory (carIndex -> lastEventTime)
 local _lastTacticalEventTime = {}
 local _lastTacticalState = {}
+local _lastAttackEventTime = {}
+local _lastTowWeaveEventTime = {}
+local _lastDefendEventTime = {}
 
 for i = 1, MAX_EVENTS_PER_TRACK do
   _cmdTrack[i] = {
@@ -49,6 +52,9 @@ local _pendingPitCommands = {}
 for i = 0, 24 do
   _lastTacticalEventTime[i] = 0.0
   _lastTacticalState[i] = "CRUISE"
+  _lastAttackEventTime[i] = 0.0
+  _lastTowWeaveEventTime[i] = 0.0
+  _lastDefendEventTime[i] = 0.0
   _pendingPitCommands[i] = 0
 end
 
@@ -71,6 +77,9 @@ function M.init()
   for i = 0, 24 do
     _lastTacticalEventTime[i] = 0.0
     _lastTacticalState[i] = "CRUISE"
+    _lastAttackEventTime[i] = 0.0
+    _lastTowWeaveEventTime[i] = 0.0
+    _lastDefendEventTime[i] = 0.0
     _pendingPitCommands[i] = 0
   end
   _lastHeartbeatTime = 0.0
@@ -188,8 +197,26 @@ function M.emitTacticalStateChange(carIdx, driverName, newState, oldState, skill
   end
 
   -- BOXING and YIELD bypass throttling
-  if newState ~= "BOXING" and newState ~= "YIELD" and (now - (_lastTacticalEventTime[carIdx] or 0)) < 2.5 then
+  if newState ~= "BOXING" and newState ~= "YIELD" and (now - (_lastTacticalEventTime[carIdx] or 0)) < 3.5 then
     return
+  end
+
+  -- Specific high-frequency tactical event debouncing to prevent flood
+  if newState == "ATTACK" or (skillName and skillName == "ATTACK") then
+    if (now - (_lastAttackEventTime[carIdx] or 0)) < 15.0 then
+      return
+    end
+    _lastAttackEventTime[carIdx] = now
+  elseif newState == "TOW_WEAVE" or (skillName and skillName == "TOW_WEAVE") then
+    if (now - (_lastTowWeaveEventTime[carIdx] or 0)) < 15.0 then
+      return
+    end
+    _lastTowWeaveEventTime[carIdx] = now
+  elseif newState == "DEFEND" then
+    if (now - (_lastDefendEventTime[carIdx] or 0)) < 12.0 then
+      return
+    end
+    _lastDefendEventTime[carIdx] = now
   end
 
   local dLabel = M.formatDriverLabel(carIdx, driverName)
@@ -228,6 +255,45 @@ function M.emitTacticalStateChange(carIdx, driverName, newState, oldState, skill
     _lastTacticalState[carIdx] = newState
     M.pushAiEvent(carIdx, "TACTIC", msg, category, now)
   end
+end
+
+--- Emit overtake event when car gains position
+function M.emitOvertake(overtakerIdx, driverName, newPos, sessionSec)
+  local now = sessionSec or os.clock()
+  local dLabel = M.formatDriverLabel(overtakerIdx, driverName)
+  local msg = string.format("【超车完成】%s 干净利落完成超越，升至第 P%d 位！", dLabel, newPos or 1)
+  M.pushAiEvent(overtakerIdx, "OVERTAKE", msg, "OUTCOME", now)
+end
+
+--- Emit tyre degradation cliff alert
+function M.emitTyreCliffAlert(carIdx, driverName, wearPct, sessionSec)
+  local now = sessionSec or os.clock()
+  local dLabel = M.formatDriverLabel(carIdx, driverName)
+  local msg = string.format("【轮胎警报】%s 轮胎损耗达 %.0f%%，抓地力跌入衰退悬崖！", dLabel, (wearPct or 0.65) * 100)
+  M.pushAiEvent(carIdx, "TYRE", msg, "STRATEGY", now)
+end
+
+--- Emit mechanical health or thermal overheating alert
+function M.emitMechanicalAlert(carIdx, driverName, alertType, detailVal, sessionSec)
+  local now = sessionSec or os.clock()
+  local dLabel = M.formatDriverLabel(carIdx, driverName)
+  local msg = nil
+  if alertType == "WATER_TEMP" then
+    msg = string.format("【机械预警】%s 引擎水温异常偏高 (%.0f°C)，车队呼叫注意散热！", dLabel, detailVal or 105.0)
+  elseif alertType == "GEARBOX" then
+    msg = string.format("【机械预警】%s 变速箱磨损过大 (%.0f%%)，升降挡顿挫加剧！", dLabel, (detailVal or 0.3) * 100)
+  else
+    msg = string.format("【机械预警】%s 车身机械状态出现异常！", dLabel)
+  end
+  M.pushAiEvent(carIdx, "HEALTH", msg, "WORLD", now)
+end
+
+--- Emit fastest lap achievement
+function M.emitFastestLap(carIdx, driverName, lapTime, sessionSec)
+  local now = sessionSec or os.clock()
+  local dLabel = M.formatDriverLabel(carIdx, driverName)
+  local msg = string.format("【最快圈速】%s 做出全场最快圈速 (%.3f秒)！", dLabel, lapTime)
+  M.pushAiEvent(carIdx, "FASTEST", msg, "OUTCOME", now)
 end
 
 --- Get latest command events (newest first)

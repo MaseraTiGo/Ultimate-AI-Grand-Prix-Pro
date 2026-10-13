@@ -182,6 +182,31 @@ local function checkCurvatureSafe(car)
   return true
 end
 
+--- High-speed straight verification: low lateral G, forward trajectory
+local function checkIsStraight(car)
+  if not car then return true end
+  local spd = car.speedKmh or 0.0
+  if spd < 100.0 then return false end
+  if car.acceleration and car.acceleration.x then
+    if math.abs(car.acceleration.x) > 2.0 then
+      return false
+    end
+  end
+  if car.look and car.velocity then
+    local speed = car.velocity:length()
+    if speed > 25.0 then
+      local vNormX = car.velocity.x / speed
+      local vNormY = car.velocity.y / speed
+      local vNormZ = car.velocity.z / speed
+      local dot = car.look.x * vNormX + car.look.y * vNormY + car.look.z * vNormZ
+      if dot < 0.985 then
+        return false
+      end
+    end
+  end
+  return true
+end
+
 --- Calculate continuous dynamic psychological stress
 local function computeStress(s, dist, deltaV, persona, raceContext, dt)
   local w_dist = 1.2
@@ -578,30 +603,35 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
     s.defenseHeatTimer = 0.0
   end
 
-  -- 7.5 Breaking the Tow & Weaving (Straight defense when tailgated < 30m)
+  -- 7.5 Breaking the Tow & Weaving (Straight defense when tailgated in direct slipstream < 22m)
   s.isBreakingTow = false
-  local isStraight = checkCurvatureSafe(car)
+  local isStraight = checkIsStraight(car)
   local mySpeed = car.speedKmh or 0.0
-  if isStraight and mySpeed > 100.0 and behindCar and behindDist < 30.0 and behindDist > 6.0 and (not aheadCar or s.aheadDist > 40.0) then
-    local aggr = persona and (persona.base_aggression or 0.7) or 0.7
-    if aggr > 0.72 then
-      s.isBreakingTow = true
-      s.towBreakTimer = s.towBreakTimer + dt
-      -- Oscillate weave: +/-0.35 spline units @ ~3.0 rad/s
-      s.towBreakOffset = math.sin(s.towBreakTimer * 3.0) * 0.35
-      s.targetSplineOffset = s.towBreakOffset
-      s.targetCaution = 0.8
-      s.targetAggression = aggr
+  local isTailgated = isStraight and mySpeed > 115.0 and behindCar and behindDist <= 22.0 and behindDist > 4.5
+  if isTailgated and (not aheadCar or s.aheadDist > 30.0) then
+    local relX = math.abs(s.rivalRelX or 0.0)
+    local isClosingIn = (behindSpeedDelta > -0.2) or (ttcBehind < 2.5)
+    if relX < 1.2 and isClosingIn then
+      local aggr = persona and (persona.base_aggression or 0.7) or 0.7
+      if aggr > 0.72 then
+        s.isBreakingTow = true
+        s.towBreakTimer = s.towBreakTimer + dt
+        -- Oscillate weave: +/-0.35 spline units @ ~3.0 rad/s
+        s.towBreakOffset = math.sin(s.towBreakTimer * 3.0) * 0.35
+        s.targetSplineOffset = s.towBreakOffset
+        s.targetCaution = 0.8
+        s.targetAggression = aggr
 
-      -- Intense weaving under tailgating also builds tire thermal load
-      s.defenseHeatTimer = (s.defenseHeatTimer or 0.0) + dt
-      if s.defenseHeatTimer > 2.0 then
-        s.tireTempNorm = math.min(1.50, (s.tireTempNorm or 1.0) + dt * 0.06)
-        if raceContext then raceContext.tyreTempNorm = s.tireTempNorm end
+        -- Intense weaving under tailgating also builds tire thermal load
+        s.defenseHeatTimer = (s.defenseHeatTimer or 0.0) + dt
+        if s.defenseHeatTimer > 2.0 then
+          s.tireTempNorm = math.min(1.50, (s.tireTempNorm or 1.0) + dt * 0.06)
+          if raceContext then raceContext.tyreTempNorm = s.tireTempNorm end
+        end
+
+        TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
+        return s
       end
-
-      TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
-      return s
     end
   else
     s.towBreakTimer = 0.0
@@ -662,21 +692,21 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
     end
   end
 
-  -- Slipstream Tow Seeking (25m ~ 60m)
-  if aheadCar and aheadDist >= 25.0 and aheadDist <= 60.0 then
-    s.state = M.STATE_ATTACK
+  -- Slipstream Tow Seeking (18m ~ 60m) - Pure drafting cruise, NOT attack window
+  if aheadCar and aheadDist >= 18.0 and aheadDist <= 60.0 then
+    s.state = M.STATE_CRUISE
     s.slipstreamActive = true
     local aheadState = _aiStates[aheadCar.index]
     s.targetSplineOffset = aheadState and aheadState.currentSplineOffset or 0.0
-    s.targetAggression = math.min(0.95, (persona.base_aggression or 0.8) + 0.1)
-    s.targetCaution = math.max(0.2, (persona.base_caution or 0.7) * 0.5)
+    s.targetAggression = math.min(0.95, (persona.base_aggression or 0.8) + 0.05)
+    s.targetCaution = math.max(0.4, (persona.base_caution or 0.7) * 0.8)
     TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, tyreWear, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
     return s
   end
   s.slipstreamActive = false
 
-  -- Close Quarters Hunting (< 20m) & Two-Phase Feint / Dummy Move
-  if aheadDist < 20.0 and aheadCar then
+  -- Close Quarters Hunting (< 18m) & Two-Phase Feint / Dummy Move
+  if aheadDist < 18.0 and aheadCar then
     s.state = M.STATE_ATTACK
     s.committedState = M.STATE_ATTACK
     s.commitTimer = 0.7
