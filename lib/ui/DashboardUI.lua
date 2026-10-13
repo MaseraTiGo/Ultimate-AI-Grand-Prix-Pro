@@ -84,7 +84,40 @@ local function setTooltip(tipText)
 end
 
 --------------------------------------------------------------------------------
--- 2. State Management & Dynamic AI Car Discovery (Zero Allocation)
+-- 2. Driver Name Resolution & Formatting (Adaptive Ellipsis & Zero Wrap)
+--------------------------------------------------------------------------------
+local function getDriverNameDisplay(carIdx, maxLen)
+  maxLen = maxLen or 10
+  local rawName = ""
+  if ac and ac.getDriverName then
+    local n = ac.getDriverName(carIdx)
+    if n and n ~= "" then rawName = n end
+  end
+  if rawName == "" then
+    local c = RaceContext.getCarState(carIdx)
+    if c and c.driverName and c.driverName ~= "" and not c.driverName:find("^AI #") and not c.driverName:find("^Car #") and not c.driverName:find("^AI车手") then
+      rawName = c.driverName
+    end
+  end
+  if rawName == "" and ac and ac.getCar then
+    local car = ac.getCar(carIdx)
+    if car and car.driverName and car.driverName ~= "" then
+      rawName = car.driverName
+    end
+  end
+  if rawName == "" then
+    rawName = (carIdx == 0) and "Player" or string.format("Driver #%02d", carIdx + 1)
+  end
+
+  local truncated = rawName
+  if #rawName > maxLen then
+    truncated = rawName:sub(1, maxLen - 2) .. ".."
+  end
+  return truncated, rawName
+end
+
+--------------------------------------------------------------------------------
+-- 3. State Management & Dynamic AI Car Discovery (Zero Allocation)
 --------------------------------------------------------------------------------
 local _selectedTab = 1
 local _selectedCarForRadio = 1
@@ -98,7 +131,8 @@ local function refreshActiveAiCars()
   _activeAiCount = 0
   local carStates = RaceContext.getAllCarStates()
   local race = RaceContext.getRaceState()
-  local totalCars = race.carsCount or 0
+  local simCars = (ac and ac.getSim and ac.getSim().carsCount) or 0
+  local totalCars = math.max(race.carsCount or 0, simCars)
 
   -- Determine maximum index to probe
   local maxProbe = math.min(23, math.max(totalCars - 1, 0))
@@ -125,6 +159,12 @@ local function refreshActiveAiCars()
       _activeAiCount = _activeAiCount + 1
       _activeAiIndices[_activeAiCount] = i
     end
+  end
+
+  -- Guarantee race.carsCount reflects reality (minimum active AI + player)
+  local actualTotalCars = math.max(totalCars, _activeAiCount + 1)
+  if (not race.carsCount) or race.carsCount < actualTotalCars then
+    race.carsCount = actualTotalCars
   end
 
   -- Validate _selectedCarForRadio
@@ -159,7 +199,7 @@ local _setupStops = 1
 local _setupBaseFpl = 2.5
 
 --------------------------------------------------------------------------------
--- 3. Main Header & Entry Point
+-- 4. Main Header & Entry Point
 --------------------------------------------------------------------------------
 function M.renderMain(perfMs, activeAiCount)
   if not ui or not ui.text then return end
@@ -207,7 +247,9 @@ function M.renderMain(perfMs, activeAiCount)
   ui.sameLine()
   ui.text("|")
   ui.sameLine()
-  ui.text(string.format("总车辆: %d 辆 (AI 车手: %d 位)", race.carsCount or (_activeAiCount + 1), _activeAiCount))
+
+  local displayTotalCars = (race.carsCount and race.carsCount > 0) and race.carsCount or math.max(1, _activeAiCount + 1)
+  ui.text(string.format("总车辆: %d 辆 (AI 车手: %d 位)", displayTotalCars, _activeAiCount))
 
   ui.separator()
 
@@ -246,7 +288,7 @@ function M.renderMain(perfMs, activeAiCount)
 end
 
 --------------------------------------------------------------------------------
--- 4. Tab 1: Live HUD (Player & Dynamic AI Telemetry Matrix)
+-- 5. Tab 1: Live HUD (Player & Dynamic AI Telemetry Matrix)
 --------------------------------------------------------------------------------
 function M.renderLiveHudTab()
   drawTextColored(COLOR_CYAN, "【赛道实时动态与玩家车辆遥测】")
@@ -270,8 +312,9 @@ function M.renderLiveHudTab()
   local pFuel = (playerState and playerState.fuelInTank) or 0.0
   local pWear = (playerState and playerState.tyreWear) or 0.0
   local pGearStr = (pGear == 0) and "空档(N)" or ((pGear < 0) and "倒档(R)" or string.format("%d档", pGear))
+  local _, pFullName = getDriverNameDisplay(0, 16)
 
-  ui.text(string.format("玩家 [#00]: 车速: %.1f km/h | 档位: %s | 转速: %d RPM", pSpeed, pGearStr, math.floor(pRpm)))
+  ui.text(string.format("玩家 [#01] %s: 车速: %.1f km/h | 档位: %s | 转速: %d RPM", pFullName, pSpeed, pGearStr, math.floor(pRpm)))
   ui.text(string.format("  燃油余量: %.1f L | 轮胎磨损: %.1f%% | 看门狗接管: %s",
     pFuel, pWear * 100.0, watchdog.isPhysicsAllowed() and "正常激活" or "仅监听"))
 
@@ -298,8 +341,8 @@ function M.renderLiveHudTab()
       local tierStr = (tier == 1) and "高精T1" or ((tier == 2) and "中距T2" or "低频T3")
       local telem = TelemetryBridge.getCarTelemetry(i)
 
-      local rawName = (c.driverName and c.driverName ~= "") and c.driverName or string.format("AI车手 #%02d", i + 1)
-      local dName = rawName:sub(1, 10)
+      local dName, fullDriverName = getDriverNameDisplay(i, 10)
+      local dLabel = EventHub.formatDriverLabel(i, fullDriverName)
 
       local isSelected = (_selectedCarForRadio == i)
       local selPrefix = isSelected and "> " or "  "
@@ -314,9 +357,9 @@ function M.renderLiveHudTab()
 
       if rowClicked then
         _selectedCarForRadio = i
-        EventHub.pushCommandEvent("UI", string.format("已切换指挥目标至: #%02d (%s)", i + 1, dName), "SUCCESS")
+        EventHub.pushCommandEvent("UI", string.format("已切换指挥目标至: %s", dLabel), "SUCCESS")
       end
-      setTooltip(string.format("点击将车队指令目标切换为 #%02d (%s)", i + 1, dName))
+      setTooltip(string.format("车手: %s (点击选中为车队无线电指挥目标)", fullDriverName))
 
       ui.sameLine()
       ui.text(string.format("[%s]", tierStr))
@@ -365,7 +408,7 @@ function M.renderLiveHudTab()
 end
 
 --------------------------------------------------------------------------------
--- 5. Tab 2: Pit Wall & Driver Radio Command Console
+-- 6. Tab 2: Pit Wall & Driver Radio Command Console
 --------------------------------------------------------------------------------
 function M.renderPitWallTab()
   drawTextColored(COLOR_CYAN, "【车队无线电指挥台与进站调度】")
@@ -373,12 +416,12 @@ function M.renderPitWallTab()
   local carStates = RaceContext.getAllCarStates()
 
   -- 1. Radio Command Console
-  local targetState = carStates[_selectedCarForRadio]
-  local targetName = (targetState and targetState.driverName and targetState.driverName ~= "") and targetState.driverName or string.format("AI车手 #%02d", _selectedCarForRadio + 1)
+  local _, fullTargetName = getDriverNameDisplay(_selectedCarForRadio, 16)
+  local targetLabel = EventHub.formatDriverLabel(_selectedCarForRadio, fullTargetName)
 
   ui.text("当前指挥目标: ")
   ui.sameLine()
-  drawInlineColored(COLOR_CYAN, string.format("#%02d (%s)", _selectedCarForRadio + 1, targetName))
+  drawInlineColored(COLOR_CYAN, targetLabel)
   ui.sameLine()
 
   if ui.button(" < 上一车手##radio_prev ") then
@@ -392,9 +435,9 @@ function M.renderPitWallTab()
       end
       local prevSlot = ((currentSlot - 2 + _activeAiCount) % _activeAiCount) + 1
       _selectedCarForRadio = _activeAiIndices[prevSlot]
-      local selState = carStates[_selectedCarForRadio]
-      local selName = (selState and selState.driverName and selState.driverName ~= "") and selState.driverName or string.format("AI #%02d", _selectedCarForRadio + 1)
-      EventHub.pushCommandEvent("UI", string.format("已切换指挥目标至: #%02d (%s)", _selectedCarForRadio + 1, selName), "SUCCESS")
+      local _, prevFullName = getDriverNameDisplay(_selectedCarForRadio, 16)
+      local prevLabel = EventHub.formatDriverLabel(_selectedCarForRadio, prevFullName)
+      EventHub.pushCommandEvent("UI", string.format("已切换指挥目标至: %s", prevLabel), "SUCCESS")
     end
   end
   setTooltip("切换至上一位活跃 AI 车手")
@@ -411,9 +454,9 @@ function M.renderPitWallTab()
       end
       local nextSlot = (currentSlot % _activeAiCount) + 1
       _selectedCarForRadio = _activeAiIndices[nextSlot]
-      local selState = carStates[_selectedCarForRadio]
-      local selName = (selState and selState.driverName and selState.driverName ~= "") and selState.driverName or string.format("AI #%02d", _selectedCarForRadio + 1)
-      EventHub.pushCommandEvent("UI", string.format("已切换指挥目标至: #%02d (%s)", _selectedCarForRadio + 1, selName), "SUCCESS")
+      local _, nextFullName = getDriverNameDisplay(_selectedCarForRadio, 16)
+      local nextLabel = EventHub.formatDriverLabel(_selectedCarForRadio, nextFullName)
+      EventHub.pushCommandEvent("UI", string.format("已切换指挥目标至: %s", nextLabel), "SUCCESS")
     end
   end
   setTooltip("切换至下一位活跃 AI 车手")
@@ -422,7 +465,7 @@ function M.renderPitWallTab()
   if ui.button("全力冲刺 (PUSH)##cmd_push") then
     StrategyCoordinator.issueRadioOrder(_selectedCarForRadio, "PUSH")
   end
-  setTooltip("指令赛车提升激进侵略度，降低入弯保守度，全力向前推进")
+  setTooltip("指令赛车提升激进侵略度，全力向前推进")
 
   ui.sameLine()
   if ui.button("保胎节油 (SAVE)##cmd_save") then
@@ -434,7 +477,7 @@ function M.renderPitWallTab()
   if ui.button("本圈进站 (BOX)##cmd_box") then
     StrategyCoordinator.issueRadioOrder(_selectedCarForRadio, "BOX_THIS_LAP")
   end
-  setTooltip("强制要求该赛车贴靠维修区外侧并准备在本圈进入维修区")
+  setTooltip("强制要求赛车贴靠维修区入口并在本圈进站 (自动注入底层油量诱导激活原生进站)")
 
   ui.sameLine()
   if ui.button("解除指令 (CLEAR)##cmd_clear") then
@@ -454,9 +497,10 @@ function M.renderPitWallTab()
     local pFuel = pState and pState.fuelInTank or 30.0
     local pFpl = playerPlan.dynamicFpl or 2.5
     local pEstLaps = (pFpl > 0) and math.floor(pFuel / pFpl) or 0
+    local _, pFullName = getDriverNameDisplay(0, 16)
     ui.text("  车号   车手姓名     燃油/单圈     预计续航   进站建议窗口    策略决策")
-    ui.text(string.format("  #00   玩家赛车     %4.1fL(%.2f)   ~%2d 圈    第%02d-%02d圈     ",
-      pFuel, pFpl, pEstLaps, playerPlan.openLap or 0, playerPlan.escalateLap or 0))
+    ui.text(string.format("  #01   %-10s   %4.1fL(%.2f)   ~%2d 圈    第%02d-%02d圈     ",
+      pFullName:sub(1, 10), pFuel, pFpl, pEstLaps, playerPlan.openLap or 0, playerPlan.escalateLap or 0))
     ui.sameLine()
     drawInlineColored(COLOR_GREEN, "[继续留场]")
     drawTextColored(COLOR_MUTED, "  [待命] 当前未检测到其他 AI 赛车。多车比赛时将在此动态列出全场战术规划。")
@@ -473,8 +517,8 @@ function M.renderPitWallTab()
       local fuel = c.fuelInTank or 0.0
       local fpl = plan.dynamicFpl or 2.5
       local estLaps = (fpl > 0) and math.floor(fuel / fpl) or 0
-      local rawName = (c.driverName and c.driverName ~= "") and c.driverName or string.format("AI #%02d", i + 1)
-      local dName = rawName:sub(1, 10)
+      local dName, fullDriverName = getDriverNameDisplay(i, 10)
+      local dLabel = EventHub.formatDriverLabel(i, fullDriverName)
 
       local isSelected = (_selectedCarForRadio == i)
       local selPrefix = isSelected and "> " or "  "
@@ -489,9 +533,9 @@ function M.renderPitWallTab()
 
       if rowClicked then
         _selectedCarForRadio = i
-        EventHub.pushCommandEvent("UI", string.format("已切换指挥目标至: #%02d (%s)", i + 1, dName), "SUCCESS")
+        EventHub.pushCommandEvent("UI", string.format("已切换指挥目标至: %s", dLabel), "SUCCESS")
       end
-      setTooltip(string.format("点击将车队指令目标切换为 #%02d (%s)", i + 1, dName))
+      setTooltip(string.format("车手: %s (点击选中为指挥目标)", fullDriverName))
 
       ui.sameLine()
       ui.text(string.format(" %4.1fL(%.2f)   ~%2d 圈    第%02d-%02d圈     ",
@@ -508,7 +552,7 @@ function M.renderPitWallTab()
 end
 
 --------------------------------------------------------------------------------
--- 6. Tab 3: Strategy Workshop & Stint Planner
+-- 7. Tab 3: Strategy Workshop & Stint Planner
 --------------------------------------------------------------------------------
 function M.renderSetup()
   drawTextColored(COLOR_CYAN, "【进站策略工坊与参数设定】")
@@ -616,7 +660,7 @@ function M.renderSetup()
 end
 
 --------------------------------------------------------------------------------
--- 7. Tab 4: Driver Grid Persona Configuration
+-- 8. Tab 4: Driver Grid Persona Configuration
 --------------------------------------------------------------------------------
 function M.renderGridSetupTab()
   drawTextColored(COLOR_CYAN, "【车手性格与 7D 基因图谱覆写】")
@@ -629,13 +673,14 @@ function M.renderGridSetupTab()
   for slot = 1, _activeAiCount do
     local i = _activeAiIndices[slot]
     local c = RaceContext.getCarState(i)
-    local rawName = (c and c.driverName and c.driverName ~= "") and c.driverName or string.format("AI车手 #%02d", i + 1)
-    local dName = rawName:sub(1, 10)
+    local dName, fullDriverName = getDriverNameDisplay(i, 10)
+    local dLabel = EventHub.formatDriverLabel(i, fullDriverName)
     local curOverride = personaLoader.getManualOverride(i)
-    local persona = personaLoader.getPersonaForCar(i, rawName)
+    local persona = personaLoader.getPersonaForCar(i, fullDriverName)
     local pDisplay = _personaNames[curOverride] or (persona.name or "均衡配置")
 
     ui.text(string.format("  #%02d %-10s: ", i + 1, dName))
+    setTooltip(string.format("车手: %s", fullDriverName))
     ui.sameLine()
     drawInlineColored(COLOR_BLUE, string.format("[ %s ]", pDisplay))
     ui.sameLine()
@@ -649,14 +694,14 @@ function M.renderGridSetupTab()
         end
       end
       personaLoader.setManualOverride(i, _availablePersonas[nextIdx])
-      EventHub.pushCommandEvent("GRID", string.format("已将 #%02d (%s) 性格覆写为: %s", i + 1, dName, _personaNames[_availablePersonas[nextIdx]] or _availablePersonas[nextIdx]), "SUCCESS")
+      EventHub.pushCommandEvent("GRID", string.format("已将 %s 性格覆写为: %s", dLabel, _personaNames[_availablePersonas[nextIdx]] or _availablePersonas[nextIdx]), "SUCCESS")
     end
-    setTooltip(string.format("循环切换 #%02d 车手的驾驶性格 (激进/战术/冰人/绅士/均衡)", i + 1))
+    setTooltip(string.format("循环切换 %s 的驾驶性格模版", dLabel))
   end
 end
 
 --------------------------------------------------------------------------------
--- 8. Tab 5: Core System Diagnostic Logs
+-- 9. Tab 5: Core System Diagnostic Logs
 --------------------------------------------------------------------------------
 function M.renderLogsTab()
   drawTextColored(COLOR_CYAN, "【核心运行诊断日志流】")
@@ -679,7 +724,7 @@ function M.renderLogsTab()
 end
 
 --------------------------------------------------------------------------------
--- 9. Dual-Track Live Command Receipt & Race Broadcast Feed (Pinned)
+-- 10. Dual-Track Live Command Receipt & Race Broadcast Feed (Pinned)
 --------------------------------------------------------------------------------
 function M.renderEventFeed()
   ui.separator()
@@ -731,7 +776,7 @@ function M.renderEventFeed()
     drawTextColored(COLOR_MUTED, "  [监听中] 正在追踪全场 AI 攻防博弈、特技动作、失误修正与黄旗突发...")
   else
     for _, ev in ipairs(aiEvents) do
-      local isAlert = ev.msg:find("失误") or ev.msg:find("黄旗") or ev.msg:find("进站") or ev.msg:find("撞击")
+      local isAlert = ev.msg:find("失误") or ev.msg:find("黄旗") or ev.msg:find("进站") or ev.msg:find("撞击") or ev.msg:find("Safety") or ev.msg:find("安全车")
       local evCol = isAlert and COLOR_GOLD or COLOR_BLUE
       ui.text(string.format("  [%s] ", ev.timeStr))
       ui.sameLine()

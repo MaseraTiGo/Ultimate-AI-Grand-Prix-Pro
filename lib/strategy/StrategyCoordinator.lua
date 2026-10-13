@@ -116,6 +116,7 @@ function M.issueRadioOrder(carIndex, command)
     return false
   end
   local cState = RaceContext.getCarState(carIndex)
+  local dLabel = EventHub.formatDriverLabel(carIndex, cState.driverName)
   local cmd = command or "NONE"
   cState.radioCommand = cmd
   cState.radioOrderActive = (cmd ~= "NONE")
@@ -129,26 +130,34 @@ function M.issueRadioOrder(carIndex, command)
     if plan then
       plan.activeRecommendation = "BOX_THIS_LAP"
     end
+    -- Forced Physical Pit Entry Induction:
+    -- In Assetto Corsa native AI, cars ONLY branch into pitlane when fuel drops below critical reserve (~2L).
+    -- Setting fuel to 1.8L forces AC native AI navigation to branch into pitlane immediately on this lap!
+    if physics and physics.setCarFuel then
+      physics.setCarFuel(carIndex, 1.8)
+    end
+    EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 确认指令 -> 执行 [BOX_THIS_LAP] (物理诱导激活)", dLabel), "SUCCESS")
+    EventHub.pushAiEvent(carIndex, "RADIO", string.format("【进站指令】%s 车队无线电下达: 本圈立即进站换胎！赛车已进入进站准备姿态！", dLabel), "STRATEGY")
   elseif cmd == "PUSH" then
     cState.tacticalState = "ATTACK"
     cState.pit_requested = false
     cState.pit_stop_planned = false
+    EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 确认指令 -> 执行 [PUSH 全力推进]", dLabel), "SUCCESS")
   elseif cmd == "SAVE" then
     cState.tacticalState = "CRUISE"
     cState.isLiftAndCoast = true
     cState.pit_requested = false
     cState.pit_stop_planned = false
+    EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 确认指令 -> 执行 [SAVE 保胎节油]", dLabel), "SUCCESS")
   elseif cmd == "NONE" then
     cState.tacticalState = "CRUISE"
     cState.isLiftAndCoast = false
     cState.pit_requested = false
     cState.pit_stop_planned = false
+    EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 指令已解除 -> 恢复自主战术", dLabel), "SUCCESS")
   end
 
-  Logger.info("RADIO", string.format("Issued Radio Command [%s] to Car #%d", tostring(cmd), carIndex + 1))
-  
-  local dName = (cState.driverName and cState.driverName ~= "") and cState.driverName or string.format("Car #%02d", carIndex + 1)
-  EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] AI #%02d (%s) -> 执行 [%s]", carIndex + 1, dName, cmd), "SUCCESS")
+  Logger.info("RADIO", string.format("Issued Radio Command [%s] to %s", tostring(cmd), dLabel))
   return true
 end
 
@@ -244,6 +253,12 @@ function M.stepStrategy(dt)
           cState.lastPitLap = curLap
           cState.radioCommand = "NONE"
           cState.radioOrderActive = false
+          cState.tacticalState = "CRUISE"
+          cState.pit_requested = false
+          cState.pit_stop_planned = false
+
+          local dLabel = EventHub.formatDriverLabel(i, cState.driverName)
+          EventHub.pushAiEvent(i, "PIT", string.format("【进站作业】%s 已平稳驶入维修区，车组人员开始换胎与补油！", dLabel), "STRATEGY", race.sessionTime)
 
           -- Trigger realistic pit dwell pause if available (3.0 seconds service dwell)
           if physics and physics.setAIStopCounter then
@@ -259,8 +274,9 @@ function M.stepStrategy(dt)
           local refillLiters = math.min(cState.maxFuelCapacity, dynFpl * 15.0)
           if physics and physics.setCarFuel then
             physics.setCarFuel(i, refillLiters)
-            Logger.info("PIT", string.format("Car #%d completed pit stop (Refilled: %.1fL, Next Stint Ready, Cold Out-Lap Active)", i + 1, refillLiters))
+            Logger.info("PIT", string.format("%s completed pit stop (Refilled: %.1fL, Next Stint Ready, Cold Out-Lap Active)", dLabel, refillLiters))
           end
+          EventHub.pushAiEvent(i, "PIT", string.format("【完成出站】%s 进站作业完成（加注 %.1fL 燃油，换装全新轮胎），安全出站重返赛道！", dLabel, refillLiters), "STRATEGY", race.sessionTime)
         end
       else
         plan.pitInHandled = false

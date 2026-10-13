@@ -136,7 +136,8 @@ function M.updateFromSim(sim)
   end
   _raceState.currentLap = sim.currentLap or _raceState.currentLap or 1
 
-  -- Flags & Safety Car
+  -- Flags & Safety Car Edge Detection
+  local prevFlag = _raceState.flagState
   if sim.isYellowFlag or sim.hasYellowFlag then
     _raceState.flagState = M.FLAG_YELLOW
   elseif sim.safetyCarActive or sim.isSafetyCar then
@@ -145,6 +146,38 @@ function M.updateFromSim(sim)
   else
     _raceState.flagState = M.FLAG_GREEN
     _raceState.scActive = false
+  end
+
+  local EventHub = package.loaded["lib/core/EventHub"]
+  if EventHub and prevFlag ~= _raceState.flagState then
+    if _raceState.flagState == M.FLAG_YELLOW then
+      EventHub.pushAiEvent(0, "FLAG", "【全场黄旗】赛道出现危险状况，全场黄旗生效！禁止超车！", "WORLD", _raceState.sessionTime)
+    elseif _raceState.flagState == M.FLAG_SC then
+      EventHub.pushAiEvent(0, "FLAG", "【安全车出动】Safety Car 出动压车，各车队进入紧急进站窗口！", "WORLD", _raceState.sessionTime)
+    elseif _raceState.flagState == M.FLAG_GREEN and prevFlag ~= M.FLAG_GREEN then
+      EventHub.pushAiEvent(0, "FLAG", "【绿旗恢复】赛道险情解除，绿旗行车！比赛恢复全力推进！", "WORLD", _raceState.sessionTime)
+    end
+  end
+
+  -- Lap progression edge detection
+  local prevLap = _raceState.currentLap or 1
+  local newLap = sim.currentLap or _raceState.currentLap or 1
+  if EventHub and newLap > prevLap and prevLap > 0 then
+    _raceState.currentLap = newLap
+    local totalStr = (_raceState.totalLaps and _raceState.totalLaps > 0) and string.format("/%d 圈", _raceState.totalLaps) or ""
+    EventHub.pushAiEvent(0, "RACE", string.format("【赛程更新】头车冲线，比赛正式进入第 %d 圈%s！", newLap, totalStr), "WORLD", _raceState.sessionTime)
+  else
+    _raceState.currentLap = newLap
+  end
+
+  -- Eager driver name sync from AC
+  if ac and ac.getDriverName then
+    for idx = 0, MAX_CARS - 1 do
+      local dName = ac.getDriverName(idx)
+      if dName and dName ~= "" then
+        _carStates[idx].driverName = dName
+      end
+    end
   end
 end
 
@@ -161,6 +194,16 @@ function M.updateCarFromAc(carIndex, c)
   s.isInPitlane = c.isInPitlane == true
   s.isInPit = c.isInPit == true
   s.fuelInTank = c.fuel or s.fuelInTank
+
+  if ac and ac.getDriverName then
+    local dName = ac.getDriverName(carIndex)
+    if dName and dName ~= "" then
+      s.driverName = dName
+    end
+  end
+  if (not s.driverName or s.driverName == "") and c.driverName and c.driverName ~= "" then
+    s.driverName = c.driverName
+  end
 
   if c.position then
     s.posX = c.position.x or 0.0

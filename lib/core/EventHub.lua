@@ -67,6 +67,32 @@ function M.init()
     _lastTacticalEventTime[i] = 0.0
     _lastTacticalState[i] = "CRUISE"
   end
+  _lastHeartbeatTime = 0.0
+  M.pushAiEvent(0, "SYSTEM", "【系统就绪】Ultimate AI Grand Prix Pro 拟人化决策网络已就绪，正在监听全场遥测！", "WORLD", 0.0)
+end
+
+--- Standardized driver identifier: [#02] Driver Name
+function M.formatDriverLabel(carIdx, driverName)
+  local carNum = (carIdx or 0) + 1
+  local name = driverName
+  if not name or name == "" or name:find("^AI #") or name:find("^Car #") or name:find("^AI车手") then
+    name = (carIdx == 0) and "Player" or string.format("Driver #%02d", carNum)
+  end
+  return string.format("[#%02d] %s", carNum, name)
+end
+
+local _lastHeartbeatTime = 0.0
+
+--- Heartbeat diagnostic feed: outputs status summary every 15s to keep broadcast alive
+function M.tickHeartbeat(sessionSec, activeCars, curLap, totalLaps)
+  local now = sessionSec or os.clock()
+  if (now - _lastHeartbeatTime) >= 15.0 then
+    _lastHeartbeatTime = now
+    local totalStr = (totalLaps and totalLaps > 0) and string.format("/%d 圈", totalLaps) or ""
+    local carsStr = string.format("%d 辆赛车", activeCars or 1)
+    local msg = string.format("【赛事速递】第 %d 圈%s 绿旗行车，全场 %s 状态平稳，AI 车手战术网络正常运转。", curLap or 1, totalStr, carsStr)
+    M.pushAiEvent(0, "HEARTBEAT", msg, "WORLD", now)
+  end
 end
 
 --- Push player or system command execution event (Track 1)
@@ -108,27 +134,30 @@ function M.emitTacticalStateChange(carIdx, driverName, newState, oldState, skill
     return
   end
 
-  local name = (driverName and driverName ~= "") and driverName or string.format("Car #%02d", carIdx + 1)
+  local dLabel = M.formatDriverLabel(carIdx, driverName)
   local msg = nil
   local category = "TACTIC"
 
   if newState == "LATE_BRAKE_DIVE" or (skillName and skillName == "LATE_BRAKE_DIVE") then
-    msg = string.format("[%s] 尝试内线晚刹深潜超车！", name)
+    msg = string.format("%s 尝试内线晚刹深潜超车！", dLabel)
   elseif newState == "FEINT_DUMMY" or (skillName and skillName == "FEINT_DUMMY") then
-    msg = string.format("[%s] 发动声东击西佯攻，诱骗前车防线！", name)
+    msg = string.format("%s 发动声东击西佯攻，诱骗前车防线！", dLabel)
   elseif newState == "SWITCHBACK" or (skillName and skillName == "SWITCHBACK") then
-    msg = string.format("[%s] 晚Apex下切交叉线，展开犀利反击！", name)
+    msg = string.format("%s 晚Apex下切交叉线，展开犀利反击！", dLabel)
   elseif newState == "TOW_WEAVE" or (skillName and skillName == "TOW_WEAVE") then
-    msg = string.format("[%s] 大直道摇摆走线，阻断后车尾流吸入！", name)
+    msg = string.format("%s 大直道摇摆走线，阻断后车尾流吸入！", dLabel)
   elseif newState == "GENTLE_SQUEEZE" or (skillName and skillName == "GENTLE_SQUEEZE") then
-    msg = string.format("[%s] 施展渐进侧向挤压，逼迫对手进入脏走线！", name)
+    msg = string.format("%s 施展渐进侧向挤压，逼迫对手进入脏走线！", dLabel)
   elseif newState == "DEFEND" and oldState ~= "DEFEND" then
-    msg = string.format("[%s] 察觉后车迫近威胁，全面卡死内线防守！", name)
+    msg = string.format("%s 察觉后车迫近威胁，全面卡死内线防守！", dLabel)
   elseif newState == "ATTACK" and oldState ~= "ATTACK" then
-    msg = string.format("[%s] 进入攻击窗口，全力寻找超车空隙！", name)
+    msg = string.format("%s 进入攻击窗口，全力寻找超车空隙！", dLabel)
   elseif newState == "MISTAKE" then
-    msg = string.format("[%s] 极限施压下出现微小失误！正在稳舵修正！", name)
+    msg = string.format("%s 极限施压下出现微小失误！正在稳舵修正！", dLabel)
     category = "OUTCOME"
+  elseif newState == "BOXING" then
+    msg = string.format("%s 确认本圈进站指令，正贴靠外侧驶向维修通道！", dLabel)
+    category = "STRATEGY"
   end
 
   if msg then

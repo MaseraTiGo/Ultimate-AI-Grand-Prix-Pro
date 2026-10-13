@@ -64,6 +64,7 @@ function script.init()
   TacticalTicker.reset()
   StrategyCoordinator.init()
   TelemetryBridge.reset()
+  EventHub.init()
 
   local sim = ac and ac.getSim and ac.getSim()
   if sim then
@@ -105,6 +106,8 @@ function script.update(dt)
     _strategyTimer = 0.0
     RaceContext.updateFromSim(sim)
     StrategyCoordinator.stepStrategy(stratDt)
+    local rState = RaceContext.getRaceState()
+    EventHub.tickHeartbeat(sim.sessionTime or 0.0, _activeAiCount + 1, rState.currentLap or 1, rState.totalLaps or 13)
   end
 
   -- 3. Tactical Driver Decision Tick @ 10Hz (0.1s interval)
