@@ -39,7 +39,7 @@
 
 - **已验证事实**：
   - **33 项核心集成与实机安全防护测试 100% 通过**（`tests/test_grand_prix_pro.lua`）。
-  - **诊断日志实时 AI 原生控制遥测流与开关（AI Control Telemetry Stream & Toggle）**：在诊断日志工具栏新增交互式开关 `[ ] 实时 AI 直接控制日志 (Live AI Control Stream)`，默认关闭维持零性能损耗与日志纯净度；开启后以 2–4Hz 动态抽样捕获底层物理动作，杜绝原生函数名转储，语义化转译为 `[HH:mm:ss.fff] [#CarNum DriverName] Action Category -> Operational Description`（如配速推圈、进站换胎加注、防守卡位走线、ERS/DRS 进攻超车模式等），并支持 CSP API 调用异常与前置校验拦截的 Red/Amber 显式告警追踪。
+  - **诊断日志实时 AI 原生控制遥测流与开关（AI Control Telemetry Stream & Toggle）**：在诊断日志工具栏新增交互式开关 `[ ] 实时 AI 直接控制日志 (Live AI Control Stream)`，严格遵循 Dear ImGui 单帧点击事件模型（修复了返回值误作稳态变量导致次帧自复位的 Bug），并支持点击状态标签双向快速切换与 `ac.storage` 安全持久化；默认关闭维持零性能损耗与日志纯净度；开启后以 2–4Hz 动态抽样捕获底层物理动作，杜绝原生函数名转储，语义化转译为 `[HH:mm:ss.fff] [#CarNum DriverName] Action Category -> Operational Description`（如配速推圈、进站换胎加注、防守卡位走线、ERS/DRS 进攻超车模式等），并支持 CSP API 调用异常与前置校验拦截的 Red/Amber 显式告警追踪。
   - **车手配置折叠面板修复（Accordion Fold Fix）**：攻克了 Lua 三元运算 `isEditing and nil or i` 恒等于 `i` 导致折叠失效的语言级陷阱，重构为显式条件分支，实现卡片展开/收起 100% 顺畅双向切换。
   - **广播事件虚警严控与几何特征过滤**：收紧 `TacticalTicker` 与 `TowWeaveSkill` 触发阈值，严格校验直线物理特征（车速 > 100km/h、横向加速度 $|a_x| < 2.0\text{ m/s}^2$、航向点积 $> 0.985$）与横向尾流走廊（$|\Delta x| \le 1.2\text{m}$），彻底杜绝弯道中触发“大直道摇摆走线”与非贴身跟车阶段虚报“进入攻击窗口”。
   - **赛事广播多维扩展与智能防抖限流**：环形缓冲容量扩容至 64 条；新增真实超车、轮胎抓地力断崖（磨损 > 65%）、水温过热（> 105℃）以及单圈最快圈广播；引入 12~15s 差异化冷却去重机制，消除重复战术通知刷屏。

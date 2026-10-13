@@ -1261,6 +1261,41 @@ ControlTelemetry.setEnabled(false)
 local okRenderDisabled, errRenderDisabled = pcall(DashboardUI.renderLogsTab)
 assertTrue(okRenderDisabled, "renderLogsTab renders cleanly with stream disabled: " .. tostring(errRenderDisabled))
 
+-- 4. Verify UI Checkbox click semantics (Dear ImGui event model)
+local simulatedClick = false
+ui = {
+  checkbox = function(label, currentVal)
+    if simulatedClick then
+      return true -- clicked!
+    else
+      return false -- not clicked
+    end
+  end,
+  button = function() return false end,
+  sameLine = function() end,
+  separator = function() end,
+  text = function() end,
+  itemHovered = function() return false end,
+  setTooltip = function() end,
+}
+ControlTelemetry.setEnabled(false)
+-- Frame 1: User clicks checkbox
+simulatedClick = true
+DashboardUI.renderLogsTab()
+assertEq(ControlTelemetry.isEnabled(), true, "Checkbox click successfully enabled the stream")
+
+-- Frame 2: User does not click on next frame -> state must remain TRUE!
+simulatedClick = false
+DashboardUI.renderLogsTab()
+assertEq(ControlTelemetry.isEnabled(), true, "Checkbox state persists as true when not clicked on subsequent frames")
+
+-- Frame 3: User clicks checkbox again -> must toggle back to FALSE!
+simulatedClick = true
+DashboardUI.renderLogsTab()
+assertEq(ControlTelemetry.isEnabled(), false, "Checkbox click toggles stream back to false")
+
+ui = nil
+
 print("  -> Passed: Exception & Failure Visibility verified.")
 
 print("==================================================================")

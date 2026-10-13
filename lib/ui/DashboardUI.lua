@@ -976,9 +976,13 @@ function M.renderLogsTab()
   -- 1. Toolbar & Controls
   local isStreamActive = ControlTelemetry.isEnabled()
   if ui and ui.checkbox then
-    local newStreamState = ui.checkbox("实时 AI 直接控制日志 (Live AI Control Stream)##ctrl_telemetry_toggle", isStreamActive)
-    if newStreamState ~= isStreamActive then
-      ControlTelemetry.setEnabled(newStreamState)
+    local clicked, newVal = ui.checkbox("实时 AI 直接控制日志 (Live AI Control Stream)##ctrl_telemetry_toggle", isStreamActive)
+    if clicked then
+      if newVal ~= nil then
+        ControlTelemetry.setEnabled(newVal)
+      else
+        ControlTelemetry.setEnabled(not isStreamActive)
+      end
     end
   elseif ui and ui.button then
     local toggleBtnText = isStreamActive and "[✔ 开启] 实时 AI 控制遥测流##ctrl_toggle" or "[  关闭] 实时 AI 控制遥测流##ctrl_toggle"
@@ -989,11 +993,14 @@ function M.renderLogsTab()
   setTooltip("开启或关闭下发至 CSP 原生 AI 车手的动作遥测流。开启后实时解析配速、进站、防守及异常，关闭时零性能损耗。")
 
   if ui and ui.sameLine then ui.sameLine() end
-  if isStreamActive then
-    drawInlineColored(COLOR_GREEN, "[2-4Hz 动态抽样监听中]")
+  local badgeText = isStreamActive and "[2-4Hz 动态抽样监听中]" or "[已停用 - 零开销模式]"
+  local badgeCol = isStreamActive and COLOR_GREEN or COLOR_MUTED
+  if ui and ui.button and ui.button(badgeText .. "##stream_badge_toggle") then
+    ControlTelemetry.setEnabled(not isStreamActive)
   else
-    drawInlineColored(COLOR_MUTED, "[已停用 - 零开销模式]")
+    drawInlineColored(badgeCol, badgeText)
   end
+  setTooltip("点击此状态标签也可快速切换 AI 控制遥测流开关")
 
   if ui and ui.sameLine then ui.sameLine() end
   if ui and ui.button and ui.button("清空控制流##clear_ctrl_stream") then

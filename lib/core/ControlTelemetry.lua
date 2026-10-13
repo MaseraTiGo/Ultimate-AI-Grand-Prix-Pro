@@ -55,16 +55,30 @@ local F1_DRIVER_NUMBERS = {
   ["bortoleto"] = 5, ["gabriel bortoleto"] = 5,
 }
 
---- Initialize or restore persisted toggle state
-function M.init()
-  local persisted = false
-  if ac and ac.storage then
-    local st = ac.storage{ liveAiControlStream = false }
-    if st and st.liveAiControlStream ~= nil then
-      persisted = st.liveAiControlStream
+local _storage = nil
+
+local function getStorage()
+  if not _storage and ac and ac.storage then
+    local ok, st = pcall(ac.storage, { liveAiControlStream = false })
+    if ok and st then
+      _storage = st
     end
   end
-  _enabled = persisted or false
+  return _storage
+end
+
+--- Initialize or restore persisted toggle state
+function M.init()
+  local st = getStorage()
+  local persisted = nil
+  if st and st.liveAiControlStream ~= nil then
+    persisted = st.liveAiControlStream
+  end
+  if persisted ~= nil then
+    _enabled = (persisted == true)
+  else
+    _enabled = false
+  end
   M.clear()
 end
 
@@ -78,9 +92,9 @@ end
 ---@param val boolean
 function M.setEnabled(val)
   _enabled = (val == true)
-  if ac and ac.storage then
-    local st = ac.storage{ liveAiControlStream = false }
-    if st then st.liveAiControlStream = _enabled end
+  local st = getStorage()
+  if st then
+    pcall(function() st.liveAiControlStream = _enabled end)
   end
 end
 
