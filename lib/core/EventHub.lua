@@ -179,6 +179,14 @@ end
 function M.emitTacticalStateChange(carIdx, driverName, newState, oldState, skillName, sessionSec)
   if not carIdx or carIdx < 0 or carIdx > 24 then return end
   local now = sessionSec or os.clock()
+  -- Physical plausibility guard: Combat/overtake/defense skills cannot happen when stationary on grid
+  if newState ~= "BOXING" and newState ~= "CRUISE" and ac and ac.getCar then
+    local okCar, cObj = pcall(ac.getCar, carIdx)
+    if okCar and cObj and (cObj.speedKmh or 0.0) < 45.0 then
+      return
+    end
+  end
+
   -- BOXING and YIELD bypass throttling
   if newState ~= "BOXING" and newState ~= "YIELD" and (now - (_lastTacticalEventTime[carIdx] or 0)) < 2.5 then
     return

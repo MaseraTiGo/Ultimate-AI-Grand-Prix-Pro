@@ -19,6 +19,10 @@ function M.checkPrerequisites(car, aheadCar, behindCar, geoState, memState)
   local behindDist = geoState.behindDist or 999.0
   if behindDist > 25.0 or behindDist < 2.0 then return false end
 
+  -- Speed gate: must be at racing speed, never on starting grid
+  local mySpeed = car.speedKmh or 0.0
+  if mySpeed < 70.0 then return false end
+
   -- Closing speed threat from behind (TTC < 2.0s)
   local ttcBehind = geoState.ttcBehind or 999.0
   if ttcBehind > 2.0 then return false end

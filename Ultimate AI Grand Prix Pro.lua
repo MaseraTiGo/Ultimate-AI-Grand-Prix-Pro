@@ -178,14 +178,10 @@ function script.update(dt)
         local shouldTick, tier = LODScheduler.shouldTickCar(i)
         local persona = personaLoader.getPersonaForCar(i, cState.driverName)
 
-        -- Standing start blunder & launch reaction handling on race green
+        -- Standing start launch simulation (reaction delays and start blunder states recorded without locking physical throttle)
         if raceState.sessionTime and raceState.sessionTime < 10.0 then
-          local delay, blunder = MistakeEngine.evaluateStandingStart(i, persona, raceState.sessionTime)
-          if MistakeEngine.stepStandingStart(i, tacticalDt) then
-            if physics.setAIThrottleLimit then
-              physics.setAIThrottleLimit(i, 0.0)
-            end
-          end
+          MistakeEngine.evaluateStandingStart(i, persona, raceState.sessionTime)
+          MistakeEngine.stepStandingStart(i, tacticalDt)
         end
 
         if shouldTick then

@@ -45,7 +45,7 @@
 # 推荐使用 Python Lupa 或指定环境下的 lua.exe
 python -c "import lupa; from lupa import LuaRuntime; lua = LuaRuntime(unpack_returned_tuples=True); lua.execute(open('tests/test_grand_prix_pro.lua', 'r', encoding='utf-8').read())"
 ```
-预期输出：`ALL 21 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!`
+预期输出：`ALL 22 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!`
 
 ## 行为约束与执行纪律（Operational Guardrails & Execution Discipline）
 

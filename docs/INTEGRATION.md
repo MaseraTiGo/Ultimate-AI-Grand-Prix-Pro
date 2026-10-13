@@ -149,6 +149,14 @@
   - `TacticalTicker` 将状态迁移至 `YIELD`，`activeSkill = "YIELD"`，偏航外线避让（`targetSplineOffset = 0.75`）。
   - `EventHub.emitTacticalStateChange` 捕获 `YIELD` 边沿，向 Track 2 实时推送：`【蓝旗避让】[#%02d] Driver 被出示蓝旗，主动让出内线避让快车！`。
 
+### 2.8 发车格与低速物理安全门禁 (Launch & Low-Speed Safety Gating)
+- **发车格/低速约束 (< 45 km/h)**：
+  - 车辆在发车格静止等待、起步红灯熄灭及低速行驶（`speedKmh < 45.0`）阶段，禁止注入任何非零样条线偏移（`setAISplineOffset` 强制保持 0.0）。
+  - 严禁触发任何攻防战术（X-Skills），状态机锁定为 `CRUISE`，杜绝将发车格排队车距误判为弯道缠斗。
+  - 严禁调用 `setAIThrottleLimit(0.0)` 截断原生发车油门，确保原生 AC AI 拥有 100% 油门起步动力。
+- **物理广播真实性校验**：
+  - `EventHub.emitTacticalStateChange` 在车辆车速 `< 45.0 km/h` 时，除 `BOXING` 和 `CRUISE` 外严格静默，杜绝静止状态下虚假广播超车反击事件。
+
 ---
 
 ## 3. 外部生态与 IPC 通信

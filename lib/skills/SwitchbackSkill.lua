@@ -20,8 +20,12 @@ function M.checkPrerequisites(car, aheadCar, behindCar, geoState, memState)
   local aheadDist = geoState.aheadDist or 999.0
   if aheadDist > 18.0 or aheadDist < 2.0 then return false end
   
+  -- Speed gate: must be at racing speed, never on starting grid or slow crawl
+  local mySpeed = car.speedKmh or 0.0
+  if mySpeed < 70.0 then return false end
+
   -- Must be approaching or at a corner, not on high-speed flat-out straight
-  if geoState.isCurvatureSafe and (car.speedKmh or 0.0) > 220.0 then
+  if geoState.isCurvatureSafe and mySpeed > 220.0 then
     return false
   end
 

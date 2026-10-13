@@ -180,38 +180,55 @@ function M.applyActuator(car, aiState, dt)
   end
   aiState.currentAggression = curA
 
-  -- 4. Push to CSP Physics Actuators
-  if physics.setAISplineOffset then
-    local overrideAwareness = (aiState.state == "DEFEND" or aiState.state == "ATTACK")
-    physics.setAISplineOffset(idx, aiState.currentSplineOffset, overrideAwareness)
-  end
-
-  if physics.setAICaution then
-    physics.setAICaution(idx, aiState.currentCaution)
-  end
-
-  if physics.setAIAggression then
-    physics.setAIAggression(idx, aiState.currentAggression)
-  end
-
-  -- 5. Grip Adjustments (Dirty Air + Mistake Grip + Tyre Overheat & Cold Tyre Warmup)
-  local totalGripPenalty = 0.0
-  if aiState.dirtyAirLoss then totalGripPenalty = totalGripPenalty + aiState.dirtyAirLoss end
-  if aiState.mistakeGripPenalty then totalGripPenalty = totalGripPenalty + aiState.mistakeGripPenalty end
-  if aiState.tireTempNorm and aiState.tireTempNorm > 1.15 then
-    -- Overheated tyre grip drop (up to 7% loss when cooked)
-    totalGripPenalty = totalGripPenalty + (aiState.tireTempNorm - 1.15) * 0.20
-  end
-  if aiState.outLapColdGrip and aiState.outLapColdGrip < 1.0 then
-    -- Fresh tyre warmup ramp (cold tyre grip loss)
-    totalGripPenalty = totalGripPenalty + (1.0 - aiState.outLapColdGrip)
-  end
-
-  if physics.setExtraAIGrip then
-    if totalGripPenalty > 0.001 then
-      physics.setExtraAIGrip(idx, -totalGripPenalty)
-    else
+  -- 4. Push to CSP Physics Actuators (Gated at low speed to prevent grid crab-walk & spinout)
+  if curSpeed < 45.0 then
+    -- On starting grid / launch phase: let native AC AI follow track centerline / grid slot directly
+    aiState.currentSplineOffset = 0.0
+    if physics.setAISplineOffset then
+      physics.setAISplineOffset(idx, 0.0, false)
+    end
+    if physics.setAICaution then
+      physics.setAICaution(idx, 1.0)
+    end
+    if physics.setAIAggression then
+      physics.setAIAggression(idx, 0.7)
+    end
+    if physics.setExtraAIGrip then
       physics.setExtraAIGrip(idx, 0.0)
+    end
+  else
+    if physics.setAISplineOffset then
+      local overrideAwareness = (aiState.state == "DEFEND" or aiState.state == "ATTACK")
+      physics.setAISplineOffset(idx, aiState.currentSplineOffset, overrideAwareness)
+    end
+
+    if physics.setAICaution then
+      physics.setAICaution(idx, aiState.currentCaution)
+    end
+
+    if physics.setAIAggression then
+      physics.setAIAggression(idx, aiState.currentAggression)
+    end
+
+    -- 5. Grip Adjustments (Dirty Air + Mistake Grip + Tyre Overheat & Cold Tyre Warmup)
+    local totalGripPenalty = 0.0
+    if aiState.dirtyAirLoss then totalGripPenalty = totalGripPenalty + aiState.dirtyAirLoss end
+    if aiState.mistakeGripPenalty then totalGripPenalty = totalGripPenalty + aiState.mistakeGripPenalty end
+    if aiState.tireTempNorm and aiState.tireTempNorm > 1.15 then
+      -- Overheated tyre grip drop (up to 7% loss when cooked)
+      totalGripPenalty = totalGripPenalty + (aiState.tireTempNorm - 1.15) * 0.20
+    end
+    if aiState.outLapColdGrip and aiState.outLapColdGrip < 1.0 then
+      -- Fresh tyre warmup ramp (cold tyre grip loss)
+      totalGripPenalty = totalGripPenalty + (1.0 - aiState.outLapColdGrip)
+    end
+
+    if physics.setExtraAIGrip then
+      if totalGripPenalty > 0.001 then
+        physics.setExtraAIGrip(idx, -totalGripPenalty)
+      else
+        physics.setExtraAIGrip(idx, 0.0)
+      end
     end
   end
 

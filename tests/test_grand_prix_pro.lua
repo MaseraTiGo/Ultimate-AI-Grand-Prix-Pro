@@ -819,6 +819,57 @@ end
 assertTrue(blueFlagBroadcast, "Track 2 event stream broadcasted Blue Flag yielding event [【蓝旗避让】]")
 print("  -> Passed: Blue Flag Yielding and Track 2 Broadcast Pipeline confirmed.")
 
+-- ==============================================================================
+-- [Test 22] Launch & Low-Speed Safety Gating & Physical Broadcast Plausibility
+-- ==============================================================================
+print("[Test 22] Testing Launch / Low-Speed Safety Gating & Broadcast Plausibility...")
+TacticalTicker.reset()
+BehaviorActuator.reset()
+
+-- 1. Stationary car on starting grid (speed = 0 km/h)
+local gridCar = {
+  index = 3,
+  position = vec3(5, 0, 10),
+  speedKmh = 0.0,
+  isAIControlled = true,
+  splinePosition = 0.02,
+}
+local gridAheadCar = {
+  index = 2,
+  position = vec3(5, 0, 18),
+  speedKmh = 0.0,
+  isAIControlled = true,
+  splinePosition = 0.03,
+}
+
+local gridState = TacticalTicker.stepCar(gridCar, gridAheadCar, nil, boldPersona, 0.0, nil, 0.1)
+assertEq(gridState.state, "CRUISE", "Grid stationary car forced to CRUISE state without skill takeover")
+assertEq(gridState.targetSplineOffset, 0.0, "Grid stationary car targetSplineOffset locked to 0.0")
+
+BehaviorActuator.applyActuator(gridCar, gridState, 0.1)
+assertEq(gridState.currentSplineOffset, 0.0, "BehaviorActuator enforces currentSplineOffset == 0.0 below 45 km/h")
+
+-- 2. Verify broadcast muting for stationary car
+local origGetCarFunc = ac.getCar
+ac.getCar = function(i)
+  if i == 3 then
+    return { index = 3, isConnected = true, isAIControlled = true, speedKmh = 0.0 }
+  end
+  return origGetCarFunc(i)
+end
+
+EventHub.emitTacticalStateChange(3, "Grid George", "SWITCHBACK", "CRUISE", "SWITCHBACK", 12.0)
+local newAiEvents = EventHub.getRecentAiEvents(10)
+local falseBroadcastFound = false
+for _, ev in ipairs(newAiEvents) do
+  if ev.msg:find("Grid George") and ev.msg:find("交叉线") then
+    falseBroadcastFound = true
+  end
+end
+ac.getCar = origGetCarFunc
+assertTrue(not falseBroadcastFound, "EventHub strictly suppressed tactical combat broadcast when car is stationary on grid")
+print("  -> Passed: Launch / Low-Speed Safety Gating & Broadcast Plausibility confirmed.")
+
 print("==================================================================")
-print("  ALL 21 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
+print("  ALL 22 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
 print("==================================================================")

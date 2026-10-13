@@ -232,7 +232,29 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
   local s = _aiStates[idx] or _aiStates[0]
   s.persona = persona
 
-  -- 0. Check Blue Flag yielding condition
+  -- 0. Launch & Low-Speed Safety Gate:
+  -- During race start, grid waiting, or slow crawl (< 45 km/h), maintain pure stable CRUISE
+  -- Never calculate aggressive combat offsets, tow weaving, or divebombs that spin cars on the grid
+  local currentSpeedKmh = car.speedKmh or 0.0
+  if currentSpeedKmh < 45.0 then
+    s.state = M.STATE_CRUISE
+    s.activeSkill = "NONE"
+    s.targetSplineOffset = 0.0
+    s.targetCaution = persona and persona.base_caution or 1.0
+    s.targetAggression = persona and persona.base_aggression or 0.7
+    s.stress = 0.0
+    s.commitTimer = 0.0
+    s.committedState = nil
+    s.switchbackTimer = 0.0
+    s.recoveryTimer = 0.0
+    s.defenseHeatTimer = 0.0
+    s.isBreakingTow = false
+    s.isFeinting = false
+    TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
+    return s
+  end
+
+  -- 0.1 Check Blue Flag yielding condition
   if raceContext and raceContext.isBlueFlagged and behindCar then
     s.state = M.STATE_YIELD
     s.activeSkill = "YIELD"
