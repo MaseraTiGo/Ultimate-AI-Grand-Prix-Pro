@@ -22,7 +22,8 @@
    Driver（车手层）与 Strategy（策略层）之间通过 `RaceContext` 和 `StrategyCoordinator` 明确契约解耦交互，禁止私自跨层访问内部私有状态。
 9. **CSP C-Struct (LuaJIT FFI) 严格字段防护**：底层 `ac.getSim()` 返回 C 结构体 `struct state_sim`。在 LuaJIT FFI 下直接访问结构体未定义的字段（如 `sim.sessionTime`、`sim.raceLaps`、`sim.currentLap` 等）会抛出不可恢复的运行时 Crash。必须统一使用 `RaceContext.safeSimGet(sim, field)` 进行防御性访问，或通过 `RaceContext.getRaceState()` 获取已规整好的数据。
 10. **CSP 原生 AI 进站触发标准与独占权限规范（CSP AI Pit Control & Exclusive Handoff）**：
-    - **合法触发 API**：进站控制必须且只能调用 CSP 官方接口 `physics.setAIPitStopRequest(carIndex, true)`，严禁使用虚假油量诱导（如 `setCarFuel(carIndex, 1.8)`），防止被油量保护看门狗覆盖或破坏赛车动力。指令取消或完成时必须显式调用 `setAIPitStopRequest(carIndex, false)`。
+    - **合法触发 API**：进站控制必须且只能调用 CSP 官方接口 `physics.setAIPitStopRequest(carIndex, true)`，严禁使用虚假油量诱导（如 `setCarFuel(carIndex, 1.8)`），防止被油量保护看门狗覆盖或破坏赛车动力。在赛道上取消指令时显式调用 `setAIPitStopRequest(carIndex, false)`。
+    - **进站请求生命周期守护（Prevent Drive-Through）**：`physics.setAIPitStopRequest(carIndex, true)` 在赛车驶入维修通道直至在工位停稳作业期间必须**持续保持为 true**，严禁在刚进入维修通道时过早置为 false（官方 SDK 明确规范：传入 false 会立即阻断并取消 AI 进站，导致赛车仅仅 Drive-Through 直通维修区而不进站停留）。只有在赛车完全完成作业驶离维修区重返赛道（`wasInAnyPit and not isNowInPit`）时，才调用 `setAIPitStopRequest(carIndex, false)` 进行闭环重置。
     - **维修区原生独占权**：当车辆进入维修区（`c.isInPitlane` 或 `c.isInPit`）时，原生 AC AI 拥有绝对寻路与停站作业权。`BehaviorActuator` 与 `TacticalTicker` 必须直接熔断退出，严禁施加横向偏移（`setAISplineOffset`）、调低油门上限或设置人为停止时间（`setAIStopCounter(i, 3)`）。
     - **出站三重释放保障**：赛车驶离维修区时，必须确保执行三重安全释放：`setAIPitStopRequest(i, false)`、`setAIStopCounter(i, 0)`、`setAIThrottleLimit(i, 1.0)`，彻底消除车辆在停站工位无限期发呆滞留（Stall in Pit Box）隐患。
 11. **单车状态隔离与战术推荐解耦规范（Per-Car State Isolation & Command Idempotency）**：

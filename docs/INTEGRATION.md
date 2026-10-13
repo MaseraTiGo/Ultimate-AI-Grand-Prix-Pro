@@ -122,14 +122,17 @@
   - `IN_BAY`：车辆已停靠在维修工位进行作业
   - `COMPLETED`：进站作业完成，重返赛道
 - **解耦触发与强制复位时机**：
-  - **进站请求期**：玩家或策略下达 `BOX_THIS_LAP`，车辆置位 `pit_requested = true`、`pitState = "REQUESTED"`，战术进入 `BOXING` 状态并注入物理诱导。
-  - **维修区接管期**：当车辆跨入维修区通道（`isInPitlane == true` 或 `isInPit == true` 时）：
-    - 立即强制清除 `pit_requested = false`、`pit_stop_planned = false`、`radioCommand = "NONE"`。
-    - 进站状态机转换为 `IN_PITLANE` / `IN_BAY`，战术状态锁定为 `PIT_BAY`（停站作业）。
+  - **进站请求期**：玩家或策略下达 `BOX_THIS_LAP`，车辆置位 `pit_requested = true`、`pitState = "REQUESTED"`，战术进入 `BOXING` 状态并调用官方接口 `physics.setAIPitStopRequest(carIndex, true)`。
+  - **维修区接管与生命周期守护（Prevent Drive-Through）**：当车辆跨入维修区通道（`isInPitlane == true` 或 `isInPit == true` 时）：
+    - 立即清除 UI 层 `pit_requested = false`、`radioCommand = "NONE"`。
+    - **进站请求生命周期守护**：底层 `physics.setAIPitStopRequest(carIndex, true)` 必须在维修区通行及停稳作业期间**持续保持为 true**！严禁在刚进入维修通道时过早置为 `false`（CSP SDK 规范明确指出：传入 `false` 会立刻中断进站请求，导致原生 AI 放弃工位停靠而直接直通通过维修区 Drive-Through）。
+    - 进站状态机转换为 `IN_PITLANE` / `IN_BAY`，战术状态锁定为 `PIT_BAY`（停站作业）。原生 AC AI 接管寻路与停靠。
     - 自动推进下一赛段规划圈数（`plan.targetLap = curLap + stintLaps[2]`），杜绝出站瞬间被旧计划再次触发重入。
     - 批量消费结算该车所有 Pending 指令并向 Track 1 发送回执：`[CMD SETTLED] [#%02d] Driver 进站作业已接管/批量完成`。
     - 向 Track 2 发送严格标准格式广播：`[第{currentLap}/{totalLaps}圈] [#%02d] 车手姓名 已进入维修区`（例如 `[第3/13圈] [#02] Martin Mõlder 已进入维修区`）。
-  - **出站重返期**：当车辆出维修区（`wasInAnyPit and not isNowInPit` 时）：
+  - **出站重返期（三重释放保障）**：当车辆出维修区（`wasInAnyPit and not isNowInPit` 时）：
+    - 显式调用 `physics.setAIPitStopRequest(carIndex, false)` 闭环重置进站请求，防止下一圈重复进站。
+    - 显式调用 `physics.setAIStopCounter(carIndex, 0)` 释放刹车驻留，`setAIThrottleLimit(carIndex, 1.0)` 恢复全油门，杜绝工位卡死发呆。
     - 状态机迁移至 `COMPLETED`，战术状态复位为 `CRUISE`，刷新冷胎升温初始状态。
     - 向 Track 2 发送严格标准格式广播：`[第{currentLap}/{totalLaps}圈] [#%02d] 车手姓名 进站作业完成`（例如 `[第3/13圈] [#02] Martin Mõlder 进站作业完成`）。
 

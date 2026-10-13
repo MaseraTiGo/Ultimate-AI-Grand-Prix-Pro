@@ -315,10 +315,6 @@ function M.stepStrategy(dt)
         cState.tacticalState = "PIT_BAY"
         plan.activeRecommendation = "NONE"
 
-        -- Official CSP: Release pit stop request flag in physics engine
-        if physics and physics.setAIPitStopRequest then
-          physics.setAIPitStopRequest(i, false)
-        end
         -- Release stop counter: pass 0 to ensure native AC AI is never frozen
         if physics and physics.setAIStopCounter then
           physics.setAIStopCounter(i, 0)

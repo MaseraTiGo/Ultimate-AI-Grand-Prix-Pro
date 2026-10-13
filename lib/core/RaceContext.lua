@@ -326,9 +326,9 @@ function M.updateCarFromAc(carIndex, c)
     s.tacticalState = "PIT_BAY"
     s.pitState = s.isInPit and M.PIT_STATE_IN_BAY or M.PIT_STATE_IN_PITLANE
 
-    if physics and physics.setAIPitStopRequest then
-      physics.setAIPitStopRequest(carIndex, false)
-    end
+    -- In CSP/AC, setting physics.setAIPitStopRequest to false while entering pitlane cancels
+    -- the pit stop intent and causes the AI to drive through without stopping at its pit box.
+    -- The request must remain active until the car completes service and exits pitlane.
     if physics and physics.setAIThrottleLimit then
       physics.setAIThrottleLimit(carIndex, 1.0)
     end

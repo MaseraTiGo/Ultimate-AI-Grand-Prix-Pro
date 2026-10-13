@@ -740,7 +740,7 @@ local mockCarInPit = {
 RaceContext.updateCarFromAc(1, mockCarInPit)
 assertEq(c1.pit_requested, false, "cState.pit_requested reset to false upon pitlane entry")
 assertEq(c1.radioCommand, "NONE", "cState.radioCommand cleared to NONE upon pitlane entry")
-assertEq(_aiPitRequests[1], false, "physics.setAIPitStopRequest(1, false) invoked upon pitlane entry")
+assertEq(_aiPitRequests[1], true, "physics.setAIPitStopRequest(1, true) remains true during pit entry so car stops in stall")
 assertEq(c1.tacticalState, "PIT_BAY", "cState.tacticalState set to PIT_BAY")
 assertEq(c1.pitState, "IN_PITLANE", "cState.pitState set to IN_PITLANE")
 
@@ -783,6 +783,7 @@ assertEq(c1.tacticalState, "CRUISE", "cState.tacticalState reverted to CRUISE up
 assertEq(c1.pit_requested, false, "cState.pit_requested remains false after exiting pit")
 assertEq(c1.pitState, "COMPLETED", "cState.pitState transitioned to COMPLETED")
 assertEq(_aiStopCounters[1], 0, "physics.setAIStopCounter(1, 0) was invoked upon pit exit to release car")
+assertEq(_aiPitRequests[1], false, "physics.setAIPitStopRequest(1, false) invoked upon pit exit to prevent re-entering pits")
 
 local exitBroadcast = false
 local expectedPitOut = "[#02] Max Pace 进站作业完成"
