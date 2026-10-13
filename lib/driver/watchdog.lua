@@ -123,18 +123,17 @@ function M.stepPhysics(dt)
       ramp.remainingTimer = ramp.remainingTimer - dt
       if ramp.remainingTimer <= 0 then
         ramp.active = false
+        if physics and physics.setAIThrottleLimit then
+          physics.setAIThrottleLimit(carIdx, 1.0)
+        end
       else
         local car = safeGetCar(carIdx)
         if car and car.isAIControlled then
           local progress = 1.0 - (ramp.remainingTimer / ramp.totalTimer)
           -- Ramp throttle from 60% up to 100%
           local throttleCap = ramp.initialCap + (1.0 - ramp.initialCap) * progress
-          local ctrl = ac.overrideCarControls(carIdx)
-          if ctrl then
-            ctrl.combineAxis = false
-            if ctrl.gas and ctrl.gas > throttleCap then
-              ctrl.gas = throttleCap
-            end
+          if physics and physics.setAIThrottleLimit then
+            physics.setAIThrottleLimit(carIdx, throttleCap)
           end
         else
           ramp.active = false
@@ -167,113 +166,92 @@ local function isCrowdedNearby(car)
 end
 
 --- Unstuck monitor (Low frequency 10Hz/1Hz) with self-judging reposition and throttle ramp
-function M.checkStuckCars(car, dt)
-  if not _isPhysicsAllowed or not car or not car.isAIControlled then return end
-  local idx = car.index
-  
-  if not _stuckWatch[idx] then
-    _stuckWatch[idx] = { timer = 0, judgeTimer = 0, dropPending = false }
-  end
-  
-  local w = _stuckWatch[idx]
+--- Strict Start Protection: Never trigger during race start / grid formation
+function M.checkStuckCars(car, dt, sessionTime)
+   if not _isPhysicsAllowed or not car or not car.isAIControlled then return end
+   local idx = car.index
+   
+   if not _stuckWatch[idx] then
+     _stuckWatch[idx] = { timer = 0, judgeTimer = 0, dropPending = false, attemptedJTurn = false }
+   end
+   
+   local w = _stuckWatch[idx]
 
-  -- Track self-judging drop outcome: did the car reach 50 km/h within 15 seconds?
-  if w.dropPending then
-    w.judgeTimer = w.judgeTimer + dt
-    if (car.speedKmh or 0) >= 50.0 then
-      _dropHistory.success = _dropHistory.success + 1
-      w.dropPending = false
-    elseif w.judgeTimer >= 15.0 then
-      -- Failed drop (e.g. stranded or hit again)
-      w.dropPending = false
-    end
-  end
-
-  if (car.speedKmh or 0) < 2.0 and not car.isInPitlane then
-    w.timer = w.timer + dt
-    if w.timer >= 5.0 then
-      -- Self-judging guard: if at least 4 drops occurred and success rate is < 25%, abort teleport
-      -- to let AC retire the car naturally instead of creating a permanent chicane of wrecks
-      if _dropHistory.drops >= 4 and (_dropHistory.success / _dropHistory.drops) < 0.25 then
-        return
-      end
-
-      -- Verify crowd safety before unfreeze/teleport to avoid multi-car explosion
-      if isCrowdedNearby(car) then
-        -- Postpone teleport by 1 second until gap clears or stagger resolution
-        w.timer = 4.0
-        return
-      end
-
-      -- AI stuck for > 5s outside pits: Trigger unfreeze
-      w.timer = 0
-      _activeOverrides[idx] = nil -- Release overrides
-
-      -- Physics-Based Recovery: If car is facing backwards (look dot splineDir < -0.3),
-      -- attempt a physical J-Turn (steer full lock + reverse throttle pulse) before hard teleport
-      local isFacingBackwards = false
-      if car.look and car.splinePosition and ac and ac.getTrackSplineDirection then
-        local okSpline, splineDir = pcall(ac.getTrackSplineDirection, car.splinePosition)
-        if okSpline and splineDir and car.look.dot then
-          if car.look:dot(splineDir) < -0.3 then
-            isFacingBackwards = true
-          end
-        end
-      end
-
-      if isFacingBackwards and not w.attemptedJTurn then
-        -- Execute 0.45s physical reverse J-turn flick
-        w.attemptedJTurn = true
-        local okEv, EventHub = pcall(require, "lib/core/EventHub")
-        if okEv and EventHub then
-          EventHub.pushAiEvent(idx, "RECOVERY", string.format("赛车 #%02d 发生打滑调头！看门狗已接管执行物理 J-Turn 摆正自救！", idx + 1), "WORLD")
-        end
-        M.requestTakeover(idx, 0.45, function(ctrl, cCar, dt)
-          ctrl.gas = 0.0
-          ctrl.brake = 0.0
-          ctrl.steer = -1.0 -- full lock reverse flick
-          ctrl.gear = -1   -- reverse gear
-          ctrl.handbrake = 0.0
-        end)
-        w.timer = 3.5 -- give 1.5s for physics momentum to turn car around before re-checking
-        return
-      end
-
-      w.attemptedJTurn = false
-      
-      -- If physical recovery fails or car is not spun backwards, use safe realignment
-      local okEv, EventHub = pcall(require, "lib/core/EventHub")
-      if okEv and EventHub then
-        EventHub.pushAiEvent(idx, "WATCHDOG", string.format("赛车 #%02d 遭遇严重停滞！看门狗完成赛道安全复位与起步平滑恢复。", idx + 1), "WORLD")
-      end
-
-      if physics.setAICarPosition then
-        -- passing nil for dir aligns along spline
-        physics.setAICarPosition(idx, car.position, nil)
-      end
-      if physics.setAIStopCounter then
-        physics.setAIStopCounter(idx, 0) -- Clear stop counter
-      end
-
-      -- Record reposition drop for self-judging assessment
-      _dropHistory.drops = _dropHistory.drops + 1
-      w.dropPending = true
-      w.judgeTimer = 0.0
-
-      -- Activate Rejoin Throttle Ramp for 3.0s (ramp up from 0.60 to 1.0)
-      local r = _rejoinRamp[idx]
-      if r then
-        r.active = true
-        r.remainingTimer = 3.0
-        r.totalTimer = 3.0
-        r.initialCap = 0.60
-      end
-    end
-  else
+  -- 1. START GUARD: Strictly ignore cars on starting grid or during race launch phase (first 15s)
+  -- Also ignore if car is on Lap 0 before completing initial acceleration
+  if (sessionTime and sessionTime < 15.0) or ((car.lapCount or 0) == 0 and (car.speedKmh or 0) < 15.0 and (sessionTime or 0) < 25.0) then
     w.timer = 0
     w.attemptedJTurn = false
+    return
   end
-end
+
+   -- Track self-judging drop outcome: did the car reach 50 km/h within 15 seconds?
+   if w.dropPending then
+     w.judgeTimer = w.judgeTimer + dt
+     if (car.speedKmh or 0) >= 50.0 then
+       _dropHistory.success = _dropHistory.success + 1
+       w.dropPending = false
+     elseif w.judgeTimer >= 15.0 then
+       -- Failed drop (e.g. stranded or hit again)
+       w.dropPending = false
+     end
+   end
+
+   if (car.speedKmh or 0) < 2.0 and not car.isInPitlane then
+     w.timer = w.timer + dt
+     if w.timer >= 5.0 then
+       -- Self-judging guard: if at least 4 drops occurred and success rate is < 25%, abort teleport
+       -- to let AC retire the car naturally instead of creating a permanent chicane of wrecks
+       if _dropHistory.drops >= 4 and (_dropHistory.success / _dropHistory.drops) < 0.25 then
+         return
+       end
+
+       -- Verify crowd safety before unfreeze/teleport to avoid multi-car explosion
+       if isCrowdedNearby(car) then
+         -- Postpone teleport by 1 second until gap clears or stagger resolution
+         w.timer = 4.0
+         return
+       end
+
+       -- AI stuck for > 5s outside pits: Trigger unfreeze
+       w.timer = 0
+       _activeOverrides[idx] = nil -- Release overrides
+
+       -- If car is stopped or facing backwards, clear stop counter first
+       if physics.setAIStopCounter then
+         physics.setAIStopCounter(idx, 0) -- Clear stop counter
+       end
+
+       -- Reposition onto track spline only when genuine mid-race stoppage occurs
+       local okEv, EventHub = pcall(require, "lib/core/EventHub")
+       if okEv and EventHub then
+         EventHub.pushAiEvent(idx, "WATCHDOG", string.format("赛车 #%02d 遭遇严重停滞！看门狗完成赛道安全复位与起步平滑恢复。", idx + 1), "WORLD")
+       end
+
+       if physics.setAICarPosition then
+         -- Reposition to current position aligned along spline
+         physics.setAICarPosition(idx, car.position, nil)
+       end
+
+       -- Record reposition drop for self-judging assessment
+       _dropHistory.drops = _dropHistory.drops + 1
+       w.dropPending = true
+       w.judgeTimer = 0.0
+
+       -- Activate Rejoin Throttle Ramp for 3.0s (ramp up from 0.60 to 1.0)
+       local r = _rejoinRamp[idx]
+       if r then
+         r.active = true
+         r.remainingTimer = 3.0
+         r.totalTimer = 3.0
+         r.initialCap = 0.60
+       end
+     end
+   else
+     w.timer = 0
+     w.attemptedJTurn = false
+   end
+ end
 
 function M.getRejoinRamp(carIndex)
   return _rejoinRamp[carIndex]

@@ -171,8 +171,8 @@ function script.update(dt)
           cState.tyreWarmupProgress = math.min(1.0, cState.tyreWarmupProgress + tacticalDt * 0.05) -- takes ~20s to warm up
         end
 
-        -- Anti-stuck watchdog
-        watchdog.checkStuckCars(c, tacticalDt)
+        -- Anti-stuck watchdog (gated during race start / grid formation)
+        watchdog.checkStuckCars(c, tacticalDt, raceState.sessionTime)
 
         -- Spatial LOD scheduling check
         local shouldTick, tier = LODScheduler.shouldTickCar(i)

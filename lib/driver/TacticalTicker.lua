@@ -263,19 +263,8 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
       s.targetCaution = 2.0 - recovProgress * 0.8 -- drops from 2.0 to 1.2
       s.mistakeGripPenalty = (s.mistakeGripPenalty or 0.0) * (1.0 - recovProgress * 0.5)
 
-      -- Trigger Physical Counter-Steer / Throttle Lift via watchdog
-      if s.lastMistakeType == MistakeEngine.TYPE_TRACTION_SLIDE and s.recoveryTimer > 1.0 then
-        watchdog.requestTakeover(idx, 0.20, function(ctrl, cCar, wDt)
-          -- Counter-steer twitch: pulse steer opposite to drift and cut throttle
-          ctrl.gas = 0.35
-          ctrl.steer = (s.targetSplineOffset > 0 and -0.45 or 0.45)
-        end)
-      elseif s.lastMistakeType == MistakeEngine.TYPE_BRAKE_LOCKUP and s.recoveryTimer > 0.8 then
-        watchdog.requestTakeover(idx, 0.15, function(ctrl, cCar, wDt)
-          -- Cadence brake release on lockup
-          ctrl.brake = 0.40
-        end)
-      end
+      -- Recovery caution & grip adjustments are handled through s.targetCaution and s.mistakeGripPenalty
+      -- Native AC AI pathfinding and physics solver handle steering and braking safely without control hijack
 
       -- If under sustained pressure while recovering, tyres cook
       if behindCar then
