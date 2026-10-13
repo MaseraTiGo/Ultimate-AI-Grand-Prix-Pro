@@ -50,11 +50,14 @@ end
 
 local _throttleLimits = {}
 local _fuelInjectedValues = {}
+local _aiPitRequests = {}
+local _aiStopCounters = {}
 
 physics = {
   allowed = function() return true end,
   setAICarPosition = function() end,
-  setAIStopCounter = function() end,
+  setAIStopCounter = function(idx, val) _aiStopCounters[idx] = val end,
+  setAIPitStopRequest = function(idx, val) _aiPitRequests[idx] = val end,
   setAISplineOffset = function() end,
   setAICaution = function() end,
   setAIAggression = function() end,
@@ -704,6 +707,7 @@ local orderOk = StrategyCoordinator.issueRadioOrder(1, "BOX_THIS_LAP")
 assertTrue(orderOk, "Issued BOX_THIS_LAP radio command")
 assertEq(c1.pit_requested, true, "cState.pit_requested is true")
 assertEq(c1.radioCommand, "BOX_THIS_LAP", "cState.radioCommand is BOX_THIS_LAP")
+assertEq(_aiPitRequests[1], true, "physics.setAIPitStopRequest(1, true) invoked by BOX_THIS_LAP")
 assertEq(c1.tacticalState, "BOXING", "cState.tacticalState transitioned to BOXING")
 assertEq(c1.pitState, "REQUESTED", "cState.pitState transitioned to REQUESTED")
 
@@ -719,6 +723,7 @@ assertTrue(mergedFound, "Duplicate pit order resulted in idempotency merge recei
 
 -- 3. Simulate car entering pitlane (acCar.isInPitlane = true)
 local mockCarInPit = {
+  index = 1,
   isConnected = true,
   isAIControlled = true,
   isPlayer = false,
@@ -735,8 +740,14 @@ local mockCarInPit = {
 RaceContext.updateCarFromAc(1, mockCarInPit)
 assertEq(c1.pit_requested, false, "cState.pit_requested reset to false upon pitlane entry")
 assertEq(c1.radioCommand, "NONE", "cState.radioCommand cleared to NONE upon pitlane entry")
+assertEq(_aiPitRequests[1], false, "physics.setAIPitStopRequest(1, false) invoked upon pitlane entry")
 assertEq(c1.tacticalState, "PIT_BAY", "cState.tacticalState set to PIT_BAY")
 assertEq(c1.pitState, "IN_PITLANE", "cState.pitState set to IN_PITLANE")
+
+-- BehaviorActuator in-pit immunity: must not modify spline offset while in pits
+local pitAiState = { currentSplineOffset = 0.0, targetSplineOffset = 0.5, state = "PIT_BAY" }
+BehaviorActuator.applyActuator(mockCarInPit, pitAiState, 0.1)
+assertEq(pitAiState.currentSplineOffset, 0.0, "BehaviorActuator enforces 0.0 spline offset while in pit lane")
 
 -- Verify Track 1 received batch settlement receipt
 local cmdSettled = false
@@ -760,6 +771,10 @@ assertEq(c1.radioCommand, "NONE", "radioCommand remains NONE during pit dwell")
 local plan1 = StrategyCoordinator.getCarPlan(1)
 assertTrue(plan1.targetLap > 4, "Stint planned targetLap advanced to prevent re-arming BOX_THIS_LAP")
 
+-- Verify autonomous recommendation does NOT contaminate radioCommand on other cars
+local c2 = RaceContext.getCarState(2)
+assertEq(c2.radioCommand, "NONE", "Autonomous recommendation did NOT mutate radioCommand on uncommanded Car #03")
+
 -- 5. Simulate car exiting pitlane back to track
 mockCarInPit.isInPitlane = false
 mockCarInPit.isInPit = false
@@ -767,6 +782,7 @@ RaceContext.updateCarFromAc(1, mockCarInPit)
 assertEq(c1.tacticalState, "CRUISE", "cState.tacticalState reverted to CRUISE upon track re-entry")
 assertEq(c1.pit_requested, false, "cState.pit_requested remains false after exiting pit")
 assertEq(c1.pitState, "COMPLETED", "cState.pitState transitioned to COMPLETED")
+assertEq(_aiStopCounters[1], 0, "physics.setAIStopCounter(1, 0) was invoked upon pit exit to release car")
 
 local exitBroadcast = false
 local expectedPitOut = "[#02] Max Pace 进站作业完成"

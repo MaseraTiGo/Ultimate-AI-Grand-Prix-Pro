@@ -121,6 +121,18 @@ function M.applyActuator(car, aiState, dt)
   if not physics or not physics.allowed or not physics.allowed() then return end
   local idx = car.index
 
+  -- Pit Lane & Pit Bay Exclusive Native AI Authority:
+  -- When car is in pitlane or pit stall, disable all lateral offsets and overrides to let native AC AI park/exit undisturbed.
+  local inPit = car.isInPitlane or car.isInPit or aiState.state == "PIT_BAY" or aiState.tacticalState == "PIT_BAY"
+  if inPit then
+    aiState.currentSplineOffset = 0.0
+    aiState.targetSplineOffset = 0.0
+    if physics.setAIThrottleLimit then
+      physics.setAIThrottleLimit(idx, 1.0)
+    end
+    return
+  end
+
   -- 1. Velocity-dependent lateral transition rate (gentle and smooth, max 0.40 units/s)
   local baseRate = 0.35
   local curSpeed = car.speedKmh or 80.0
@@ -174,7 +186,8 @@ function M.applyActuator(car, aiState, dt)
   aiState.currentAggression = curA
 
   -- 4. Push to CSP Physics Actuators
-  if curSpeed < 60.0 or (car.lapCount or 0) == 0 then
+  local isStartPhase = curSpeed < 75.0 or (car.lapCount or 0) == 0
+  if isStartPhase then
     aiState.currentSplineOffset = 0.0
     -- DO NOT call physics.setAISplineOffset on the starting grid / launch phase!
     -- Calling setAISplineOffset forces cars out of their left/right grid slots
@@ -187,10 +200,10 @@ function M.applyActuator(car, aiState, dt)
     end
   else
     if physics.setAISplineOffset then
-      -- Safe lateral corridor: clamp tactical offset to [-0.20, 0.20] to guarantee no wall collisions
+      -- Safe lateral corridor: clamp tactical offset to [-0.15, 0.15] to guarantee no wall collisions
       local safeOffset = aiState.currentSplineOffset
-      if safeOffset > 0.20 then safeOffset = 0.20 end
-      if safeOffset < -0.20 then safeOffset = -0.20 end
+      if safeOffset > 0.15 then safeOffset = 0.15 end
+      if safeOffset < -0.15 then safeOffset = -0.15 end
 
       -- Only apply spline offset if there is an intentional lateral tactical displacement.
       -- If offset is effectively 0.0, leave it to native AC AI's own learned racing line.
@@ -202,8 +215,8 @@ function M.applyActuator(car, aiState, dt)
 
     if physics.setAICaution then
       local cVal = aiState.currentCaution
-      if cVal < 0.70 then cVal = 0.70 end
-      if cVal > 1.50 then cVal = 1.50 end
+      if cVal < 0.75 then cVal = 0.75 end
+      if cVal > 1.30 then cVal = 1.30 end
       physics.setAICaution(idx, cVal)
     end
 

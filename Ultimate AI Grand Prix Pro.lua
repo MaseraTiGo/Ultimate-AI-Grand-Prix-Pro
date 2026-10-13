@@ -214,9 +214,12 @@ function script.update(dt)
           -- Build Race Context
           local raceCtx = {
             isLastLap = (raceState.totalLaps and raceState.totalLaps > 0 and (raceState.currentLap or 0) >= raceState.totalLaps),
+            currentLap = raceState.currentLap or 1,
             tyreWear = cState.tyreWear,
             isBlueFlagged = false,
             radioCommand = cState.radioCommand,
+            isInPitlane = cState.isInPitlane,
+            isInPit = cState.isInPit,
             tyreWarmupProgress = cState.tyreWarmupProgress or 1.0,
             tyreTempNorm = cState.tyreTempNorm or 1.0,
           }

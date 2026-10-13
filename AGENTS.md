@@ -21,6 +21,14 @@
    $$\text{Core (Context/Config/Logger/EventHub)} \longleftarrow \text{Driver / Strategy} \longleftarrow \text{Main App / UI}$$
    Driver（车手层）与 Strategy（策略层）之间通过 `RaceContext` 和 `StrategyCoordinator` 明确契约解耦交互，禁止私自跨层访问内部私有状态。
 9. **CSP C-Struct (LuaJIT FFI) 严格字段防护**：底层 `ac.getSim()` 返回 C 结构体 `struct state_sim`。在 LuaJIT FFI 下直接访问结构体未定义的字段（如 `sim.sessionTime`、`sim.raceLaps`、`sim.currentLap` 等）会抛出不可恢复的运行时 Crash。必须统一使用 `RaceContext.safeSimGet(sim, field)` 进行防御性访问，或通过 `RaceContext.getRaceState()` 获取已规整好的数据。
+10. **CSP 原生 AI 进站触发标准与独占权限规范（CSP AI Pit Control & Exclusive Handoff）**：
+    - **合法触发 API**：进站控制必须且只能调用 CSP 官方接口 `physics.setAIPitStopRequest(carIndex, true)`，严禁使用虚假油量诱导（如 `setCarFuel(carIndex, 1.8)`），防止被油量保护看门狗覆盖或破坏赛车动力。指令取消或完成时必须显式调用 `setAIPitStopRequest(carIndex, false)`。
+    - **维修区原生独占权**：当车辆进入维修区（`c.isInPitlane` 或 `c.isInPit`）时，原生 AC AI 拥有绝对寻路与停站作业权。`BehaviorActuator` 与 `TacticalTicker` 必须直接熔断退出，严禁施加横向偏移（`setAISplineOffset`）、调低油门上限或设置人为停止时间（`setAIStopCounter(i, 3)`）。
+    - **出站三重释放保障**：赛车驶离维修区时，必须确保执行三重安全释放：`setAIPitStopRequest(i, false)`、`setAIStopCounter(i, 0)`、`setAIThrottleLimit(i, 1.0)`，彻底消除车辆在停站工位无限期发呆滞留（Stall in Pit Box）隐患。
+11. **单车状态隔离与战术推荐解耦规范（Per-Car State Isolation & Command Idempotency）**：
+    - **推荐与指令解耦**：策略计算层的战术建议（`plan.activeRecommendation`）仅作为参考数据，**严禁自动改写**车手无线电指令（`cState.radioCommand`）。`cState.radioCommand` 专供人类车队指令（Pit Wall）独占，未受人工干预的车辆其无线电状态必须保持 `"NONE"`。
+    - **进站窗口梯次错峰**：全场赛车进站窗口必须调用 `StrategyCalc.getF1PitSpreadGroupOffset(i)` 进行梯次分组错峰（±1~2圈），严禁全车队在同一圈触发 `curLap >= plan.targetLap` 引发全场大范围同时进站雪崩。
+    - **起步与首圈车群防护（Opening Lap Safety）**：在发车格与第 1 圈车群极度密集阶段（`lapCount == 0` 或 `speed < 75km/h`），横向偏移强制归零（`offset = 0.0`），Caution 警惕度维持 `>= 1.0`（严禁下调至 0.1 导致追尾），防止开局第一弯多车挤压追尾事故。
 
 ---
 

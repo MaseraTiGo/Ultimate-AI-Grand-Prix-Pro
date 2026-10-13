@@ -102,9 +102,12 @@ function M.rebuildFieldStrategy(totalLaps, defaultStops, baseFpl)
     if #stintLaps > 1 then
       local firstStintLaps = stintLaps[1]
       local win = StrategyCalc.computePitWindowForStint(1, 1, firstStintLaps, firstStintLaps, totalLaps)
-      plan.openLap = win.openLap
-      plan.targetLap = win.targetLap
-      plan.escalateLap = win.escalateLap
+      local groupOffset = StrategyCalc.getF1PitSpreadGroupOffset(i, 0)
+      local lapOffset = math.floor(groupOffset * 4.0 + 0.5)
+      local staggeredTarget = math.max(1, math.min(totalLaps - 1, win.targetLap + lapOffset))
+      plan.openLap = math.max(1, win.openLap + lapOffset)
+      plan.targetLap = staggeredTarget
+      plan.escalateLap = math.max(staggeredTarget, win.escalateLap + lapOffset)
     else
       plan.openLap = 999
       plan.targetLap = 999
@@ -147,8 +150,6 @@ function M.issueRadioOrder(carIndex, command)
     cState.radioCommand = cmd
     cState.radioOrderActive = true
     cState.tacticalState = "BOXING"
-
-    cState.tacticalState = "BOXING"
     cState.pit_requested = true
     cState.pit_stop_planned = true
     cState.pitState = "REQUESTED"
@@ -158,13 +159,13 @@ function M.issueRadioOrder(carIndex, command)
     if plan then
       plan.activeRecommendation = "BOX_THIS_LAP"
     end
-    -- Forced Physical Pit Entry Induction:
-    -- In Assetto Corsa native AI, cars ONLY branch into pitlane when fuel drops below critical reserve (~2L).
-    -- Setting fuel to 1.8L forces AC native AI navigation to branch into pitlane immediately on this lap!
-    if physics and physics.setCarFuel then
-      physics.setCarFuel(carIndex, 1.8)
+    -- Official CSP AI Pit Stop Request:
+    -- physics.setAIPitStopRequest(carIndex, true) directs native AC AI to pit on current lap.
+    -- Replaces and obsoletes artificial fuel starvation hacks.
+    if physics and physics.setAIPitStopRequest then
+      physics.setAIPitStopRequest(carIndex, true)
     end
-    EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 确认指令 -> 执行 [BOX_THIS_LAP] (物理诱导激活)", dLabel), "SUCCESS")
+    EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 确认指令 -> 执行 [BOX_THIS_LAP] (CSP原生进站请求激活)", dLabel), "SUCCESS")
     EventHub.pushAiEvent(carIndex, "RADIO", string.format("【进站指令】%s 车队无线电下达: 本圈立即进站换胎！赛车已进入进站准备姿态！", dLabel), "STRATEGY")
   elseif cmd == "PUSH" then
     cState.radioCommand = "PUSH"
@@ -173,6 +174,9 @@ function M.issueRadioOrder(carIndex, command)
     cState.pit_requested = false
     cState.pit_stop_planned = false
     if cState.pitState == "REQUESTED" then cState.pitState = "NONE" end
+    if physics and physics.setAIPitStopRequest then
+      physics.setAIPitStopRequest(carIndex, false)
+    end
     EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 确认指令 -> 执行 [PUSH 全力推进]", dLabel), "SUCCESS")
   elseif cmd == "SAVE" then
     cState.radioCommand = "SAVE"
@@ -182,6 +186,9 @@ function M.issueRadioOrder(carIndex, command)
     cState.pit_requested = false
     cState.pit_stop_planned = false
     if cState.pitState == "REQUESTED" then cState.pitState = "NONE" end
+    if physics and physics.setAIPitStopRequest then
+      physics.setAIPitStopRequest(carIndex, false)
+    end
     EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 确认指令 -> 执行 [SAVE 保胎节油]", dLabel), "SUCCESS")
   elseif cmd == "NONE" then
     cState.radioCommand = "NONE"
@@ -194,6 +201,9 @@ function M.issueRadioOrder(carIndex, command)
     local plan = _carPlans[carIndex]
     if plan then
       plan.activeRecommendation = "NONE"
+    end
+    if physics and physics.setAIPitStopRequest then
+      physics.setAIPitStopRequest(carIndex, false)
     end
     EventHub.settleCarPitCommands(carIndex, dLabel)
     EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 指令已解除 -> 恢复自主战术", dLabel), "SUCCESS")
@@ -268,9 +278,18 @@ function M.stepStrategy(dt)
         if decision and decision.bestOption then
           if decision.bestOption.action == "PIT_NOW" or curLap >= plan.targetLap or fuelLaps <= 1.2 then
             plan.activeRecommendation = "BOX_THIS_LAP"
-            -- If in autonomous AI mode or order confirmed, set radio order
-            if not cState.radioOrderActive or cState.radioCommand == "BOX_THIS_LAP" then
-              cState.radioCommand = "BOX_THIS_LAP"
+            -- Autonomous AI Strategic Pit Decision:
+            -- Pure recommendation NEVER mutates cState.radioCommand (which is reserved for Human / Pit Wall orders).
+            -- Autonomous AI triggers internal pit request ONLY when no manual radio command is active:
+            if not cState.radioOrderActive then
+              if not cState.pit_requested and not plan.pitInHandled then
+                cState.pit_requested = true
+                cState.tacticalState = "BOXING"
+                cState.pitState = "REQUESTED"
+                if physics and physics.setAIPitStopRequest then
+                  physics.setAIPitStopRequest(i, true)
+                end
+              end
             end
           else
             plan.activeRecommendation = "STAY_OUT"
@@ -296,6 +315,18 @@ function M.stepStrategy(dt)
         cState.tacticalState = "PIT_BAY"
         plan.activeRecommendation = "NONE"
 
+        -- Official CSP: Release pit stop request flag in physics engine
+        if physics and physics.setAIPitStopRequest then
+          physics.setAIPitStopRequest(i, false)
+        end
+        -- Release stop counter: pass 0 to ensure native AC AI is never frozen
+        if physics and physics.setAIStopCounter then
+          physics.setAIStopCounter(i, 0)
+        end
+        if physics and physics.setAIThrottleLimit then
+          physics.setAIThrottleLimit(i, 1.0)
+        end
+
         if not plan.pitInHandled then
           plan.pitInHandled = true
           cState.actualStopsCount = cState.actualStopsCount + 1
@@ -308,11 +339,6 @@ function M.stepStrategy(dt)
           plan.escalateLap = plan.targetLap + 2
 
           local dLabel = EventHub.formatDriverLabel(i, cState.driverName)
-
-          -- Trigger realistic pit dwell pause if available (3.0 seconds service dwell)
-          if physics and physics.setAIStopCounter then
-            physics.setAIStopCounter(i, 3)
-          end
 
           -- Trigger fresh tyre out-lap warmup state (cold tyre warmup begins from 0.0)
           cState.tyreWarmupProgress = 0.0

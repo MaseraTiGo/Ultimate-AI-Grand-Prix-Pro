@@ -326,6 +326,13 @@ function M.updateCarFromAc(carIndex, c)
     s.tacticalState = "PIT_BAY"
     s.pitState = s.isInPit and M.PIT_STATE_IN_BAY or M.PIT_STATE_IN_PITLANE
 
+    if physics and physics.setAIPitStopRequest then
+      physics.setAIPitStopRequest(carIndex, false)
+    end
+    if physics and physics.setAIThrottleLimit then
+      physics.setAIThrottleLimit(carIndex, 1.0)
+    end
+
     if StrategyCoordinator and StrategyCoordinator.getCarPlan then
       local plan = StrategyCoordinator.getCarPlan(carIndex)
       if plan then
@@ -362,6 +369,9 @@ function M.updateCarFromAc(carIndex, c)
     if s.tacticalState ~= "PIT_BAY" then
       s.tacticalState = "PIT_BAY"
     end
+    if physics and physics.setAIThrottleLimit then
+      physics.setAIThrottleLimit(carIndex, 1.0)
+    end
   end
 
   -- Edge 2: Vehicle exiting pitlane back to track
@@ -375,6 +385,17 @@ function M.updateCarFromAc(carIndex, c)
     s.pitState = M.PIT_STATE_COMPLETED
     s.actualStopsCount = (s.actualStopsCount or 0) + 1
     s.lastPitLap = curLap
+
+    -- Guarantee native AC AI is fully released to resume racing
+    if physics and physics.setAIPitStopRequest then
+      physics.setAIPitStopRequest(carIndex, false)
+    end
+    if physics and physics.setAIStopCounter then
+      physics.setAIStopCounter(carIndex, 0)
+    end
+    if physics and physics.setAIThrottleLimit then
+      physics.setAIThrottleLimit(carIndex, 1.0)
+    end
 
     if StrategyCoordinator and StrategyCoordinator.getCarPlan then
       local plan = StrategyCoordinator.getCarPlan(carIndex)

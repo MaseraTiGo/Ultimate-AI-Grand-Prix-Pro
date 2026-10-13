@@ -593,7 +593,7 @@ function M.renderPitWallTab()
 
       if c.pitState == "IN_BAY" or c.pitState == "IN_PITLANE" or c.tacticalState == "PIT_BAY" or c.isInPitlane or c.isInPit then
         drawInlineColored(COLOR_CYAN, "[停站作业中 (BAY)]")
-      elseif c.pitState == "REQUESTED" or plan.activeRecommendation == "BOX_THIS_LAP" or c.radioCommand == "BOX_THIS_LAP" or c.tacticalState == "BOXING" or c.pit_requested then
+      elseif c.pitState == "REQUESTED" or c.radioCommand == "BOX_THIS_LAP" or c.tacticalState == "BOXING" or c.pit_requested then
         drawInlineColored(COLOR_RED, "[立即进站 (BOX)]")
       else
         drawInlineColored(COLOR_GREEN, "[继续留场 (STAY)]")

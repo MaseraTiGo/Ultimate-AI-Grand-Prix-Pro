@@ -232,6 +232,26 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
   local s = _aiStates[idx] or _aiStates[0]
   s.persona = persona
 
+  -- -1. Pit Lane & Pit Bay Authority Gate:
+  -- While car is entering, dwelling, or exiting pits, lock into PIT_BAY cruise
+  local inPit = car.isInPitlane or car.isInPit or (raceContext and (raceContext.isInPitlane or raceContext.isInPit))
+  if inPit then
+    s.state = "PIT_BAY"
+    s.activeSkill = "PIT_SERVICE"
+    s.targetSplineOffset = 0.0
+    s.currentSplineOffset = 0.0
+    s.targetCaution = 1.0
+    s.targetAggression = 0.5
+    s.stress = 0.0
+    s.commitTimer = 0.0
+    s.committedState = nil
+    s.isBreakingTow = false
+    s.isLiftAndCoast = false
+    s.isFeinting = false
+    TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, false, false, s.lastMistakeType, 0.0, 1.0)
+    return s
+  end
+
   -- 0. Launch & Low-Speed Safety Gate:
   -- During race start, grid waiting, or slow crawl (< 45 km/h), maintain pure stable CRUISE
   -- Never calculate aggressive combat offsets, tow weaving, or divebombs that spin cars on the grid
@@ -250,6 +270,7 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
     s.defenseHeatTimer = 0.0
     s.isBreakingTow = false
     s.isFeinting = false
+    s.isLiftAndCoast = false
     TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
     return s
   end
@@ -654,7 +675,7 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
     s.committedState = M.STATE_ATTACK
     s.commitTimer = 0.7
     s.targetAggression = math.min(0.98, (persona.base_aggression or 0.8) + 0.15)
-    s.targetCaution = math.max(0.1, (persona.base_caution or 0.5) * 0.3)
+    s.targetCaution = math.max(0.75, (persona.base_caution or 0.8) * 0.85)
 
     local aggr = persona and persona.base_aggression or 0.75
     -- Two-Phase Feint / Dummy Move: High aggression drivers (> 0.80) feint outside then dive inside

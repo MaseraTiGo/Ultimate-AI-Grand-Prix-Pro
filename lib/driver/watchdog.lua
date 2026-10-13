@@ -198,7 +198,7 @@ function M.checkStuckCars(car, dt, sessionTime)
      end
    end
 
-   if (car.speedKmh or 0) < 2.0 and not car.isInPitlane then
+   if (car.speedKmh or 0) < 2.0 and not car.isInPitlane and not car.isInPit then
      w.timer = w.timer + dt
      if w.timer >= 5.0 then
        -- Self-judging guard: if at least 4 drops occurred and success rate is < 25%, abort teleport
