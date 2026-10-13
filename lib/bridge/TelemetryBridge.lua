@@ -91,6 +91,7 @@ local _stateMap = {
   ["GENTLE_SQUEEZE"] = 7,
   ["TOW_WEAVE"] = 8,
   ["LATE_BRAKE_DIVE"] = 9,
+  ["BOXING"] = 10,
 }
 
 local _mistakeMap = {

@@ -30,6 +30,7 @@ M.STATE_DEFEND = "DEFEND"
 M.STATE_MISTAKE = "MISTAKE"
 M.STATE_YIELD = "YIELD"
 M.STATE_SWITCHBACK = "SWITCHBACK"
+M.STATE_BOXING = "BOXING"
 
 local MAX_CARS = 24
 local RING_SIZE = 4 -- 4 slots @ 10Hz = 0.4s history buffer (covers 160-280ms human delay)
@@ -276,6 +277,15 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
         end)
       end
 
+      -- If under sustained pressure while recovering, tyres cook
+      if behindCar then
+        s.defenseHeatTimer = (s.defenseHeatTimer or 0.0) + dt
+        if s.defenseHeatTimer > 2.0 then
+          s.tireTempNorm = math.min(1.50, (s.tireTempNorm or 1.0) + dt * 0.06)
+          if raceContext then raceContext.tyreTempNorm = s.tireTempNorm end
+        end
+      end
+
       TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
       return s
     end
@@ -384,7 +394,7 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
   -- 5. Radio Command Override (BOX_THIS_LAP priority for pit entry)
   local radioCmd = raceContext and raceContext.radioCommand or "NONE"
   if radioCmd == "BOX_THIS_LAP" then
-    s.state = M.STATE_CRUISE
+    s.state = M.STATE_BOXING
     s.activeSkill = "NONE"
     s.targetCaution = 1.4
     s.targetSplineOffset = 0.65
@@ -725,6 +735,8 @@ function M.reset()
     s.isFeinting = false
     s.defenseHeatTimer = 0.0
     s.tireTempNorm = 1.0
+    s.recoveryTimer = 0.0
+    s.lastMistakeType = MistakeEngine.TYPE_NONE
     s.outLapColdGrip = 1.0
     s.ringHead = 1
     s.ringInitialized = false

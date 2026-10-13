@@ -23,6 +23,7 @@ local rivalryMemory = require("lib/driver/rivalry_memory")
 local watchdog = require("lib/driver/watchdog")
 local StrategyCoordinator = require("lib/strategy/StrategyCoordinator")
 local TelemetryBridge = require("lib/bridge/TelemetryBridge")
+local EventHub = require("lib/core/EventHub")
 local DashboardUI = require("lib/ui/DashboardUI")
 
 local _initialized = false
@@ -67,7 +68,8 @@ function script.init()
   local sim = ac and ac.getSim and ac.getSim()
   if sim then
     RaceContext.updateFromSim(sim)
-    StrategyCoordinator.rebuildFieldStrategy(sim.raceLaps or 20, 1, 2.5)
+    local laps = (sim.raceLaps and sim.raceLaps > 0) and sim.raceLaps or (sim.laps and sim.laps > 0 and sim.laps or 13)
+    StrategyCoordinator.rebuildFieldStrategy(laps, 1, 2.5)
   end
 
   _initialized = true
@@ -112,7 +114,10 @@ function script.update(dt)
     _tacticalTimer = 0.0
 
     RaceContext.updateFromSim(sim)
-    local carCount = math.min(24, sim.carsCount or 0)
+    local raceState = RaceContext.getRaceState()
+    local carCount = math.max(sim.carsCount or 0, raceState.carsCount or 0)
+    if carCount > 24 then carCount = 24 end
+    if carCount < 1 then carCount = 1 end
     _activeAiCount = 0
 
     local playerCar = ac.getCar(0)
@@ -132,9 +137,11 @@ function script.update(dt)
         local cState = RaceContext.getCarState(i)
         cState.driverName = getCarDriverName(i)
       end
-      if c and c.isAIControlled then
+      local isCarAI = (c ~= nil) and ((c.isAIControlled == true) or (i > 0 and not c.isPlayer))
+      if isCarAI then
         _activeAiCount = _activeAiCount + 1
         local cState = RaceContext.getCarState(i)
+        cState.isAIControlled = true
 
 
         -- Cold tyre warmup progression on out-lap
@@ -213,12 +220,18 @@ function script.update(dt)
           end
 
           -- Sync back to unified RaceContext
+          local prevState = cState.tacticalState
           cState.tacticalState = aiState.state
           cState.activeSkill = aiState.activeSkill or "NONE"
           cState.stress = aiState.stress
           cState.momentum = aiState.momentum
           cState.isLiftAndCoast = aiState.isLiftAndCoast
           cState.isBreakingTow = aiState.isBreakingTow
+
+          -- Emit tactical behavior events if state transitioned or skill activated
+          if cState.tacticalState ~= prevState or (cState.activeSkill ~= "NONE" and cState.activeSkill ~= prevState) then
+            EventHub.emitTacticalStateChange(i, cState.driverName, cState.tacticalState, prevState, cState.activeSkill, sim.sessionTime or 0.0)
+          end
 
           -- Apply Behavior Actuators
           BehaviorActuator.applyActuator(c, aiState, tacticalDt)
@@ -241,19 +254,39 @@ local function ensureInitialized()
   end
 end
 
+local _lastWindowTick = 0.0
+
 function windowMain(dt)
   ensureInitialized()
+  local now = os.clock()
+  local stepDt = (dt and dt > 0) and dt or ((_lastWindowTick > 0) and (now - _lastWindowTick) or 0.016)
+  _lastWindowTick = now
+  if stepDt > 0.1 then stepDt = 0.1 end
+
+  -- Self-driving pump: guarantees update loops step even if CSP lazily throttles script.update
+  if script.update then
+    pcall(script.update, stepDt)
+  end
+
   local ok, err = pcall(DashboardUI.renderMain, _perfMs, _activeAiCount)
   if not ok then
-    if ui and ui.textColored and ui.text then
-      ui.textColored(_G.rgbm and _G.rgbm(1, 0.2, 0.2, 1) or {r=1,g=0.2,b=0.2,a=1}, "Grand Prix Pro UI Render Error:")
-      ui.text(tostring(err))
+    if ui and ui.text then
+      ui.text("Grand Prix Pro UI Render Error: " .. tostring(err))
     end
   end
 end
 
 function windowSetup(dt)
   ensureInitialized()
+  local now = os.clock()
+  local stepDt = (dt and dt > 0) and dt or ((_lastWindowTick > 0) and (now - _lastWindowTick) or 0.016)
+  _lastWindowTick = now
+  if stepDt > 0.1 then stepDt = 0.1 end
+
+  if script.update then
+    pcall(script.update, stepDt)
+  end
+
   local ok, err = pcall(DashboardUI.renderSetup)
   if not ok and ui and ui.text then
     ui.text("Setup UI Error: " .. tostring(err))

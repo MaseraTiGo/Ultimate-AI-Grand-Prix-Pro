@@ -20,6 +20,7 @@ local TyreModel = require("lib/strategy/tyre_model")
 local TrafficModel = require("lib/strategy/traffic_model")
 local SafetyCar = require("lib/strategy/safety_car")
 local StrategyAuthority = require("lib/strategy/strategy_authority")
+local EventHub = require("lib/core/EventHub")
 
 local M = {}
 
@@ -65,7 +66,8 @@ end
 
 --- Build or re-calculate baseline strategy for all cars based on total laps and stops
 function M.rebuildFieldStrategy(totalLaps, defaultStops, baseFpl)
-  totalLaps = math.max(1, math.floor(toNum(totalLaps, 20)))
+  local race = RaceContext.getRaceState()
+  totalLaps = math.max(1, math.floor(toNum(totalLaps, (race and race.totalLaps) or 13)))
   defaultStops = math.min(StrategyCalc.MAX_PIT_STOPS, math.max(0, math.floor(toNum(defaultStops, 1))))
   baseFpl = toNum(baseFpl, 2.5)
 
@@ -99,6 +101,7 @@ function M.rebuildFieldStrategy(totalLaps, defaultStops, baseFpl)
     cState.escalatePitLap = plan.escalateLap
   end
   Logger.info("STRATEGY", string.format("Rebuilt field strategy (Laps: %d, Default Stops: %d)", totalLaps, defaultStops))
+  EventHub.pushCommandEvent("STRATEGY", string.format("全场进站策略更新成功: %d 圈 / %d 停方案 (基准油耗: %.2f L/圈)", totalLaps, defaultStops, baseFpl), "SUCCESS")
 end
 
 --- Get car plan
@@ -108,11 +111,44 @@ end
 
 --- Set manual radio command (Pit Wall order)
 function M.issueRadioOrder(carIndex, command)
-  if carIndex < 0 or carIndex >= MAX_CARS then return false end
+  if carIndex < 0 or carIndex >= MAX_CARS then
+    EventHub.pushCommandEvent("RADIO", string.format("指令下发失败: 无效车辆编号 #%d", (carIndex or -1) + 1), "FAILED")
+    return false
+  end
   local cState = RaceContext.getCarState(carIndex)
-  cState.radioCommand = command or "NONE"
-  cState.radioOrderActive = (command ~= "NONE")
-  Logger.info("RADIO", string.format("Issued Radio Command [%s] to Car #%d", tostring(command), carIndex + 1))
+  local cmd = command or "NONE"
+  cState.radioCommand = cmd
+  cState.radioOrderActive = (cmd ~= "NONE")
+  
+  -- Immediately close the loop in Driver / Strategy state machine
+  if cmd == "BOX_THIS_LAP" then
+    cState.tacticalState = "BOXING"
+    cState.pit_requested = true
+    cState.pit_stop_planned = true
+    local plan = _carPlans[carIndex]
+    if plan then
+      plan.activeRecommendation = "BOX_THIS_LAP"
+    end
+  elseif cmd == "PUSH" then
+    cState.tacticalState = "ATTACK"
+    cState.pit_requested = false
+    cState.pit_stop_planned = false
+  elseif cmd == "SAVE" then
+    cState.tacticalState = "CRUISE"
+    cState.isLiftAndCoast = true
+    cState.pit_requested = false
+    cState.pit_stop_planned = false
+  elseif cmd == "NONE" then
+    cState.tacticalState = "CRUISE"
+    cState.isLiftAndCoast = false
+    cState.pit_requested = false
+    cState.pit_stop_planned = false
+  end
+
+  Logger.info("RADIO", string.format("Issued Radio Command [%s] to Car #%d", tostring(cmd), carIndex + 1))
+  
+  local dName = (cState.driverName and cState.driverName ~= "") and cState.driverName or string.format("Car #%02d", carIndex + 1)
+  EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] AI #%02d (%s) -> 执行 [%s]", carIndex + 1, dName, cmd), "SUCCESS")
   return true
 end
 
@@ -126,7 +162,7 @@ function M.stepStrategy(dt)
 
   local carsCount = race.carsCount or 0
   local curLap = race.currentLap or 1
-  local totalLaps = race.totalLaps or 20
+  local totalLaps = race.totalLaps or 13
 
   for i = 0, carsCount - 1 do
     local cState = RaceContext.getCarState(i)

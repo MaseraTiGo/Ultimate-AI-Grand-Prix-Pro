@@ -216,6 +216,10 @@ function M.checkStuckCars(car, dt)
       if isFacingBackwards and not w.attemptedJTurn then
         -- Execute 0.45s physical reverse J-turn flick
         w.attemptedJTurn = true
+        local okEv, EventHub = pcall(require, "lib/core/EventHub")
+        if okEv and EventHub then
+          EventHub.pushAiEvent(idx, "RECOVERY", string.format("赛车 #%02d 发生打滑调头！看门狗已接管执行物理 J-Turn 摆正自救！", idx + 1), "WORLD")
+        end
         M.requestTakeover(idx, 0.45, function(ctrl, cCar, dt)
           ctrl.gas = 0.0
           ctrl.brake = 0.0
@@ -230,6 +234,11 @@ function M.checkStuckCars(car, dt)
       w.attemptedJTurn = false
       
       -- If physical recovery fails or car is not spun backwards, use safe realignment
+      local okEv, EventHub = pcall(require, "lib/core/EventHub")
+      if okEv and EventHub then
+        EventHub.pushAiEvent(idx, "WATCHDOG", string.format("赛车 #%02d 遭遇严重停滞！看门狗完成赛道安全复位与起步平滑恢复。", idx + 1), "WORLD")
+      end
+
       if physics.setAICarPosition then
         -- passing nil for dir aligns along spline
         physics.setAICarPosition(idx, car.position, nil)

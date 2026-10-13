@@ -20,7 +20,7 @@ M.FLAG_RED    = "RED"
 
 local _raceState = {
   sessionType = "RACE",
-  totalLaps = 20,
+  totalLaps = 13,
   currentLap = 1,
   sessionTime = 0.0,
   flagState = M.FLAG_GREEN,
@@ -88,6 +88,12 @@ function M.getRaceState()
   return _raceState
 end
 
+function M.setTotalLaps(laps)
+  if laps and laps > 0 then
+    _raceState.totalLaps = math.floor(laps)
+  end
+end
+
 function M.getCarState(carIndex)
   return _carStates[carIndex] or _carStates[0]
 end
@@ -101,9 +107,34 @@ function M.updateFromSim(sim)
   if not sim then return end
   _raceState.isReplay = sim.isReplayActive or false
   _raceState.sessionTime = sim.sessionTime or 0.0
-  _raceState.carsCount = math.min(MAX_CARS, sim.carsCount or 0)
-  _raceState.totalLaps = sim.raceLaps or _raceState.totalLaps
-  _raceState.currentLap = sim.currentLap or 1
+
+  -- Count connected cars: either from sim.carsCount or by probing ac.getCar
+  local probedCount = 0
+  if ac and ac.getCar then
+    for probeIdx = 0, MAX_CARS - 1 do
+      local probeCar = ac.getCar(probeIdx)
+      if probeCar then
+        probedCount = probedCount + 1
+      end
+    end
+  end
+
+  local simCars = sim.carsCount or 0
+  _raceState.carsCount = math.max(simCars, probedCount)
+  if _raceState.carsCount > MAX_CARS then _raceState.carsCount = MAX_CARS end
+
+  -- Dynamic Session Laps: check sim.raceLaps, sim.sessionLaps, sim.totalLaps, sim.laps
+  local laps = sim.raceLaps or sim.sessionLaps or sim.totalLaps or sim.laps
+  if laps and laps > 0 then
+    if _raceState.totalLaps ~= laps then
+      _raceState.totalLaps = laps
+      local StrategyCoordinator = package.loaded["lib/strategy/StrategyCoordinator"]
+      if StrategyCoordinator and StrategyCoordinator.rebuildFieldStrategy then
+        StrategyCoordinator.rebuildFieldStrategy(laps, nil, nil)
+      end
+    end
+  end
+  _raceState.currentLap = sim.currentLap or _raceState.currentLap or 1
 
   -- Flags & Safety Car
   if sim.isYellowFlag or sim.hasYellowFlag then
@@ -122,7 +153,7 @@ function M.updateCarFromAc(carIndex, c)
   if not c or carIndex < 0 or carIndex >= MAX_CARS then return end
   local s = _carStates[carIndex]
   s.isConnected = c.isConnected ~= false
-  s.isAIControlled = c.isAIControlled == true
+  s.isAIControlled = (c.isAIControlled == true) or (carIndex > 0 and not c.isPlayer)
   s.speedKmh = c.speedKmh or 0.0
   s.splinePos = c.splinePosition or 0.0
   s.lapCount = c.lapCount or 0
