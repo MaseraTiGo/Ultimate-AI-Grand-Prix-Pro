@@ -42,15 +42,22 @@ local function toNum(v, def)
 end
 
 function M.init()
+  local defaultFpl = 2.0
+  if ac and ac.getSim then
+    local okSim, sim = pcall(ac.getSim)
+    if okSim and sim and sim.trackLengthM and sim.trackLengthM > 0 then
+      defaultFpl = math.max(0.8, math.min(4.5, (sim.trackLengthM / 1000.0) * 0.65))
+    end
+  end
   for i = 0, MAX_CARS - 1 do
     _carPlans[i] = {
-      plannedStops = 1,
-      targetLap = 15,
-      openLap = 13,
-      escalateLap = 18,
+      plannedStops = 0,
+      targetLap = 999,
+      openLap = 999,
+      escalateLap = 999,
       stints = {},
-      baseFpl = 2.5,
-      dynamicFpl = 2.5,
+      baseFpl = defaultFpl,
+      dynamicFpl = defaultFpl,
       fuelInjectedAtStart = false,
       pitInHandled = false,
       activeRecommendation = "STAY_OUT",
@@ -69,14 +76,14 @@ end
 function M.rebuildFieldStrategy(totalLaps, defaultStops, baseFpl)
   local race = RaceContext.getRaceState()
   totalLaps = math.max(1, math.floor(toNum(totalLaps, (race and race.totalLaps) or 13)))
-  defaultStops = math.min(StrategyCalc.MAX_PIT_STOPS, math.max(0, math.floor(toNum(defaultStops, 1))))
+  defaultStops = math.min(StrategyCalc.MAX_PIT_STOPS, math.max(0, math.floor(toNum(defaultStops, 0))))
 
   -- Dynamic base FPL estimation from track length if not explicitly provided
-  local defaultFpl = 2.5
+  local defaultFpl = 2.0
   if ac and ac.getSim then
     local okSim, sim = pcall(ac.getSim)
     if okSim and sim and sim.trackLengthM and sim.trackLengthM > 0 then
-      defaultFpl = math.max(1.2, math.min(4.5, (sim.trackLengthM / 1000.0) * 0.55))
+      defaultFpl = math.max(0.8, math.min(4.5, (sim.trackLengthM / 1000.0) * 0.65))
     end
   end
   baseFpl = toNum(baseFpl, defaultFpl)
@@ -85,10 +92,10 @@ function M.rebuildFieldStrategy(totalLaps, defaultStops, baseFpl)
     local plan = _carPlans[i]
     if not plan then
       _carPlans[i] = {
-        plannedStops = 1,
-        targetLap = 15,
-        openLap = 13,
-        escalateLap = 18,
+        plannedStops = 0,
+        targetLap = 999,
+        openLap = 999,
+        escalateLap = 999,
         stints = {},
         baseFpl = baseFpl,
         dynamicFpl = baseFpl,
@@ -99,9 +106,15 @@ function M.rebuildFieldStrategy(totalLaps, defaultStops, baseFpl)
         reason = "Nominal Stint",
       }
       plan = _carPlans[i]
+    else
+      plan.fuelInjectedAtStart = false
+      plan.pitInHandled = false
+      plan.activeRecommendation = "STAY_OUT"
+      plan.confidence = 1.0
+      plan.reason = "Nominal Stint"
     end
-    if defaultStops then plan.plannedStops = defaultStops end
-    local stops = plan.plannedStops or 1
+    if defaultStops ~= nil then plan.plannedStops = defaultStops end
+    local stops = plan.plannedStops or 0
     local stintCount = StrategyCalc.computeStintCount(stops, totalLaps)
     local stintLaps = StrategyCalc.splitTotalLapsAcrossStints(totalLaps, stintCount)
     
@@ -127,6 +140,20 @@ function M.rebuildFieldStrategy(totalLaps, defaultStops, baseFpl)
 
       local rawTarget = win.targetLap + lapOffset + personaShift
       local staggeredTarget = math.max(win.openLap + 1, math.min(math.min(totalLaps - 1, maxFuelLaps), rawTarget))
+
+      -- Teammate Pit Stagger: Adjacent cars in the same team (i % 2 == 1 with i - 1)
+      -- should not stop on the exact same lap to prevent double-stacking in shared pit bays.
+      if i % 2 == 1 and _carPlans[i - 1] and _carPlans[i - 1].targetLap then
+        local mateTarget = _carPlans[i - 1].targetLap
+        if staggeredTarget == mateTarget then
+          if staggeredTarget - 1 >= win.openLap then
+            staggeredTarget = staggeredTarget - 1
+          elseif staggeredTarget + 1 <= math.min(totalLaps - 1, maxFuelLaps) then
+            staggeredTarget = staggeredTarget + 1
+          end
+        end
+      end
+
       plan.openLap = math.max(1, math.min(staggeredTarget, win.openLap + lapOffset + personaShift))
       plan.targetLap = staggeredTarget
       plan.escalateLap = math.max(staggeredTarget, math.min(maxFuelLaps, win.escalateLap + lapOffset + personaShift))
@@ -262,7 +289,7 @@ function M.stepStrategy(dt)
 
   for i = 0, carsCount - 1 do
     local cState = RaceContext.getCarState(i)
-    if cState.isConnected and cState.isAIControlled then
+    if cState.isConnected and cState.isAIControlled and not cState.isRetired then
       local plan = _carPlans[i]
       local auth = _carAuthority[i]
 
@@ -291,34 +318,49 @@ function M.stepStrategy(dt)
       plan.dynamicFpl = dynFpl
       cState.fuelPerLap = dynFpl
 
+      local fuelLaps = FuelModel.estimateLapsRemaining(cState.fuelInTank, dynFpl, 0.5)
+      local isFuelEmergency = (fuelLaps <= 1.3) or (cState.fuelInTank < dynFpl * 1.4)
+
       -- 2. Check Fuel Starvation Deadlock Guard (replaces fuel_guard.lua)
-      if cState.fuelInTank < 1.8 and not cState.isInPitlane and not cState.isInPit then
+      if (cState.fuelInTank < 2.5 or isFuelEmergency) and not cState.isInPitlane and not cState.isInPit then
         if physics and physics.setCarFuel then
-          physics.setCarFuel(i, math.max(cState.fuelInTank, 8.0))
-          Logger.warn("GUARD", string.format("Emergency Fuel Guard injected 8.0L into Car #%d (Laps %d)", i + 1, curLap), 5.0)
+          physics.setCarFuel(i, math.max(cState.fuelInTank, 12.0))
+          Logger.warn("GUARD", string.format("Emergency Fuel Guard injected 12.0L into Car #%d (Laps %d)", i + 1, curLap), 5.0)
         end
       end
 
+      local carOwnLap = (cState.lapCount and cState.lapCount > 0) and (cState.lapCount + 1) or curLap
+      local inNominalWindow = (carOwnLap >= plan.openLap and carOwnLap <= plan.escalateLap)
+      local isTyreCliff = (cState.tyreWear >= 0.58)
+
       -- 3. Dynamic Pit Window & Undercut/Overcut Evaluation
-      if not (cState.isInPitlane or cState.isInPit) and (cState.pitState == "NONE" or not cState.pitState) and curLap >= plan.openLap and curLap <= plan.escalateLap then
-        local fuelLaps = FuelModel.estimateLapsRemaining(cState.fuelInTank, dynFpl, 0.5)
+      -- Triggers if in scheduled window OR if emergency occurs (fuel depletion or tyre cliff)
+      local shouldEvaluatePit = not (cState.isInPitlane or cState.isInPit)
+        and (cState.pitState == "NONE" or not cState.pitState)
+        and (inNominalWindow or isFuelEmergency or isTyreCliff)
+
+      if shouldEvaluatePit then
 
         -- Resolve real telemetry and persona for accurate tactical evaluation
-        local aheadIdx, aheadDist = RaceContext.getNeighbors(i)
-        local mySpdMs = math.max(15.0, (cState.speedKmh or 120.0) / 3.6)
-        local gapAheadSec = (aheadDist < 200.0) and (aheadDist / mySpdMs) or 999.0
+        local gapAheadSec = cState.gapAheadSec or 999.0
+        local gapBehindSec = cState.gapBehindSec or 999.0
+        if gapAheadSec >= 900.0 then
+          local aheadIdx, aheadDist = RaceContext.getNeighbors(i)
+          local mySpdMs = math.max(15.0, (cState.speedKmh or 120.0) / 3.6)
+          gapAheadSec = (aheadDist < 200.0) and (aheadDist / mySpdMs) or 999.0
+        end
 
         local personaLoader = package.loaded["lib/driver/persona_loader"]
         local persona = personaLoader and personaLoader.getPersonaForCar(i, cState.driverName) or {}
 
         local evalInput = {
-          currentLap = curLap,
+          currentLap = carOwnLap,
           plannedPitLap = plan.targetLap,
           fuelLapsRemaining = fuelLaps,
           currentTyrePaceLoss = cState.tyreWear * 2.5,
           freshTyreAdvantage = 1.0,
           gapAheadSec = gapAheadSec,
-          gapBehindSec = 4.0,
+          gapBehindSec = (gapBehindSec < 900.0) and gapBehindSec or 4.0,
           exitTrafficPenaltyNow = 0.0,
           exitTrafficPenaltyLater = 0.0,
           persona = persona,
@@ -328,13 +370,36 @@ function M.stepStrategy(dt)
         local decision = PitStrategy.evaluatePitTimingOptions(evalInput)
         if decision and decision.bestOption then
           -- Strict Gating: Prevent premature pit stops unless critical conditions are met
-          local isTargetLapReached = (curLap >= plan.targetLap)
+          local isTargetLapReached = (carOwnLap >= plan.targetLap)
           local isFuelEmergency = (fuelLaps <= 1.2)
           local isTyreCliff = (cState.tyreWear >= 0.58)
           local isSafetyCarCheapStop = (race.scActive == true)
-          local isRealUndercut = (decision.bestOption.action == "PIT_NOW") and (curLap >= plan.targetLap - 1) and (gapAheadSec < 1.6) and ((persona.undercut_preference or 0.5) >= 0.65)
+          local isRealUndercut = (decision.bestOption.action == "PIT_NOW") and (carOwnLap >= plan.targetLap - 1) and (gapAheadSec < 1.6) and ((persona.undercut_preference or 0.5) >= 0.65)
 
           local shouldBox = isTargetLapReached or isFuelEmergency or isTyreCliff or isSafetyCarCheapStop or isRealUndercut
+
+          local reasonCode = "STINT_WINDOW"
+          local reasonDesc = "Nominal Stint Window"
+          if isRealUndercut then
+            reasonCode = "UNDERCUT_OPPORTUNITY"
+            reasonDesc = string.format("Undercut candidate: Gap ahead %.1fs < 1.6s under heavy tyre degradation", gapAheadSec)
+          elseif isSafetyCarCheapStop then
+            reasonCode = "SAFETY_CAR_CHEAP_STOP"
+            reasonDesc = "Low-cost pit stop opportunity under Safety Car condition"
+          elseif isFuelEmergency then
+            reasonCode = "FUEL_CRITICAL"
+            reasonDesc = string.format("Fuel emergency: Only %.1f laps remaining", fuelLaps)
+          elseif isTyreCliff then
+            reasonCode = "TYRE_CLIFF"
+            reasonDesc = string.format("Tyre cliff threshold reached (Wear: %.0f%%)", cState.tyreWear * 100)
+          elseif isTargetLapReached then
+            reasonCode = "TARGET_LAP_REACHED"
+            reasonDesc = string.format("Stint target lap %d reached", plan.targetLap)
+          end
+
+          plan.reasonCode = reasonCode
+          plan.reason = reasonDesc
+          plan.confidence = decision.bestOption.score or 1.0
 
           if shouldBox then
             plan.activeRecommendation = "BOX_THIS_LAP"
@@ -355,20 +420,18 @@ function M.stepStrategy(dt)
           else
             plan.activeRecommendation = "STAY_OUT"
           end
-          plan.confidence = decision.bestOption.score or 1.0
-          plan.reason = decision.bestOption.reason or (isRealUndercut and "Undercut window" or "Stint window")
         end
       else
-        if curLap > plan.escalateLap and not plan.pitInHandled then
-          -- Past escalate lap without pitting: reset to next stint
-          plan.openLap = curLap + 12
-          plan.targetLap = curLap + 15
-          plan.escalateLap = curLap + 17
+        if carOwnLap > plan.escalateLap and not plan.pitInHandled then
+          -- Past escalate lap without pitting: retry next lap instead of skipping 12 laps
+          plan.openLap = carOwnLap
+          plan.targetLap = carOwnLap + 1
+          plan.escalateLap = carOwnLap + 2
         end
       end
 
       -- 4. Pit Stop Detection & Fuel Refill Handling
-      if cState.isInPitlane or cState.isInPit then
+      if (cState.isInPitlane or cState.isInPit) and not cState.isRetired then
         cState.pit_requested = false
         cState.pit_stop_planned = false
         cState.radioCommand = "NONE"
@@ -387,12 +450,12 @@ function M.stepStrategy(dt)
         if not plan.pitInHandled then
           plan.pitInHandled = true
           cState.actualStopsCount = cState.actualStopsCount + 1
-          cState.lastPitLap = curLap
+          cState.lastPitLap = carOwnLap
 
           -- Advance plan target lap for next stint so it does not re-trigger
           local nextStintLaps = (plan.stints and plan.stints[2]) or 15
-          plan.targetLap = curLap + nextStintLaps
-          plan.openLap = math.max(curLap + 1, plan.targetLap - 2)
+          plan.targetLap = carOwnLap + nextStintLaps
+          plan.openLap = math.max(carOwnLap + 1, plan.targetLap - 2)
           plan.escalateLap = plan.targetLap + 2
 
           local dLabel = EventHub.formatDriverLabel(i, cState.driverName)
@@ -403,12 +466,20 @@ function M.stepStrategy(dt)
           cState.tyreLapsAge = 0
 
           -- Refill fuel for next stint (respecting work order if configured, otherwise calculate stint requirement)
-          local hasCustomRefuel = cState.pendingWorkOrder and (cState.pendingWorkOrder.refuelLiters ~= nil)
-          local isStationaryInBay = (cState.isInPit == true or cState.pitState == "IN_BAY" or cState.pitState == "SERVICING") and ((cState.speedKmh or 0) < 1.0)
-          local refillLiters = hasCustomRefuel and math.min(cState.maxFuelCapacity, cState.fuelInTank + cState.pendingWorkOrder.refuelLiters) or math.min(cState.maxFuelCapacity, dynFpl * 15.0)
-          if not hasCustomRefuel and isStationaryInBay and physics and physics.setCarFuel then
-            ControlTelemetry.dispatchCarFuel(i, refillLiters, nil, cState.driverName)
-            Logger.info("PIT", string.format("%s completed pit stop (Refilled: %.1fL, Next Stint Ready, Cold Out-Lap Active)", dLabel, refillLiters))
+          local alreadyServiced = cState.pendingWorkOrder and cState.pendingWorkOrder.serviced
+          if not alreadyServiced and physics and physics.setCarFuel then
+            local isStationaryInBay = (cState.isInPit == true or cState.pitState == "IN_BAY" or cState.pitState == "SERVICING" or cState.isInPitlane) and ((cState.speedKmh or 0) < 1.0)
+            if isStationaryInBay then
+              local isExplicit = cState.pendingWorkOrder and cState.pendingWorkOrder.isExplicit
+              local refillLiters = isExplicit and (cState.pendingWorkOrder.refuelLiters or 0.0) or math.min(cState.maxFuelCapacity, dynFpl * 15.0)
+              if refillLiters > 0 then
+                local newFuel = math.min(cState.maxFuelCapacity, cState.fuelInTank + refillLiters)
+                ControlTelemetry.dispatchCarFuel(i, newFuel, nil, cState.driverName)
+                cState.fuelInTank = newFuel
+              end
+              if cState.pendingWorkOrder then cState.pendingWorkOrder.serviced = true end
+              Logger.info("PIT", string.format("%s completed pit stop (Refilled: %.1fL, Next Stint Ready, Cold Out-Lap Active)", dLabel, refillLiters))
+            end
           end
 
           EventHub.settleCarPitCommands(i, dLabel)

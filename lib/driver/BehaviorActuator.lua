@@ -153,6 +153,8 @@ function M.applyActuator(car, aiState, dt)
 
   -- 2. Target Spline Offset with Corridor Clamping & Lap 0 / Pack Protection
   local targetOff = aiState.targetSplineOffset or 0.0
+  aiState.requestedSplineOffset = targetOff
+
   if (car.lapCount or 0) == 0 or curSpeed < 75.0 then
     -- During start formation / first lap crawl: clamp target offset strictly to [-0.10, 0.10]
     if targetOff > 0.10 then targetOff = 0.10 end
@@ -160,6 +162,8 @@ function M.applyActuator(car, aiState, dt)
   elseif aiState.overlapRatio and aiState.overlapRatio > 0.30 and aiState.rivalRelX then
     targetOff = M.enforceCarWidthRule(targetOff, aiState.rivalRelX, aiState.overlapRatio)
   end
+
+  aiState.safetyClampedOffset = targetOff
 
   -- Pure smooth transition without artificial high-frequency twitch oscillations
   local finalTarget = targetOff
@@ -202,6 +206,7 @@ function M.applyActuator(car, aiState, dt)
   local isStartPhase = curSpeed < 75.0 or (car.lapCount or 0) == 0
   if isStartPhase then
     aiState.currentSplineOffset = 0.0
+    aiState.appliedSplineOffset = 0.0
     -- DO NOT call physics.setAISplineOffset on the starting grid / launch phase!
     -- Calling setAISplineOffset forces cars out of their left/right grid slots
     -- and directly into each other on the centerline. Let native AC AI handle grid launch undisturbed!
@@ -211,6 +216,7 @@ function M.applyActuator(car, aiState, dt)
     local safeOffset = aiState.currentSplineOffset
     if safeOffset > 0.15 then safeOffset = 0.15 end
     if safeOffset < -0.15 then safeOffset = -0.15 end
+    aiState.appliedSplineOffset = safeOffset
 
     -- Only apply spline offset if there is an intentional lateral tactical displacement.
     -- If offset is effectively 0.0, leave it to native AC AI's own learned racing line.
@@ -248,7 +254,7 @@ function M.applyActuator(car, aiState, dt)
       pacePct = 98
       paceDesc = "(Pushing lap)"
     elseif aiState.radioCommand == "SAVE" then
-      pacePct = 72
+      pacePct = 78
       paceDesc = "(Fuel saving cruise)"
     elseif aiState.state == "ATTACK" then
       pacePct = 95
@@ -261,11 +267,21 @@ function M.applyActuator(car, aiState, dt)
     ControlTelemetry.dispatchPace(idx, aVal, cVal, pacePct, paceDesc, car)
   end
 
-  -- 5. Lift and Coast throttle cut (save tyre & fuel into deceleration phase)
-  -- Guarantee throttle limit is reset to 1.0 when not in lift-and-coast mode
-  if aiState.isLiftAndCoast then
-    ControlTelemetry.dispatchThrottleLimit(idx, 0.0, "Engaged Lift and Coast into braking zone (Saving fuel & tyres)", car)
+  -- 5. Credible Fuel-Saving & Lift-and-Coast Policy (No blanket zero-throttle lockout)
+  -- Safety Override: If a car is following close behind (< 14m), suppress aggressive throttle cuts to avoid rear-end collisions
+  local isThreatenedBehind = (aiState.behindDist and aiState.behindDist < 14.0) or (car.collisionDepth and car.collisionDepth > 0.01)
+
+  if isThreatenedBehind then
+    -- Collision safety override takes highest priority: restore 100% full throttle delivery
+    ControlTelemetry.dispatchThrottleLimit(idx, 1.0, "Fuel-saving lift inhibited: close follower detected (Collision safety priority)", car)
+  elseif aiState.isLiftAndCoast then
+    -- Controlled smooth coast: deliver 25% smooth roll rather than 0% dead engine lockout
+    ControlTelemetry.dispatchThrottleLimit(idx, 0.25, "Engaged Lift & Coast (25% coast roll into deceleration; fuel & tyre preservation)", car)
+  elseif aiState.radioCommand == "SAVE" then
+    -- Controlled cruise fuel-saving: cap throttle delivery at 85% to burn less fuel smoothly
+    ControlTelemetry.dispatchThrottleLimit(idx, 0.85, "Fuel-saving cruise mode (85% throttle limit)", car)
   else
+    -- Standard / PUSH / NORMAL: 100% unrestricted throttle delivery
     ControlTelemetry.dispatchThrottleLimit(idx, 1.0, "Restored 100% full throttle delivery", car)
   end
 

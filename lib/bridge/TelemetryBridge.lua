@@ -96,6 +96,8 @@ local _stateMap = {
   ["TOW_WEAVE"] = 8,
   ["LATE_BRAKE_DIVE"] = 9,
   ["BOXING"] = 10,
+  ["PIT_BAY"] = 11,
+  ["RETIRED"] = 12,
 }
 
 local _mistakeMap = {

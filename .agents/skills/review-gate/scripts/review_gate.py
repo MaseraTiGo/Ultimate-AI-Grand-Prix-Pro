@@ -10,19 +10,22 @@ import sys
 
 def verify_agents_rules():
     print("[CHECK] Verifying AGENTS.md compliance...")
-    # Check dual script sync
-    f1 = "Ultimate AI Grand Prix Pro.lua"
-    f2 = "Ultimate-AI-Grand-Prix-Pro.lua"
-    if open(f1, "rb").read() != open(f2, "rb").read():
-        print("  -> [FAIL] Entry scripts are not 100% byte identical!")
+    f_main = "Ultimate-AI-Grand-Prix-Pro.lua"
+    if not os.path.exists(f_main):
+        print(f"  -> [FAIL] Missing authoritative single entry file: {f_main}")
         return False
-    print("  -> [PASS] Dual entry scripts 100% byte synchronized.")
+    root_lua = [f for f in os.listdir(".") if f.endswith(".lua")]
+    if root_lua != [f_main]:
+        extra = [f for f in root_lua if f != f_main]
+        print(f"  -> [FAIL] Only single entry file '{f_main}' allowed in root. Found extra: {extra}")
+        return False
+    print("  -> [PASS] Single authoritative entry script verified. Root contains only the official entry.")
     return True
 
 def run_suite():
     print("[CHECK] Running regression suite...")
     cmd = [
-        "python", "-c",
+        sys.executable, "-c",
         "import lupa; from lupa import LuaRuntime; lua = LuaRuntime(unpack_returned_tuples=True); lua.execute(open('tests/test_grand_prix_pro.lua', 'r', encoding='utf-8').read())"
     ]
     res = subprocess.run(cmd, capture_output=True, text=True)

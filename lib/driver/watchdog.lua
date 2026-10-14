@@ -168,7 +168,7 @@ end
 --- Unstuck monitor (Low frequency 10Hz/1Hz) with self-judging reposition and throttle ramp
 --- Strict Start Protection: Never trigger during race start / grid formation
 function M.checkStuckCars(car, dt, sessionTime)
-   if not _isPhysicsAllowed or not car or not car.isAIControlled then return end
+   if not _isPhysicsAllowed or not car or not car.isAIControlled or car.isRetired then return end
    local idx = car.index
    
    if not _stuckWatch[idx] then
@@ -195,6 +195,15 @@ function M.checkStuckCars(car, dt, sessionTime)
      elseif w.judgeTimer >= 15.0 then
        -- Failed drop (e.g. stranded or hit again)
        w.dropPending = false
+     end
+   end
+
+   -- 2. Anti-Retirement Shield:
+   -- When an AI car is slowed down outside pits (due to traffic, incident, or spin recovery),
+   -- invoke CSP physics.preventAIFromRetiring so AC engine does not prematurely retire and teleport it!
+   if (car.speedKmh or 0) < 25.0 and not car.isInPitlane and not car.isInPit then
+     if physics and physics.preventAIFromRetiring then
+       pcall(physics.preventAIFromRetiring, idx)
      end
    end
 

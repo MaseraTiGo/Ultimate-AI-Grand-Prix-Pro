@@ -346,6 +346,27 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
   s.persona = persona
   MistakeEngine.stepCooldown(idx, dt)
 
+  -- -2. Terminal Retirement Gate:
+  -- Retired AI cars (RET) are parked in pit stalls by AC engine; do NOT misclassify as active PIT_SERVICE!
+  local isRetired = (car and car.isRetired) or (raceContext and raceContext.isRetired)
+  if isRetired then
+    s.state = "RETIRED"
+    s.activeSkill = "RET"
+    s.targetSplineOffset = 0.0
+    s.currentSplineOffset = 0.0
+    s.targetCaution = 1.0
+    s.targetAggression = 0.0
+    s.stress = 0.0
+    s.momentum = 0.0
+    s.commitTimer = 0.0
+    s.committedState = nil
+    s.isBreakingTow = false
+    s.isLiftAndCoast = false
+    s.isFeinting = false
+    TelemetryBridge.updateCarTelemetry(idx, s.state, 0.0, 0.0, (raceContext and raceContext.tyreWear) or 0.0, false, false, "NONE", 0.0, 1.0)
+    return s
+  end
+
   -- -1. Pit Lane & Pit Bay Authority Gate:
   -- While car is entering, dwelling, or exiting pits, lock into PIT_BAY cruise
   local inPit = car.isInPitlane or car.isInPit or (raceContext and (raceContext.isInPitlane or raceContext.isInPit))

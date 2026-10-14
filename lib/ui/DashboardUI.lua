@@ -308,8 +308,10 @@ local _personaButtons = {
 }
 
 -- Setup panel working state (Total laps is locked by FIA / session rules)
-local _setupStops = 1
-local _setupBaseFpl = 2.5
+local _setupStops = 0
+local _setupBaseFpl = nil
+local _setupAppliedTimestamp = 0.0
+local _setupAppliedFeedback = nil
 
 -- Pit Wall Work Order Modal state
 local _showWorkOrderModal = false
@@ -491,7 +493,10 @@ function M.renderLiveHudTab()
       local stText = "标准巡航"
       local stColor = COLOR_GREEN
 
-      if c.pitState == "IN_BAY" or c.pitState == "IN_PITLANE" or c.tacticalState == "PIT_BAY" or c.isInPitlane or c.isInPit then
+      if c.isRetired or c.pitState == "RETIRED" or c.tacticalState == "RETIRED" then
+        stText = "赛车退赛"
+        stColor = COLOR_MUTED
+      elseif c.pitState == "IN_BAY" or c.pitState == "IN_PITLANE" or c.tacticalState == "PIT_BAY" or c.isInPitlane or c.isInPit then
         stText = "停站作业"
         stColor = COLOR_CYAN
       elseif c.pitState == "REQUESTED" or c.tacticalState == "BOXING" or c.radioCommand == "BOX_THIS_LAP" or c.pit_requested then
@@ -516,7 +521,9 @@ function M.renderLiveHudTab()
       ui.text(string.format("   %4.2f     %+5.2f     ", telem.stress or 0.0, telem.momentum or 0.0))
       ui.sameLine()
 
-      if c.activeSkill and c.activeSkill ~= "NONE" then
+      if c.isRetired or c.pitState == "RETIRED" or c.tacticalState == "RETIRED" or c.activeSkill == "RET" then
+        drawInlineColored(COLOR_RED, "[RET]")
+      elseif c.activeSkill and c.activeSkill ~= "NONE" then
         drawInlineColored(COLOR_CYAN, string.format("[%s]", c.activeSkill))
       elseif c.radioCommand and c.radioCommand ~= "NONE" then
         local rCmdCol = (c.radioCommand == "BOX_THIS_LAP") and COLOR_RED or ((c.radioCommand == "PUSH") and COLOR_GOLD or COLOR_GREEN)
@@ -882,7 +889,9 @@ function M.renderPitWallTab()
         fuel, fpl, estLaps, plan.openLap or 0, plan.escalateLap or 0))
       ui.sameLine()
 
-      if c.pitState == "IN_BAY" or c.pitState == "IN_PITLANE" or c.tacticalState == "PIT_BAY" or c.isInPitlane or c.isInPit then
+      if c.isRetired or c.pitState == "RETIRED" or c.tacticalState == "RETIRED" then
+        drawInlineColored(COLOR_MUTED, "[已退赛 (RET)]")
+      elseif c.pitState == "IN_BAY" or c.pitState == "IN_PITLANE" or c.tacticalState == "PIT_BAY" or c.isInPitlane or c.isInPit then
         drawInlineColored(COLOR_CYAN, "[停站作业中 (BAY)]")
       elseif c.pitState == "REQUESTED" or c.radioCommand == "BOX_THIS_LAP" or c.tacticalState == "BOXING" or c.pit_requested then
         drawInlineColored(COLOR_RED, "[立即进站 (BOX)]")
@@ -897,11 +906,21 @@ end
 -- 7. Tab 3: Strategy Workshop & Stint Planner
 --------------------------------------------------------------------------------
 function M.renderSetup()
+  if not ui or not ui.text then return end
   drawTextColored(COLOR_CYAN, "【进站策略工坊与参数设定】")
   ui.separator()
 
   local race = RaceContext.getRaceState()
   local totalLaps = race.totalLaps or 13
+
+  if not _setupBaseFpl then
+    local sim = ac and ac.getSim and ac.getSim()
+    if sim and sim.trackLengthM and sim.trackLengthM > 0 then
+      _setupBaseFpl = math.max(0.8, math.min(4.5, (sim.trackLengthM / 1000.0) * 0.65))
+    else
+      _setupBaseFpl = 2.0
+    end
+  end
 
   ui.text("1. 比赛基础参数设定 (FIA 官方正赛规程锁定):")
   ui.text(string.format("  官方总圈数: %d 圈 (赛程已锁定)  |  基准预估单圈油耗: %.2f L/圈", totalLaps, _setupBaseFpl))
@@ -981,9 +1000,17 @@ function M.renderSetup()
 
   if ui.button("应用策略至全场发车格 (APPLY STRATEGY)##setup_apply") then
     StrategyCoordinator.rebuildFieldStrategy(totalLaps, _setupStops, _setupBaseFpl)
+    _setupAppliedTimestamp = (os and os.clock and os.clock()) or 0.0
+    _setupAppliedFeedback = string.format("策略修改成功！已下发全场: %d圈 / %d停 / %.2f L/圈", totalLaps, _setupStops, _setupBaseFpl)
     Logger.info("SETUP", string.format("Applied field strategy: %d Laps, %d Stops, %.2f FPL", totalLaps, _setupStops, _setupBaseFpl))
   end
   setTooltip("将当前规划的停站圈数与进站窗口即时同步给所有 AI 车手的大脑")
+
+  local nowClock = (os and os.clock and os.clock()) or 0.0
+  if _setupAppliedFeedback and (nowClock - _setupAppliedTimestamp) < 4.0 then
+    ui.sameLine()
+    drawInlineColored(COLOR_GREEN, " [OK] " .. _setupAppliedFeedback)
+  end
 end
 
 --------------------------------------------------------------------------------
@@ -1081,15 +1108,7 @@ function M.renderLogsTab()
   -- 1. Toolbar & Controls
   local isStreamActive = ControlTelemetry.isEnabled()
   if ui and ui.checkbox then
-    local r1, r2 = ui.checkbox("实时 AI 直接控制日志 (Live AI Control Stream)##ctrl_telemetry_toggle", isStreamActive)
-    if r2 ~= nil then
-      -- Tuple return: (checked, changed)
-      if r2 == true then
-        local nextVal = (type(r1) == "boolean") and r1 or (not isStreamActive)
-        ControlTelemetry.setEnabled(nextVal)
-      end
-    elseif r1 == true then
-      -- Single return boolean: true if clicked/toggled
+    if ui.checkbox("实时 AI 直接控制日志 (Live AI Control Stream)##ctrl_telemetry_toggle", isStreamActive) then
       ControlTelemetry.setEnabled(not isStreamActive)
     end
   elseif ui and ui.button then
@@ -1101,14 +1120,10 @@ function M.renderLogsTab()
   setTooltip("开启或关闭下发至 CSP 原生 AI 车手的动作遥测流。开启后实时解析配速、进站、防守及异常，关闭时零性能损耗。")
 
   if ui and ui.sameLine then ui.sameLine() end
-  local badgeText = isStreamActive and "[2-4Hz 动态抽样监听中]" or "[已停用 - 零开销模式]"
+  local badgeText = isStreamActive and "[✔ 2-4Hz 动态抽样监听中]" or "[已停用 - 零开销模式]"
   local badgeCol = isStreamActive and COLOR_GREEN or COLOR_MUTED
-  if ui and ui.button and ui.button(badgeText .. "##stream_badge_toggle") then
-    ControlTelemetry.setEnabled(not isStreamActive)
-  else
-    drawInlineColored(badgeCol, badgeText)
-  end
-  setTooltip("点击此状态标签也可快速切换 AI 控制遥测流开关")
+  drawInlineColored(badgeCol, badgeText)
+  setTooltip("当前状态: " .. (isStreamActive and "正在捕获 AI 控制动作 (2-4Hz 采样)" or "控制遥测流已旁路关闭 (零性能开销)"))
 
   if ui and ui.sameLine then ui.sameLine() end
   if ui and ui.button and ui.button("清空控制流##clear_ctrl_stream") then
@@ -1259,6 +1274,28 @@ function M.renderEventFeed()
       drawInlineColored(evCol, ev.msg)
     end
   end
+end
+
+--------------------------------------------------------------------------------
+-- 10. Independent Dedicated Strategy Window (On-demand, Zero simulation advance)
+--------------------------------------------------------------------------------
+function M.renderStrategyWindow()
+  if not ui or not ui.text then return end
+  refreshActiveAiCars()
+
+  drawInlineColored(COLOR_CYAN, "ULTIMATE AI GRAND PRIX PRO — 独立车队策略指挥台 (PIT WALL & STRATEGY)")
+  ui.sameLine()
+  local race = RaceContext.getRaceState()
+  local totalLaps = race.totalLaps or 13
+  local curLap = race.currentLap or 1
+  drawInlineColored(COLOR_GOLD, string.format("[赛程: %d/%d 圈]", curLap, totalLaps))
+  ui.separator()
+
+  -- Render authoritative pit wall console and command dispatch
+  M.renderPitWallTab()
+
+  ui.separator()
+  M.renderEventFeed()
 end
 
 return M

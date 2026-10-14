@@ -15,7 +15,7 @@
 3. **零运行时内存分配**：在 60Hz 物理看门狗与 10Hz 战术步中，严禁动态创建表、闭包或字符串拼接操作。所有局部几何计算全部展开为纯标量局部变量。
 4. **CSP API 严格越界防护**：调用 `ac.getCar(idx)` 与 `ac.getDriverName(idx)` 必须先校验 `idx < sim.carsCount`，且必须通过 `safeGetCar` / `safeGetDriverName`（`pcall` 包装）进行访问，禁止对未参赛槽位进行盲探以防 C++ 级 `out of range` 抛错。
 5. **初始化单次幂等保护**：`ensureInitialized()` 必须保证 `script.init()` 只触发一次，严禁在渲染帧循环中递归或逐帧重试初始化，防止重置 `EventHub` 与策略中枢。
-6. **双脚本文件强同步**：根目录下的 `Ultimate AI Grand Prix Pro.lua` 与 `Ultimate-AI-Grand-Prix-Pro.lua` 必须保持 100% 字节一致。
+6. **单主脚本权威入口规范**：根目录下的 `Ultimate-AI-Grand-Prix-Pro.lua` 为项目唯一权威入口主文件（Single-File Entry），严禁创建或保留任何多余或重复的同名入口脚本。
 7. **保护源工程**：严禁修改同级目录的 `SmartAI` 与 `AI-PIT-PRO`。新项目为 100% 独立闭环产品。
 8. **单向依赖方向**：
    $$\text{Core (Context/Config/Logger/EventHub)} \longleftarrow \text{Driver / Strategy} \longleftarrow \text{Main App / UI}$$
@@ -37,7 +37,7 @@
 
 | 任务类型 | 必须首选阅读的文档 | 核心关联源码 |
 | :--- | :--- | :--- |
-| **系统架构与数据流** | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | `Ultimate AI Grand Prix Pro.lua`, `lib/core/EventHub.lua` |
+| **系统架构与数据流** | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | `Ultimate-AI-Grand-Prix-Pro.lua`, `lib/core/EventHub.lua` |
 | **模块接口与职责** | [`docs/MODULES.md`](docs/MODULES.md) | `lib/core/RaceContext.lua`, `lib/strategy/StrategyCoordinator.lua`, `lib/ui/DashboardUI.lua` |
 | **底层游戏与 CSP 交互**| [`docs/INTEGRATION.md`](docs/INTEGRATION.md) | `lib/driver/watchdog.lua`, `lib/bridge/TelemetryBridge.lua` |
 | **配置项与合法范围** | [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) | `config/personas.json`, `lib/core/Config.lua` |
@@ -68,7 +68,7 @@ python -c "import lupa; from lupa import LuaRuntime; lua = LuaRuntime(unpack_ret
 | **影响面与调用链追踪**| `diff-aware-ripper` | `python .agents/skills/diff-aware-ripper/scripts/diff_ripper.py` | 针对当前 git diff 自动提取变动符号，扫描下游所有消费者调用点，秒级定位关联文件，防止遗漏改动点。 |
 | **结构化 AST 语法萃取**| `tree-sitter-ast` | `python .agents/skills/tree-sitter-ast/scripts/ast_analyzer.py` | 免除阅读全文直接提取函数签名、作用域边界与 C-Struct 成员访问，精确圈定行号区间。 |
 | **上下文多行锚点替换**| `search-replace-block`| `python .agents/skills/search-replace-block/scripts/search_replace.py` | 高保真块替换，确保上下文唯一性，杜绝整文件盲写带来的漂移与误伤。 |
-| **手术式补丁与双脚本校验**| `patch-editor` | `python .agents/skills/patch-editor/scripts/patch_validator.py` | 自动验证双主入口脚本（`Ultimate AI Grand Prix Pro.lua` ↔ `Ultimate-AI-Grand-Prix-Pro.lua`）100% 字节一致性及语法无误。 |
+| **手术式补丁**| `patch-editor` | `python .agents/skills/patch-editor/scripts/patch_validator.py` | - |
 | **质量门禁与全量回归**| `review-gate` | `python .agents/skills/review-gate/scripts/review_gate.py` | 统一执行全量 22 项回归测试与规则核验，一键阻断违规代码合并。 |
 
 ### Token 极致节省与高效工作纪律（Token Conservation Guardrails）

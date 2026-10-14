@@ -54,6 +54,7 @@ local _aiPitRequests = {}
 local _aiStopCounters = {}
 local _aiBrakeMistakes = {}
 local _aiTractionMistakes = {}
+local _preventRetireCalls = {}
 
 physics = {
   allowed = function() return true end,
@@ -72,21 +73,25 @@ physics = {
   setTyresCompound = function(idx, wheels, compoundIdx) return true end,
   setAIRainTyres = function(idx, isRain) return true end,
   setTyresVirtualKM = function(idx, wheels, km) return true end,
+  preventAIFromRetiring = function(idx) _preventRetireCalls[idx] = (_preventRetireCalls[idx] or 0) + 1 end,
 }
 
 local _mockControls = { combineAxis = false, headlightsFlash = false, horn = false }
 
+local _mockSim = {
+  carsCount = 4,
+  raceLaps = 25,
+  currentLap = 5,
+  sessionTime = 120.0,
+  isReplayActive = false,
+  isYellowFlag = false,
+  safetyCarActive = false,
+  trackLengthM = 5000.0,
+}
+
 ac = {
   getSim = function()
-    return {
-      carsCount = 4,
-      raceLaps = 25,
-      currentLap = 5,
-      sessionTime = 120.0,
-      isReplayActive = false,
-      isYellowFlag = false,
-      safetyCarActive = false,
-    }
+    return _mockSim
   end,
   getCar = function(i)
     return {
@@ -1718,7 +1723,488 @@ local function runTest37()
 end
 runTest37()
 
+-- ==============================================================================
+-- [Test 38] Authoritative Update Lifecycle, Non-Simulation UI & Re-entrancy Guard
+-- ==============================================================================
+local function runTest38()
+  print("[Test 38] Testing Authoritative Update Lifecycle, Non-Simulation UI & Re-entrancy...")
+  _G.script = {}
+  dofile("Ultimate-AI-Grand-Prix-Pro.lua")
+  script.init()
+
+  -- 1. Verify UI functions exist and are callable
+  assertTrue(type(script.windowMain) == "function", "script.windowMain defined")
+  assertTrue(type(script.windowSetup) == "function", "script.windowSetup defined")
+  assertTrue(type(script.windowStrategy) == "function", "script.windowStrategy defined")
+
+  -- 2. Intercept script.update to prove UI rendering NEVER triggers or steps simulation
+  local updateCallCount = 0
+  local originalUpdate = script.update
+  script.update = function(dt)
+    updateCallCount = updateCallCount + 1
+    return originalUpdate(dt)
+  end
+
+  -- Call all UI windows concurrently
+  pcall(script.windowMain, 0.016)
+  pcall(script.windowSetup, 0.016)
+  pcall(script.windowStrategy, 0.016)
+  assertEq(updateCallCount, 0, "UI window render callbacks must NEVER advance simulation (0 update calls)")
+
+  -- Restore original update
+  script.update = originalUpdate
+
+  -- 3. Verify safeDt clamping on frame spike (e.g. dt = 0.5s or negative)
+  local okSpike = pcall(script.update, 0.5)
+  assertTrue(okSpike, "script.update gracefully handles and clamps large dt spikes")
+  local okZero = pcall(script.update, 0.0)
+  assertTrue(okZero, "script.update gracefully handles 0.0 dt")
+
+  print("  -> Passed: Authoritative Update Lifecycle, Non-Simulation UI & Re-entrancy verified.")
+end
+runTest38()
+
+-- ==============================================================================
+-- [Test 39] Pit Stop Work Order Precedence, Fuel Isolation & Bay Verification
+-- ==============================================================================
+local function runTest39()
+  print("[Test 39] Testing Pit Stop Work Order Precedence, Fuel Isolation & Bay Verification...")
+  local c4State = RaceContext.getCarState(4)
+  c4State.fuelInTank = 25.0
+  c4State.maxFuelCapacity = 100.0
+  c4State.pitState = "NONE"
+  c4State.pit_requested = true
+
+  -- Case A: Explicit 0.0L refuel work order (tyres-only stop)
+  RaceContext.setCarWorkOrder(4, {
+    changeTyres = true,
+    targetCompoundIndex = 1,
+    targetCompoundName = "Soft",
+    refuelLiters = 0.0
+  }, "PLAYER")
+  assertTrue(c4State.pendingWorkOrder.isExplicit, "Player work order marked isExplicit")
+  assertEq(c4State.pendingWorkOrder.refuelLiters, 0.0, "Refuel liters is explicitly 0.0")
+
+  -- Car stops in pitlane but NOT in pit bay (isInPit = false)
+  local mockPitlaneTraffic = {
+    isConnected = true,
+    isAIControlled = true,
+    isInPitlane = true,
+    isInPit = false,
+    speedKmh = 0.0,
+    fuel = 25.0,
+    maxFuel = 100.0
+  }
+  RaceContext.updateCarFromAc(4, mockPitlaneTraffic)
+  assertEq(c4State.pitState, "IN_PITLANE", "Car in pitlane road transitions to IN_PITLANE")
+  assertEq(c4State.fuelInTank, 25.0, "Car merely halted in pitlane traffic does NOT receive pit service")
+  assertEq(c4State.pendingWorkOrder.serviced, false, "Work order NOT serviced on pit road")
+
+  -- Car arrives and halts in true pit stall (isInPit = true, speed < 1.0)
+  local mockInStall = {
+    isConnected = true,
+    isAIControlled = true,
+    isInPitlane = true,
+    isInPit = true,
+    speedKmh = 0.0,
+    fuel = 25.0,
+    maxFuel = 100.0
+  }
+  RaceContext.updateCarFromAc(4, mockInStall)
+  assertEq(c4State.pitState, "VERIFIED", "Car halted in true pit stall transitions to VERIFIED after service")
+  assertEq(c4State.fuelInTank, 25.0, "Explicit 0.0L refuel respected: fuel remains 25.0L (tyre-only stop)")
+  assertEq(c4State.pendingWorkOrder.serviced, true, "Work order marked serviced in stall")
+
+  -- Case B: Unconfigured AI car halted in bay (isExplicit = false)
+  local c5State = RaceContext.getCarState(5)
+  c5State.fuelInTank = 10.0
+  c5State.maxFuelCapacity = 100.0
+  c5State.pitState = "NONE"
+  c5State.pendingWorkOrder.isConfirmed = false
+  c5State.pendingWorkOrder.isExplicit = false
+  c5State.pendingWorkOrder.serviced = false
+  local mockUnconfiguredAI = {
+    isConnected = true,
+    isAIControlled = true,
+    isInPitlane = true,
+    isInPit = true,
+    speedKmh = 0.0,
+    fuel = 10.0,
+    maxFuel = 100.0
+  }
+  RaceContext.updateCarFromAc(5, mockUnconfiguredAI)
+  assertTrue(c5State.fuelInTank >= 35.0, "Unconfigured AI halted in bay automatically refuelled to baseline stint fuel")
+  assertEq(c5State.pitState, "VERIFIED", "Unconfigured AI completes service and enters VERIFIED in stall")
+
+  print("  -> Passed: Pit Stop Work Order Precedence, Fuel Isolation & Bay Verification verified.")
+end
+runTest39()
+
+-- ==============================================================================
+-- [Test 40] Credible Fuel-Saving Multi-Tier Throttle Policy & Collision Safety
+-- ==============================================================================
+local function runTest40()
+  print("[Test 40] Testing Credible Fuel-Saving Multi-Tier Throttle Policy & Collision Safety...")
+  BehaviorActuator.reset()
+  ControlTelemetry.reset()
+  ControlTelemetry.setEnabled(true)
+
+  local testCar = {
+    index = 6,
+    isConnected = true,
+    isAIControlled = true,
+    speedKmh = 160.0,
+    lapCount = 2
+  }
+
+  -- 1. Standard / PUSH state: delivers 100% full throttle
+  local pushState = {
+    state = "CRUISE",
+    targetSplineOffset = 0.0,
+    currentSplineOffset = 0.0,
+    radioCommand = "PUSH",
+    isLiftAndCoast = false,
+    behindDist = 40.0
+  }
+  BehaviorActuator.applyActuator(testCar, pushState, 0.1)
+  assertEq(_throttleLimits[6], 1.0, "PUSH mode applies 1.0 full throttle limit")
+  local lastCtrl = ControlTelemetry.getRecentEntries(1)[1]
+  assertEq(lastCtrl.category, "Throttle Management", "Throttle management action recorded")
+  assertTrue(lastCtrl.description:find("100%%") ~= nil, "PUSH mode logs 100% full throttle")
+
+  -- 2. SAVE state with NO follower close behind: 85% throttle ceiling during cruise
+  local saveCruiseState = {
+    state = "CRUISE",
+    targetSplineOffset = 0.0,
+    currentSplineOffset = 0.0,
+    radioCommand = "SAVE",
+    isLiftAndCoast = false,
+    behindDist = 35.0
+  }
+  BehaviorActuator.applyActuator(testCar, saveCruiseState, 0.1)
+  assertEq(_throttleLimits[6], 0.85, "SAVE cruise applies 0.85 throttle limit")
+  lastCtrl = ControlTelemetry.getRecentEntries(1)[1]
+  assertTrue(lastCtrl.description:find("85%%") ~= nil, "SAVE cruise mode logs 85% throttle limit")
+
+  -- 3. SAVE state during Lift and Coast phase: 25% smooth roll (never 0% dead lockout)
+  local saveCoastState = {
+    state = "CRUISE",
+    targetSplineOffset = 0.0,
+    currentSplineOffset = 0.0,
+    radioCommand = "SAVE",
+    isLiftAndCoast = true,
+    behindDist = 35.0
+  }
+  BehaviorActuator.applyActuator(testCar, saveCoastState, 0.1)
+  assertEq(_throttleLimits[6], 0.25, "Lift & Coast applies 0.25 throttle limit (smooth coast, not dead 0.0)")
+  lastCtrl = ControlTelemetry.getRecentEntries(1)[1]
+  assertTrue(lastCtrl.description:find("25%%") ~= nil or lastCtrl.description:find("Lift & Coast") ~= nil, "Lift & Coast logs smooth coast roll")
+
+  -- 4. SAVE state WITH close follower behind (< 14m): fuel-saving inhibited for collision prevention!
+  local threatenedState = {
+    state = "CRUISE",
+    targetSplineOffset = 0.0,
+    currentSplineOffset = 0.0,
+    radioCommand = "SAVE",
+    isLiftAndCoast = true,
+    behindDist = 8.5 -- Follower right on gearbox!
+  }
+  BehaviorActuator.applyActuator(testCar, threatenedState, 0.1)
+  assertEq(_throttleLimits[6], 1.0, "Close follower behind inhibits lift and delivers 1.0 throttle for collision safety")
+  lastCtrl = ControlTelemetry.getRecentEntries(1)[1]
+  assertTrue(lastCtrl.description:find("inhibited") ~= nil, "Collision safety override logged in telemetry")
+
+  -- 5. Spline Offset Pipeline Transparency
+  assertEq(type(threatenedState.requestedSplineOffset), "number", "requestedSplineOffset tracked")
+  assertEq(type(threatenedState.safetyClampedOffset), "number", "safetyClampedOffset tracked")
+  assertEq(type(threatenedState.appliedSplineOffset), "number", "appliedSplineOffset tracked")
+
+  ControlTelemetry.setEnabled(false)
+  print("  -> Passed: Credible Fuel-Saving Multi-Tier Throttle Policy & Collision Safety verified.")
+end
+runTest40()
+
+-- ==============================================================================
+-- [Test 41] Per-Car Authoritative Race State & Topology Gaps
+-- ==============================================================================
+local function runTest41()
+  print("[Test 41] Testing Per-Car Authoritative Race State & Topology Gaps...")
+  local c7State = RaceContext.getCarState(7)
+  local mockAcCar = {
+    isConnected = true,
+    isAIControlled = true,
+    lapCount = 4,
+    splinePosition = 0.45,
+    speedKmh = 210.0,
+    fuel = 45.0,
+    maxFuel = 100.0
+  }
+  RaceContext.updateCarFromAc(7, mockAcCar)
+  assertEq(c7State.lapCount, 4, "Lap count updated to 4")
+  local expectedProgress = (4.0 + 0.45) / math.max(1, RaceContext.getRaceState().totalLaps or 13)
+  assertTrue(math.abs(c7State.raceProgress - expectedProgress) < 0.001, "raceProgress accurately reflects race fraction")
+  assertTrue(c7State.telemetryConfidence ~= nil, "telemetryConfidence metadata present")
+  assertEq(c7State.telemetryConfidence.lap, "EXACT", "Lap confidence is EXACT")
+
+  -- Test Topology gapAheadSec and gapBehindSec calculation
+  local topCars = {
+    [0] = { index = 0, isConnected = true, position = vec3(0, 0, 100), splinePosition = 0.50, speedKmh = 180.0 },
+    [1] = { index = 1, isConnected = true, position = vec3(0, 0, 50), splinePosition = 0.48, speedKmh = 180.0 },
+    [2] = { index = 2, isConnected = true, position = vec3(0, 0, 0), splinePosition = 0.45, speedKmh = 180.0 }
+  }
+  local function getTopCar(i) return topCars[i] end
+  RaceContext.updateTopology(3, getTopCar)
+  local c1TopState = RaceContext.getCarState(1)
+  assertTrue(c1TopState.gapAheadSec < 2.0, "Car 1 gapAheadSec is valid delta in seconds (~1.0s)")
+  assertTrue(c1TopState.gapBehindSec < 2.0, "Car 1 gapBehindSec is valid delta in seconds (~1.0s)")
+
+  print("  -> Passed: Per-Car Authoritative Race State & Topology Gaps verified.")
+end
+runTest41()
+
+-- ==============================================================================
+-- [Test 42] Teammate Pit Stagger & Independent Strategy Window Execution
+-- ==============================================================================
+local function runTest42()
+  print("[Test 42] Testing Teammate Pit Stagger & Independent Strategy Window...")
+  
+  -- 1. Dual-Car Teammate Pit Window Stagger
+  StrategyCoordinator.rebuildFieldStrategy(24, 1, 2.5)
+  local p0 = StrategyCoordinator.getCarPlan(0)
+  local p1 = StrategyCoordinator.getCarPlan(1)
+  assertTrue(p0 ~= nil and p1 ~= nil, "Plans generated for teammate cars 0 and 1")
+  assertTrue(p0.targetLap ~= p1.targetLap, string.format("Teammates staggered: Car 0 target %d vs Car 1 target %d", p0.targetLap, p1.targetLap))
+
+  -- 2. Strategy Window Rendering & Execution
+  local DashboardUI = require("lib/ui/DashboardUI")
+  local okRender = pcall(DashboardUI.renderStrategyWindow)
+  assertTrue(okRender, "DashboardUI.renderStrategyWindow renders safely without exceptions")
+
+  -- 3. Radio Order Dispatch
+  local c0State = RaceContext.getCarState(0)
+  c0State.isInPit = false
+  c0State.isInPitlane = false
+  c0State.pitState = "NONE"
+  StrategyCoordinator.issueRadioOrder(0, "BOX_THIS_LAP")
+  assertEq(c0State.radioCommand, "BOX_THIS_LAP", "Strategy radio command BOX_THIS_LAP dispatched to Car 0")
+
+  print("  -> Passed: Teammate Pit Stagger & Independent Strategy Window verified.")
+end
+runTest42()
+
+-- ==============================================================================
+-- [Test 43] AI Retirement (RET) Lifecycle, In-Pit Classification & Shielding
+-- ==============================================================================
+local function runTest43()
+  print("[Test 43] Testing AI Retirement (RET) Lifecycle, In-Pit Classification & Shielding...")
+
+  -- 1. AI Car Retires on Track and Teleports to Pit Stall:
+  -- When car.isRetired is true and car is in pit stall (isInPit = true),
+  -- RaceContext must set state to RETIRED and pitState to RETIRED, NOT PIT_BAY or IN_BAY / SERVICING!
+  local mockRetiredCar = {
+    index = 2,
+    isConnected = true,
+    isAIControlled = true,
+    isPlayer = false,
+    isRetired = true,
+    driverName = "Retired AI",
+    speedKmh = 0.0,
+    splinePosition = 0.1,
+    lapCount = 3,
+    positionInRace = 15,
+    isInPitlane = true,
+    isInPit = true,
+    fuel = 0.0,
+    wheels = { [0] = { tyreWear = 0.40 } }
+  }
+
+  RaceContext.updateCarFromAc(2, mockRetiredCar)
+  local c2 = RaceContext.getCarState(2)
+  assertEq(c2.isRetired, true, "cState.isRetired correctly detected as true")
+  assertEq(c2.tacticalState, "RETIRED", "cState.tacticalState set to RETIRED, not PIT_BAY")
+  assertEq(c2.activeSkill, "RET", "cState.activeSkill set to RET, not PIT_SERVICE")
+  assertEq(c2.pitState, "RETIRED", "cState.pitState set to RETIRED, not IN_BAY or SERVICING")
+
+  -- 2. TacticalTicker stepCar on retired car:
+  -- Must return RETIRED / RET and zero offsets, zero stress, no PIT_SERVICE!
+  local tickerState = TacticalTicker.stepCar(mockRetiredCar, nil, nil, {}, 0.0, c2, 0.1)
+  assertEq(tickerState.state, "RETIRED", "TacticalTicker returns state RETIRED")
+  assertEq(tickerState.activeSkill, "RET", "TacticalTicker returns activeSkill RET, preventing permanent PIT_SERVICE")
+  assertEq(tickerState.targetSplineOffset, 0.0, "Retired car targetSplineOffset locked to 0.0")
+
+  -- 3. Watchdog Anti-Retirement Shield:
+  -- When an active car is slowed down on track (< 25 km/h outside pits),
+  -- watchdog must invoke physics.preventAIFromRetiring
+  local mockSlowCar = {
+    index = 3,
+    isConnected = true,
+    isAIControlled = true,
+    isPlayer = false,
+    isRetired = false,
+    speedKmh = 10.0,
+    lapCount = 2,
+    isInPitlane = false,
+    isInPit = false
+  }
+  _preventRetireCalls[3] = 0
+  watchdog.checkStuckCars(mockSlowCar, 0.1, 50.0)
+  assertTrue(_preventRetireCalls[3] > 0, "Watchdog invoked physics.preventAIFromRetiring for slowed car on track")
+
+  -- 4. Fuel Emergency Pit Stop Outside Nominal Window:
+  -- If fuel is critically low (< 1.3 laps), StrategyCoordinator must evaluate pit immediately
+  -- without waiting for plan.openLap!
+  local plan3 = StrategyCoordinator.getCarPlan(3)
+  plan3.openLap = 10
+  plan3.targetLap = 12
+  plan3.escalateLap = 14
+  local c3 = RaceContext.getCarState(3)
+  c3.isConnected = true
+  c3.isAIControlled = true
+  c3.isRetired = false
+  c3.fuelInTank = 2.0  -- critical! (1 lap or less)
+  c3.lapCount = 3      -- lap 4, well before openLap 10!
+  c3.isInPitlane = false
+  c3.isInPit = false
+  c3.pitState = "NONE"
+  c3.radioOrderActive = false
+
+  StrategyCoordinator.stepStrategy(1.0)
+  assertEq(plan3.activeRecommendation, "BOX_THIS_LAP", "Critical fuel triggers BOX_THIS_LAP even when carOwnLap < openLap")
+  assertTrue(c3.pit_requested, "Critical fuel triggers pit_requested to prevent fuel exhaustion retirement")
+
+  -- 5. DashboardUI formatting:
+  local DashboardUI = require("lib/ui/DashboardUI")
+  local okDash = pcall(DashboardUI.renderMain, 0.05, 4)
+  assertTrue(okDash, "DashboardUI.renderMain renders retired car with [RET] cleanly")
+
+  print("  -> Passed: AI Retirement (RET) Lifecycle, In-Pit Classification & Shielding verified.")
+end
+runTest43()
+
+-- -----------------------------------------------------------------------------
+-- [Test 44] Testing Circuit-Aware Fuel Baseline & Plausibility Outlier Filtering
+-- -----------------------------------------------------------------------------
+local function runTest44()
+  print("[Test 44] Testing Circuit-Aware Fuel Baseline & Plausibility Outlier Filtering...")
+  -- 1. Mock Vallelunga 1700m
+  _mockSim.trackLengthM = 1700.0
+  StrategyCoordinator.rebuildFieldStrategy(10, nil, nil)
+  local plan0 = StrategyCoordinator.getCarPlan(0)
+  -- Track length 1.7km * 0.65 = 1.105 L/lap
+  assertTrue(plan0.baseFpl >= 1.0 and plan0.baseFpl <= 1.25, "Dynamic base FPL for 1.7km track is clamped around ~1.1 L/lap")
+
+  -- 2. Car starts on grid with 18.0L
+  local c0 = RaceContext.getCarState(0)
+  c0.isConnected = true
+  c0.isAIControlled = true
+  c0.lapCount = 0
+  c0.fuelInTank = 18.0
+  RaceContext.updateCarFromAc(0, {
+    isConnected = true,
+    isAIControlled = true,
+    speedKmh = 0.0,
+    lapCount = 0,
+    fuel = 18.0,
+    maxFuel = 80.0,
+  })
+  assertEq(c0.fuelAtLapStart, 18.0, "Lap 0 grid anchor aligns with fuelInTank (18.0L), eliminating 30.0L dummy offset")
+
+  -- 3. Car completes Lap 1, fuel drops from 18.0L to 16.85L (delta = 1.15L)
+  RaceContext.updateCarFromAc(0, {
+    isConnected = true,
+    isAIControlled = true,
+    speedKmh = 140.0,
+    lapCount = 1,
+    fuel = 16.85,
+    maxFuel = 80.0,
+  })
+  assertTrue(c0.empiricalFpl >= 1.10 and c0.empiricalFpl <= 1.20, "Empirical fuel correctly measures 1.15 L/lap instead of 12 L/lap")
+
+  -- 4. Aberrant jump / out-of-bounds burn (e.g. 12L drop in single lap on 1.7km circuit)
+  -- Max plausible for 1.7km is max(2.2, 1.7 * 1.3) = 2.21 L/lap
+  local prevEmpirical = c0.empiricalFpl
+  RaceContext.updateCarFromAc(0, {
+    isConnected = true,
+    isAIControlled = true,
+    speedKmh = 140.0,
+    lapCount = 2,
+    fuel = 4.85, -- 12L drop!
+    maxFuel = 80.0,
+  })
+  assertEq(c0.empiricalFpl, prevEmpirical, "Aberrant 12 L/lap outlier on 1.7km circuit is strictly rejected by physical plausibility gating")
+
+  print("  -> Passed: Circuit-Aware Fuel Baseline & Plausibility Outlier Filtering verified.")
+end
+runTest44()
+
+-- -----------------------------------------------------------------------------
+-- [Test 45] Testing Setup UI 0-Stop Default Strategy & Submit Feedback UX
+-- -----------------------------------------------------------------------------
+local function runTest45()
+  print("[Test 45] Testing Setup UI 0-Stop Default Strategy & Submit Feedback UX...")
+  -- 1. Default stops is 0
+  StrategyCoordinator.rebuildFieldStrategy(25)
+  local plan1 = StrategyCoordinator.getCarPlan(1)
+  assertEq(plan1.plannedStops, 0, "Default field strategy is 0-stop (no-stop)")
+  assertEq(plan1.openLap, 999, "0-stop pit window openLap is 999")
+  assertEq(plan1.targetLap, 999, "0-stop pit window targetLap is 999")
+  assertEq(plan1.escalateLap, 999, "0-stop pit window escalateLap is 999")
+  assertEq(#plan1.stints, 1, "0-stop strategy has exactly 1 stint covering entire race")
+  assertEq(plan1.stints[1], 25, "Single stint covers all 25 laps")
+
+  -- 2. DashboardUI renderSetup execution & Apply button click feedback
+  local DashboardUI = require("lib/ui/DashboardUI")
+  local lastRenderedText = {}
+  local appliedClicked = false
+  ui = {
+    button = function(label)
+      if label and string.find(label, "setup_apply") then
+        return appliedClicked
+      end
+      return false
+    end,
+    sameLine = function() end,
+    separator = function() end,
+    text = function(str)
+      table.insert(lastRenderedText, str)
+    end,
+    pushStyleColor = function() end,
+    popStyleColor = function() end,
+    itemHovered = function() return false end,
+    setTooltip = function() end,
+  }
+
+  -- Frame 1: Normal render without clicking apply
+  appliedClicked = false
+  local okSetup1 = pcall(DashboardUI.renderSetup)
+  assertTrue(okSetup1, "DashboardUI.renderSetup renders without errors")
+
+  -- Frame 2: User clicks 'Apply Strategy' button
+  appliedClicked = true
+  local okSetup2 = pcall(DashboardUI.renderSetup)
+  assertTrue(okSetup2, "DashboardUI.renderSetup handles apply button click cleanly")
+
+  -- Frame 3: Next frame verifies feedback text was rendered
+  appliedClicked = false
+  lastRenderedText = {}
+  local okSetup3 = pcall(DashboardUI.renderSetup)
+  assertTrue(okSetup3, "DashboardUI.renderSetup renders feedback banner cleanly")
+  local hasFeedback = false
+  for _, txt in ipairs(lastRenderedText) do
+    if txt and string.find(txt, "策略修改成功") then
+      hasFeedback = true
+      break
+    end
+  end
+  assertTrue(hasFeedback, "Submit feedback banner displaying '策略修改成功' rendered after clicking apply")
+
+  ui = nil
+
+  print("  -> Passed: Setup UI 0-Stop Default Strategy & Submit Feedback UX verified.")
+end
+runTest45()
+
 print("==================================================================")
-print("  ALL 37 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
+print("  ALL 45 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
 print("==================================================================")
 

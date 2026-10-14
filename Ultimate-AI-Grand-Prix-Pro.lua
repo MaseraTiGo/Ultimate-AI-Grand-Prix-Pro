@@ -1,5 +1,5 @@
 --[[
-  Ultimate AI Grand Prix Pro.lua
+  Ultimate-AI-Grand-Prix-Pro.lua
   Main App Entry Point for Assetto Corsa Custom Shaders Patch
   
   Responsibilities:
@@ -29,6 +29,7 @@ local DashboardUI = require("lib/ui/DashboardUI")
 
 local _initialized = false
 local _initAttempted = false
+local _inUpdate = false
 local _tacticalTimer = 0.0
 local _strategyTimer = 0.0
 local _flushTimer = 0.0
@@ -91,7 +92,7 @@ function script.init()
     pcall(RaceContext.updateFromSim, sim)
     local rState = RaceContext.getRaceState()
     local laps = (rState and rState.totalLaps and rState.totalLaps > 0) and rState.totalLaps or 13
-    pcall(StrategyCoordinator.rebuildFieldStrategy, laps, 1, 2.5)
+    pcall(StrategyCoordinator.rebuildFieldStrategy, laps, 0, nil)
   end
 
   _initialized = true
@@ -107,13 +108,15 @@ end
 
 --- Frame Update & Decoupled Tactical / Strategy Pipeline
 function script.update(dt)
-  if not _initialized then return end
+  if not _initialized or _inUpdate then return end
+  local safeDt = math.max(0.0, math.min(0.1, (type(dt) == "number" and dt > 0) and dt or 0.016))
   local sim = ac and ac.getSim and ac.getSim()
   if not sim or RaceContext.safeSimGet(sim, "isReplayActive") then return end
 
-  _tacticalTimer = _tacticalTimer + dt
-  _strategyTimer = _strategyTimer + dt
-  _flushTimer = _flushTimer + dt
+  _inUpdate = true
+  _tacticalTimer = _tacticalTimer + safeDt
+  _strategyTimer = _strategyTimer + safeDt
+  _flushTimer = _flushTimer + safeDt
 
   -- 1. Periodic flush of rivalry incidents (every 5 seconds)
   if _flushTimer >= 5.0 then
@@ -161,12 +164,12 @@ function script.update(dt)
         local cState = RaceContext.getCarState(i)
         cState.driverName = getCarDriverName(i)
       end
-      local isCarAI = (c ~= nil) and ((c.isAIControlled == true) or (i > 0 and not c.isPlayer))
+      local cState = RaceContext.getCarState(i)
+      local isCarRetired = cState.isRetired or (c ~= nil and (c.isRetired == true))
+      local isCarAI = (c ~= nil) and not isCarRetired and ((c.isAIControlled == true) or (i > 0 and not c.isPlayer))
       if isCarAI then
         _activeAiCount = _activeAiCount + 1
-        local cState = RaceContext.getCarState(i)
         cState.isAIControlled = true
-
 
         -- Cold tyre warmup progression on out-lap
         if cState.tyreWarmupProgress and cState.tyreWarmupProgress < 1.0 then
@@ -176,27 +179,28 @@ function script.update(dt)
         -- Anti-stuck watchdog (gated during race start / grid formation)
         watchdog.checkStuckCars(c, tacticalDt, raceState.sessionTime)
 
-        -- Spatial LOD scheduling check
-        local shouldTick, tier = LODScheduler.shouldTickCar(i)
-        local persona = personaLoader.getPersonaForCar(i, cState.driverName)
-
-        -- Standing start launch simulation (reaction delays and start blunder states recorded without locking physical throttle)
-        if raceState.sessionTime and raceState.sessionTime < 10.0 then
-          MistakeEngine.evaluateStandingStart(i, persona, raceState.sessionTime)
-          MistakeEngine.stepStandingStart(i, tacticalDt)
+        -- Collision detection & event wakeup trigger (runs for all active AI so sleeping cars awaken on impact)
+        if playerCar and c.collisionDepth and c.collisionDepth > 0.02 and playerCar.position and c.position then
+          local dx = c.position.x - playerCar.position.x
+          local dy = c.position.y - playerCar.position.y
+          local dz = c.position.z - playerCar.position.z
+          local dPlayerSq = dx * dx + dy * dy + dz * dz
+          if dPlayerSq < 16.0 then
+            rivalryMemory.recordContact(cState.driverName, playerDriverName, 1.5, cState.currentLap or 1)
+            LODScheduler.triggerWakeInterrupt(i)
+          end
         end
 
+        -- Spatial LOD scheduling check
+        local shouldTick, tier = LODScheduler.shouldTickCar(i)
+
         if shouldTick then
-          -- Collision detection & event wakeup trigger
-          if playerCar and c.collisionDepth and c.collisionDepth > 0.02 and playerCar.position and c.position then
-            local dx = c.position.x - playerCar.position.x
-            local dy = c.position.y - playerCar.position.y
-            local dz = c.position.z - playerCar.position.z
-            local dPlayerSq = dx * dx + dy * dy + dz * dz
-            if dPlayerSq < 16.0 then
-              rivalryMemory.recordContact(cState.driverName, playerDriverName, 1.5, raceState.currentLap or 1)
-              LODScheduler.triggerWakeInterrupt(i)
-            end
+          local persona = personaLoader.getPersonaForCar(i, cState.driverName)
+
+          -- Standing start launch simulation (reaction delays and start blunder states recorded without locking physical throttle)
+          if raceState.sessionTime and raceState.sessionTime < 10.0 then
+            MistakeEngine.evaluateStandingStart(i, persona, raceState.sessionTime)
+            MistakeEngine.stepStandingStart(i, tacticalDt)
           end
 
           local rivalryGrievance = rivalryMemory.getGrievance(cState.driverName)
@@ -213,10 +217,11 @@ function script.update(dt)
             behindCar = safeGetCar(behindIdx)
           end
 
-          -- Build Race Context
+          -- Build Race Context using authoritative per-car lap
+          local carOwnLap = cState.currentLap or ((c.lapCount or 0) + 1)
           local raceCtx = {
-            isLastLap = (raceState.totalLaps and raceState.totalLaps > 0 and (raceState.currentLap or 0) >= raceState.totalLaps),
-            currentLap = raceState.currentLap or 1,
+            isLastLap = (raceState.totalLaps and raceState.totalLaps > 0 and carOwnLap >= raceState.totalLaps),
+            currentLap = carOwnLap,
             tyreWear = cState.tyreWear,
             isBlueFlagged = false,
             radioCommand = cState.radioCommand,
@@ -272,6 +277,7 @@ function script.update(dt)
 
     _perfMs = (os.clock() - t0) * 1000.0
   end
+  _inUpdate = false
 end
 
 local function ensureInitialized()
@@ -290,20 +296,8 @@ local function ensureInitialized()
   return _initialized
 end
 
-local _lastWindowTick = 0.0
-
 function windowMain(dt)
   ensureInitialized()
-  local now = os.clock()
-  local stepDt = (dt and dt > 0) and dt or ((_lastWindowTick > 0) and (now - _lastWindowTick) or 0.016)
-  _lastWindowTick = now
-  if stepDt > 0.1 then stepDt = 0.1 end
-
-  -- Self-driving pump: guarantees update loops step even if CSP lazily throttles script.update
-  if script.update then
-    pcall(script.update, stepDt)
-  end
-
   local ok, err = pcall(DashboardUI.renderMain, _perfMs, _activeAiCount)
   if not ok then
     if ui and ui.text then
@@ -314,15 +308,6 @@ end
 
 function windowSetup(dt)
   ensureInitialized()
-  local now = os.clock()
-  local stepDt = (dt and dt > 0) and dt or ((_lastWindowTick > 0) and (now - _lastWindowTick) or 0.016)
-  _lastWindowTick = now
-  if stepDt > 0.1 then stepDt = 0.1 end
-
-  if script.update then
-    pcall(script.update, stepDt)
-  end
-
   local ok, err = pcall(DashboardUI.renderSetup)
   if not ok and ui and ui.text then
     ui.text("Setup UI Error: " .. tostring(err))
@@ -337,8 +322,17 @@ function windowSettings(dt)
   end
 end
 
+function windowStrategy(dt)
+  ensureInitialized()
+  local ok, err = pcall(DashboardUI.renderStrategyWindow)
+  if not ok and ui and ui.text then
+    ui.text("Strategy UI Error: " .. tostring(err))
+  end
+end
+
 script.windowMain = windowMain
 script.windowSetup = windowSetup
 script.windowSettings = windowSettings
+script.windowStrategy = windowStrategy
 
 

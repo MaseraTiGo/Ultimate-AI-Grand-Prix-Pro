@@ -275,6 +275,33 @@ function M.emitOvertake(overtakerIdx, driverName, newPos, sessionSec)
   M.pushAiEvent(overtakerIdx, "OVERTAKE", msg, "OUTCOME", now)
 end
 
+--- Emit defensive hold success event
+function M.emitDefenseSuccess(defenderIdx, defenderName, attackerIdx, attackerName, sessionSec)
+  local now = sessionSec or os.clock()
+  local dLabel = M.formatDriverLabel(defenderIdx, defenderName)
+  local aLabel = M.formatDriverLabel(attackerIdx, attackerName)
+  local msg = string.format("【防守成功】%s 完美卡住内线防守走廊，成功瓦解来自 %s 的极限施压！", dLabel, aLabel)
+  M.pushAiEvent(defenderIdx, "DEFENSE", msg, "OUTCOME", now)
+end
+
+--- Emit structured racecraft maneuver outcome
+function M.emitManeuverOutcome(carIdx, driverName, outcomeType, targetIdx, detail, sessionSec)
+  local now = sessionSec or os.clock()
+  local dLabel = M.formatDriverLabel(carIdx, driverName)
+  local tLabel = targetIdx and M.formatDriverLabel(targetIdx, nil) or ""
+  local msg = nil
+  if outcomeType == "ATTACK_ABORTED" then
+    msg = string.format("【攻势放弃】%s 评估入弯抓地力不足，主动放弃对前车 %s 的晚刹车突击。", dLabel, tLabel)
+  elseif outcomeType == "DEFENSE_HOLD" then
+    msg = string.format("【防守稳固】%s 坚决执行防守走线，将后车 %s 牢牢压制在脏空气区。", dLabel, tLabel)
+  elseif outcomeType == "CONTACT_AVOIDED" then
+    msg = string.format("【避险成功】%s 迅速修正走线，成功规避与 %s 的潜在并排挤压碰撞。", dLabel, tLabel)
+  end
+  if msg then
+    M.pushAiEvent(carIdx, "RACECRAFT", msg, "OUTCOME", now)
+  end
+end
+
 --- Emit tyre degradation cliff alert
 function M.emitTyreCliffAlert(carIdx, driverName, wearPct, sessionSec)
   local now = sessionSec or os.clock()

@@ -422,7 +422,7 @@ function M.dispatchThrottleLimit(carIdx, throttleLimit, throttleDesc, car, drive
 
   local lastVal = _lastThrottleStates[cIdx]
   -- Only log discrete transitions for throttle limit
-  local isTransition = (lastVal == nil) or (math.abs(lastVal - throttleLimit) > 0.5)
+  local isTransition = (lastVal == nil) or (math.abs(lastVal - throttleLimit) > 0.08)
   _lastThrottleStates[cIdx] = throttleLimit
 
   local ok, err = pcall(physics.setAIThrottleLimit, cIdx, throttleLimit)
@@ -432,8 +432,10 @@ function M.dispatchThrottleLimit(carIdx, throttleLimit, throttleDesc, car, drive
   end
 
   if isTransition then
-    if throttleLimit <= 0.05 then
-      M.logAction(cIdx, "Throttle Management", throttleDesc or "Engaged Lift and Coast into braking zone (Saving fuel & tyres)", car, driverName, true)
+    if throttleLimit <= 0.30 then
+      M.logAction(cIdx, "Throttle Management", throttleDesc or "Engaged Lift & Coast (Saving fuel & tyres)", car, driverName, true)
+    elseif throttleLimit <= 0.90 then
+      M.logAction(cIdx, "Throttle Management", throttleDesc or string.format("Fuel saving cruise (%.0f%% throttle limit)", throttleLimit * 100), car, driverName, true)
     elseif throttleLimit >= 0.95 then
       M.logAction(cIdx, "Throttle Management", throttleDesc or "Restored 100% full throttle delivery", car, driverName, true)
     end

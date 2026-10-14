@@ -14,7 +14,7 @@ and idempotent code modifications.
 ## Features
 - Validates unified diffs and replacement chunks before applying.
 - Checks file integrity, syntax validity, and whitespace consistency.
-- Enforces dual-entry file synchronization (e.g. `Ultimate AI Grand Prix Pro.lua` and `Ultimate-AI-Grand-Prix-Pro.lua`).
+- Enforces single-entry file integrity (`Ultimate-AI-Grand-Prix-Pro.lua`).
 
 ## How to Run
 Run patch validation:

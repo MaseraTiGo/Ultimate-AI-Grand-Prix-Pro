@@ -8,26 +8,26 @@ import os
 import subprocess
 import sys
 
-def check_dual_file_sync():
-    f1 = "Ultimate AI Grand Prix Pro.lua"
-    f2 = "Ultimate-AI-Grand-Prix-Pro.lua"
+def check_single_file_entry():
+    f_main = "Ultimate-AI-Grand-Prix-Pro.lua"
     
-    if not os.path.exists(f1) or not os.path.exists(f2):
-        print(f"[FAIL] Missing main files: {f1} or {f2}")
+    if not os.path.exists(f_main):
+        print(f"[FAIL] Missing main entry file: {f_main}")
         return False
         
-    b1 = open(f1, "rb").read()
-    b2 = open(f2, "rb").read()
-    
-    if b1 != b2:
-        print(f"[FAIL] Byte mismatch between '{f1}' and '{f2}'. Lengths: {len(b1)} vs {len(b2)}")
+    root_lua = [f for f in os.listdir(".") if f.endswith(".lua")]
+    if root_lua != [f_main]:
+        extra = [f for f in root_lua if f != f_main]
+        print(f"[FAIL] Only single entry file '{f_main}' allowed in root. Found extra: {extra}")
         return False
-    print(f"[PASS] Dual main files are 100% byte-identical ({len(b1)} bytes).")
+        
+    size = os.path.getsize(f_main)
+    print(f"[PASS] Single authoritative entry file '{f_main}' verified ({size} bytes).")
     return True
 
 def run_tests():
     cmd = [
-        "python", "-c",
+        sys.executable, "-c",
         "import lupa; from lupa import LuaRuntime; lua = LuaRuntime(unpack_returned_tuples=True); lua.execute(open('tests/test_grand_prix_pro.lua', 'r', encoding='utf-8').read())"
     ]
     try:
@@ -46,9 +46,9 @@ def main():
     print("=" * 60)
     print("  PATCH-EDITOR INTEGRITY VALIDATOR")
     print("=" * 60)
-    ok_sync = check_dual_file_sync()
+    ok_entry = check_single_file_entry()
     ok_test = run_tests()
-    if ok_sync and ok_test:
+    if ok_entry and ok_test:
         print("[SUCCESS] All patch verification gates passed.")
         sys.exit(0)
     else:

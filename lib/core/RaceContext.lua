@@ -21,13 +21,21 @@ M.FLAG_VSC    = "VSC"
 M.FLAG_RED    = "RED"
 
 -- Formal Pit State Machine Enums
-M.PIT_STATE_NONE       = "NONE"
-M.PIT_STATE_REQUESTED  = "REQUESTED"
-M.PIT_STATE_IN_PITLANE = "IN_PITLANE"
-M.PIT_STATE_IN_BAY     = "IN_BAY"
-M.PIT_STATE_SERVICING  = "SERVICING"
-M.PIT_STATE_RELEASED   = "RELEASED"
-M.PIT_STATE_COMPLETED  = "COMPLETED"
+M.PIT_STATE_NONE         = "NONE"
+M.PIT_STATE_AUTO_PLANNED = "AUTO_PLANNED"
+M.PIT_STATE_CONFIGURED   = "CONFIGURED"
+M.PIT_STATE_CONFIRMED    = "CONFIRMED"
+M.PIT_STATE_REQUESTED    = "REQUESTED"
+M.PIT_STATE_APPROACHING  = "APPROACHING"
+M.PIT_STATE_IN_PITLANE   = "IN_PITLANE"
+M.PIT_STATE_IN_BAY       = "IN_BAY"
+M.PIT_STATE_STATIONARY   = "STATIONARY"
+M.PIT_STATE_SERVICING    = "SERVICING"
+M.PIT_STATE_VERIFIED     = "VERIFIED"
+M.PIT_STATE_RELEASED     = "RELEASED"
+M.PIT_STATE_COMPLETED    = "COMPLETED"
+M.PIT_STATE_FAILED       = "FAILED"
+M.PIT_STATE_RETIRED      = "RETIRED"
 
 local _raceState = {
   sessionType = "RACE",
@@ -60,14 +68,27 @@ for i = 0, MAX_CARS - 1 do
     speedKmh = 0.0,
     splinePos = 0.0,
     lapCount = 0,
+    currentLap = 1,
+    raceProgress = 0.0,
+    gapAheadSec = 999.0,
+    gapBehindSec = 999.0,
     positionInRace = i + 1,
     prevPositionInRace = i + 1,
     tyreCliffAlertSent = false,
     lastMechAlertTime = 0.0,
     isInPitlane = false,
     isInPit = false,
+    isRetired = false,
     pitState = M.PIT_STATE_NONE,
     
+    -- Telemetry Metadata & Confidence Tracking
+    telemetryConfidence = {
+      fuel = "DYNAMIC_ESTIMATE",
+      tyre = "MODEL",
+      lap = "EXACT",
+      gap = "CALCULATED"
+    },
+
     -- Fuel & Tyres
     fuelInTank = 30.0,
     maxFuelCapacity = 100.0,
@@ -94,7 +115,7 @@ for i = 0, MAX_CARS - 1 do
 
     -- Empirical Fuel Tracking (EMA)
     empiricalFpl = nil,
-    fuelAtLapStart = 30.0,
+    fuelAtLapStart = nil,
     lastTrackedLap = 0,
 
     -- Dynamic Pit Stop Work Order
@@ -103,7 +124,12 @@ for i = 0, MAX_CARS - 1 do
       targetCompoundIndex = 0,
       targetCompoundName = "Default",
       refuelLiters = 0.0,
+      isExplicit = false,
+      source = "NONE",
       isConfirmed = false,
+      serviced = false,
+      status = "NONE",
+      isExecuting = false,
     },
 
     -- Dynamic Racecraft & Strategy Integration
@@ -117,11 +143,11 @@ for i = 0, MAX_CARS - 1 do
     isBreakingTow = false,
     
     -- Pit Strategy & Authority
-    plannedStops = 1,
+    plannedStops = 0,
     currentStint = 1,
-    targetPitLap = 15,
-    openPitLap = 13,
-    escalatePitLap = 18,
+    targetPitLap = 999,
+    openPitLap = 999,
+    escalatePitLap = 999,
     actualStopsCount = 0,
     lastPitLap = -1,
     radioCommand = "NONE",     -- "NONE", "PUSH", "SAVE", "BOX_THIS_LAP", "DEFEND"
@@ -337,6 +363,10 @@ function M.updateCarFromAc(carIndex, c)
   s.speedKmh = safeCarGet(c, "speedKmh") or 0.0
   s.splinePos = safeCarGet(c, "splinePosition") or 0.0
   s.lapCount = safeCarGet(c, "lapCount") or 0
+  s.currentLap = (s.lapCount or 0) + 1
+  local totalLaps = _raceState.totalLaps or 13
+  s.raceProgress = ((s.lapCount or 0) + (s.splinePos or 0.0)) / math.max(1, totalLaps)
+
   local prevPos = s.positionInRace
   local newPos = safeCarGet(c, "racePosition") or (carIndex + 1)
   s.positionInRace = newPos
@@ -344,10 +374,23 @@ function M.updateCarFromAc(carIndex, c)
   local fuelVal = safeCarGet(c, "fuel")
   if fuelVal and type(fuelVal) == "number" then
     s.fuelInTank = fuelVal
+    if not s.fuelAtLapStart then
+      s.fuelAtLapStart = fuelVal
+    end
+  end
+  if (s.lapCount or 0) == 0 and s.fuelInTank then
+    s.fuelAtLapStart = s.fuelInTank
+    s.lastTrackedLap = 0
   end
   local maxFuel = safeCarGet(c, "maxFuel")
   if maxFuel and type(maxFuel) == "number" and maxFuel > 0 then
     s.maxFuelCapacity = maxFuel
+  end
+
+  if s.telemetryConfidence then
+    s.telemetryConfidence.fuel = (s.empiricalFpl ~= nil) and "EMA_MEASURED" or "DYNAMIC_ESTIMATE"
+    s.telemetryConfidence.tyre = (s.wheelWear and s.wheelWear[1] ~= nil) and "DIRECT_TELEMETRY" or "ESTIMATE"
+    s.telemetryConfidence.lap = "EXACT"
   end
 
   local EventHub = package.loaded["lib/core/EventHub"]
@@ -359,16 +402,50 @@ function M.updateCarFromAc(carIndex, c)
     end
   end
 
+  local wasRetired = s.isRetired
+  local isNowRetired = (safeCarGet(c, "isRetired") == true)
+  s.isRetired = isNowRetired
+
+  local curLap = _raceState.currentLap or 1
+  local totalLaps = _raceState.totalLaps or 13
+  local lapPrefix = (EventHub and EventHub.formatLapStr) and EventHub.formatLapStr(curLap, totalLaps) or string.format("第%d/%d圈", curLap, totalLaps)
+
+  -- Terminal Retirement Gate:
+  -- When an AI car retires (RET), AC engine immediately despawns it to its pit stall.
+  -- Gating here prevents misclassifying retired cars as active pit stop servicings.
+  if isNowRetired then
+    s.tacticalState = "RETIRED"
+    s.activeSkill = "RET"
+    s.pitState = M.PIT_STATE_RETIRED
+    s.pit_requested = false
+    s.pit_stop_planned = false
+    s.radioCommand = "NONE"
+    s.radioOrderActive = false
+
+    if not wasRetired then
+      local dLabel = EventHub and EventHub.formatDriverLabel(carIndex, s.driverName) or string.format("Car #%02d", carIndex + 1)
+      if EventHub then
+        local retMsg = string.format("[%s] %s 赛车退赛 (RET)", lapPrefix, dLabel)
+        EventHub.pushAiEvent(carIndex, "RETIRED", retMsg, "RACE", _raceState.sessionTime)
+        EventHub.settleCarPitCommands(carIndex, dLabel)
+      end
+      if StrategyCoordinator and StrategyCoordinator.getCarPlan then
+        local plan = StrategyCoordinator.getCarPlan(carIndex)
+        if plan then
+          plan.activeRecommendation = "NONE"
+          plan.reason = "Driver Retired (RET)"
+        end
+      end
+    end
+    return
+  end
+
   local wasInPitlane = s.isInPitlane
   local wasInPit = s.isInPit
   s.isInPitlane = safeCarGet(c, "isInPitlane") == true
   s.isInPit = safeCarGet(c, "isInPit") == true
   local isNowInPit = s.isInPitlane or s.isInPit
   local wasInAnyPit = wasInPitlane or wasInPit
-
-  local curLap = _raceState.currentLap or 1
-  local totalLaps = _raceState.totalLaps or 13
-  local lapPrefix = (EventHub and EventHub.formatLapStr) and EventHub.formatLapStr(curLap, totalLaps) or string.format("第%d/%d圈", curLap, totalLaps)
 
   -- Edge 1: Vehicle entering pitlane / pit bay
   if not wasInAnyPit and isNowInPit then
@@ -423,28 +500,59 @@ function M.updateCarFromAc(carIndex, c)
     end
 
     -- Sub-state machine for pit lane vs pit stall
-    local isHaltedInBay = (s.isInPit or s.pitState == M.PIT_STATE_IN_BAY or s.isInPitlane) and (s.speedKmh < 1.0)
-    if isHaltedInBay then
-      -- Stationary in pit stall: check and execute work order (strictly one-shot idempotent)
+    local isInBay = (s.isInPit == true or s.pitState == M.PIT_STATE_IN_BAY or s.pitState == M.PIT_STATE_SERVICING or s.pitState == M.PIT_STATE_STATIONARY or s.pitState == M.PIT_STATE_VERIFIED)
+    local isStationaryInBay = isInBay and (s.speedKmh < 1.0)
+    local isDrivingInPitLane = s.isInPitlane and not isInBay
+
+    if isDrivingInPitLane then
+      -- Cruising or queueing in pitlane: strictly do NOT trigger pit box servicing
+      if s.pitState ~= M.PIT_STATE_RELEASED and s.pitState ~= M.PIT_STATE_VERIFIED then
+        s.pitState = M.PIT_STATE_IN_PITLANE
+      end
+    elseif isStationaryInBay then
       local wo = s.pendingWorkOrder
-      if wo and (wo.isConfirmed or wo.status == "CONFIRMED") and not wo.serviced then
+      local shouldService = wo and not wo.serviced and (
+        wo.isConfirmed or wo.status == "CONFIRMED" or wo.isExplicit or (s.isAIControlled and not s.radioOrderActive)
+      )
+      if shouldService then
         s.pitState = M.PIT_STATE_SERVICING
         wo.serviced = true
-        wo.status = "SERVICED"
+        wo.status = "VERIFIED"
         wo.isConfirmed = false
         wo.isExecuting = false
         if s.workOrder then s.workOrder.isConfirmed = false end
 
-        -- 1. One-shot fuel delivery
-        if wo.refuelLiters and wo.refuelLiters > 0 then
-          local currentFuel = s.fuelInTank or safeCarGet(c, "fuel") or 0.0
-          local targetFuel = math.min(s.maxFuelCapacity, currentFuel + wo.refuelLiters)
+        -- 1. Fuel delivery: distinguish explicit work order vs autonomous AI strategy
+        local currentFuel = s.fuelInTank or safeCarGet(c, "fuel") or 0.0
+        local targetFuel = currentFuel
+        local addedLiters = 0.0
+
+        if wo.isExplicit or wo.isConfirmed then
+          -- Explicit user or pit-wall order
+          if wo.refuelLiters and wo.refuelLiters > 0 then
+            addedLiters = wo.refuelLiters
+            targetFuel = math.min(s.maxFuelCapacity, currentFuel + addedLiters)
+          elseif wo.refuelLiters == 0.0 then
+            -- Explicit 0L refuel (pure tyre change, modern F1 style)
+            addedLiters = 0.0
+            targetFuel = currentFuel
+          end
+        else
+          -- Autonomous AI pit stop workflow
+          local dynFpl = s.fuelPerLap or (s.empiricalFpl or 2.5)
+          local remLaps = math.max(3, (_raceState.totalLaps or 13) - (s.currentLap or 1))
+          local neededFuel = math.min(s.maxFuelCapacity, (remLaps * dynFpl) + 2.0)
+          targetFuel = math.max(currentFuel, math.min(s.maxFuelCapacity, neededFuel))
+          addedLiters = targetFuel - currentFuel
+        end
+
+        if targetFuel > currentFuel then
           ControlTelemetry.dispatchCarFuel(carIndex, targetFuel, c, s.driverName)
           s.fuelInTank = targetFuel
         end
 
         -- 2. One-shot tyre compound fitting
-        if wo.changeTyres then
+        if wo.changeTyres ~= false then
           local realIdx = wo.targetCompoundIndex or 0
           if ControlTelemetry and ControlTelemetry.resolveRealCompoundIndex then
             realIdx = ControlTelemetry.resolveRealCompoundIndex(carIndex, wo.targetCompoundIndex or 0, wo.targetCompoundName)
@@ -458,19 +566,21 @@ function M.updateCarFromAc(carIndex, c)
           for wIdx = 1, 4 do s.wheelWear[wIdx] = 1.0 end
         end
 
+        s.pitState = M.PIT_STATE_VERIFIED
+
         -- 3. Emit work order event
         if EventHub then
           local dLabel = EventHub.formatDriverLabel(carIndex, s.driverName)
           local msg = string.format("[%s] %s 进站工单执行完毕: 配方 %s, 补油 %.1fL",
-            lapPrefix, dLabel, wo.targetCompoundName or "默认", wo.refuelLiters or 0.0)
+            lapPrefix, dLabel, wo.targetCompoundName or "默认", addedLiters)
           EventHub.pushCommandEvent("PIT_WORK", msg, "SUCCESS")
         end
       else
-        if s.pitState ~= M.PIT_STATE_SERVICING then
-          s.pitState = M.PIT_STATE_IN_BAY
+        if s.pitState ~= M.PIT_STATE_SERVICING and s.pitState ~= M.PIT_STATE_VERIFIED then
+          s.pitState = M.PIT_STATE_STATIONARY
         end
       end
-    elseif (s.isInPit or s.pitState == M.PIT_STATE_IN_BAY or s.pitState == M.PIT_STATE_SERVICING) and s.speedKmh >= 1.0 then
+    elseif isInBay and s.speedKmh >= 1.0 then
       -- Finished servicing and moving away from stall
       s.pitState = M.PIT_STATE_RELEASED
       if physics and physics.setAIStopCounter then
@@ -480,8 +590,7 @@ function M.updateCarFromAc(carIndex, c)
         physics.setAIThrottleLimit(carIndex, 1.0)
       end
     else
-      -- In pitlane driving (not in pit box)
-      if s.pitState ~= M.PIT_STATE_RELEASED then
+      if s.pitState ~= M.PIT_STATE_RELEASED and s.pitState ~= M.PIT_STATE_VERIFIED then
         s.pitState = M.PIT_STATE_IN_PITLANE
       end
     end
@@ -502,6 +611,7 @@ function M.updateCarFromAc(carIndex, c)
       s.pendingWorkOrder.isExecuting = false
       s.pendingWorkOrder.serviced = false
       s.pendingWorkOrder.status = "NONE"
+      s.pendingWorkOrder.isExplicit = false
     end
 
     -- Guarantee native AC AI is fully released to resume racing
@@ -531,10 +641,24 @@ function M.updateCarFromAc(carIndex, c)
   end
 
   -- Empirical Fuel Tracking (EMA per completed lap)
-  if s.lapCount > (s.lastTrackedLap or 0) then
+  if wasInAnyPit or s.isInPitlane or s.isInPit then
+    -- Pit in-lap, pit box service, or out-lap:
+    -- Reset anchor to post-service tank level and advance tracked lap so pit deltas/refuels
+    -- are completely isolated from clean flying-lap consumption tracking.
+    s.fuelAtLapStart = s.fuelInTank
+    s.lastTrackedLap = s.lapCount
+  elseif s.lapCount > (s.lastTrackedLap or 0) then
     if s.fuelAtLapStart and s.fuelInTank then
       local deltaF = s.fuelAtLapStart - s.fuelInTank
-      if deltaF > 0.1 and deltaF < 20.0 then
+      local sim = ac and ac.getSim and ac.getSim()
+      local trackKm = 4.0
+      if sim and sim.trackLengthM and sim.trackLengthM > 0 then
+        trackKm = sim.trackLengthM / 1000.0
+      end
+      local minPlausibleFpl = math.max(0.35, trackKm * 0.20)
+      local maxPlausibleFpl = math.max(2.2, trackKm * 1.30)
+
+      if deltaF >= minPlausibleFpl and deltaF <= maxPlausibleFpl then
         if s.empiricalFpl == nil then
           s.empiricalFpl = deltaF
         else
@@ -694,6 +818,7 @@ function M.reset()
     s.lapCount = 0
     s.actualStopsCount = 0
     s.lastPitLap = -1
+    s.isRetired = false
     s.pitState = M.PIT_STATE_NONE
     s.stress = 0.0
     s.momentum = 0.0
@@ -707,6 +832,11 @@ function M.reset()
       s.pendingWorkOrder.status = "NONE"
       s.pendingWorkOrder.isExecuting = false
     end
+    s.plannedStops = 0
+    s.targetPitLap = 999
+    s.openPitLap = 999
+    s.escalatePitLap = 999
+    s.fuelAtLapStart = nil
     s.empiricalFpl = nil
     s.lastTrackedLap = 0
     s.tyreCliffAlertSent = false
@@ -797,6 +927,13 @@ function M.updateTopology(carsCount, acGetCar)
       _topoDistAhead[i] = minAheadDist
       _topoBehindIndex[i] = bestBehindIdx
       _topoDistBehind[i] = minBehindDist
+
+      local sState = _carStates[i]
+      if sState then
+        local spdMs = math.max(10.0, (sState.speedKmh or 120.0) / 3.6)
+        sState.gapAheadSec = (bestAheadIdx >= 0 and minAheadDist < 500.0) and (minAheadDist / spdMs) or 999.0
+        sState.gapBehindSec = (bestBehindIdx >= 0 and minBehindDist < 500.0) and (minBehindDist / spdMs) or 999.0
+      end
     end
   end
 end
@@ -996,13 +1133,26 @@ function M.setCarWorkOrder(carIndex, workOrder)
     wo.refuelLiters = math.max(0.0, workOrder.refuelLiters)
     s.workOrder.refuelLiters = math.max(0.0, workOrder.refuelLiters)
     s.workOrder.addFuelLiters = math.max(0.0, workOrder.refuelLiters)
+    wo.isExplicit = true
+    s.workOrder.isExplicit = true
+  end
+  if workOrder.isExplicit ~= nil then
+    wo.isExplicit = workOrder.isExplicit
+    s.workOrder.isExplicit = workOrder.isExplicit
+  end
+  if workOrder.source ~= nil then
+    wo.source = workOrder.source
+    s.workOrder.source = workOrder.source
+  else
+    wo.source = "PLAYER"
+    s.workOrder.source = "PLAYER"
   end
   if workOrder.isConfirmed ~= nil then
     wo.isConfirmed = workOrder.isConfirmed
     s.workOrder.isConfirmed = workOrder.isConfirmed
   end
   wo.serviced = false
-  wo.status = workOrder.isConfirmed and "CONFIRMED" or "PENDING"
+  wo.status = (workOrder.isConfirmed and "CONFIRMED") or (wo.isExplicit and "CONFIGURED") or "PENDING"
   wo.isExecuting = false
 end
 
