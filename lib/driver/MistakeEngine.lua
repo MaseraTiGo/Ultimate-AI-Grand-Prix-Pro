@@ -6,14 +6,23 @@
     1. Multi-axial Micro-Mistakes (Human 80% subtle performance losses vs 20% macro failures):
        - OVERSLOW (入弯迟疑): Braking 5-15m early under intense pressure, entry speed -5~10 km/h.
        - TRAIL_UNDERSTEER (循迹刹车释放过慢): Front axle overloaded, extended understeer push wide.
-       - BRAKE_LOCKUP (入弯抱死): Front tyre flat-spot / smoke puff.
-       - TRACTION_SLIDE (出弯甩尾): Throttle oversteer wiggle.
+       - BRAKE_LOCKUP (入弯抱死): Front tyre flat-spot / smoke puff under high deceleration.
+       - TRACTION_SLIDE (出弯甩尾): Throttle oversteer wiggle on corner exit acceleration.
        - MISSED_APEX (走大走宽): Spline overshoot into marble dust.
     2. Standing Start Blunders (发车格起步失误):
        - Gaussian reaction delay (0.2s - 0.6s).
        - WHEELSPIN (起步过载打滑): Aggressive drivers 8% chance.
        - BOG_DOWN (掉转速顿挫): Conservative drivers 5% chance.
-    3. Flat preallocated data tables, zero dynamic memory allocation.
+    3. Multi-Factorial Anthropomorphic Error Scaling:
+       - Joint evaluation of Driver DNA (mistake_resistance [0..0.96], pressure_handling, error_probability).
+       - Environmental stress (chaser distance, track hotspot danger, rivalry grievance).
+       - Thermal & tyre degradation (cold out-lap warmup, cooked overheated tyres, high tyre wear).
+       - Real-time telemetry gating (high deceleration for lockups, low-to-mid corner exit throttle for traction snaps).
+       - Opening lap / pack protection (lap 0 / speed < 75 km/h strictly suppresses mistakes).
+       - Pitlane silence (zero interference inside pitlane / pit box).
+       - Anti-immunization guarantee: mistake_resistance strictly capped at 0.96 (no driver is 100% immune).
+       - 25s per-car cooldown for physical mistake actuations.
+    4. Flat preallocated data tables, zero dynamic memory allocation.
 ]]
 
 local M = {}
@@ -28,14 +37,18 @@ M.TYPE_START_WHEELSPIN = "START_WHEELSPIN"
 M.TYPE_START_BOGDOWN = "START_BOGDOWN"
 
 local MAX_CARS = 24
-local _startHandled = {} -- [carIdx] = true/false
-local _startDelayTimer = {} -- [carIdx] = delay remaining
-local _startBlunderType = {} -- [carIdx] = type
+local PHYSICAL_COOLDOWN_SEC = 25.0
+
+local _startHandled = {}     -- [carIdx] = true/false
+local _startDelayTimer = {}   -- [carIdx] = delay remaining
+local _startBlunderType = {}  -- [carIdx] = type
+local _mistakeCooldown = {}   -- [carIdx] = seconds remaining before next physical mistake
 
 for i = 0, MAX_CARS - 1 do
   _startHandled[i] = false
   _startDelayTimer[i] = 0.0
   _startBlunderType[i] = M.TYPE_NONE
+  _mistakeCooldown[i] = 0.0
 end
 
 --- Box-Muller transform for lightweight pseudo-Gaussian random numbers without tables
@@ -95,54 +108,185 @@ function M.stepStandingStart(carIndex, dt)
   return false
 end
 
---- Roll for micro-mistake or macro-mistake when under psychological stress
---- Returns mistake type, duration, targetSplineOffset, cautionMod, gripMod
+--- Tick per-car mistake cooldown
+---@param carIndex integer
+---@param dt number
+function M.stepCooldown(carIndex, dt)
+  local cd = _mistakeCooldown[carIndex]
+  if cd and cd > 0.0 then
+    cd = cd - dt
+    if cd < 0.0 then cd = 0.0 end
+    _mistakeCooldown[carIndex] = cd
+  end
+end
+
+--- Get remaining physical mistake cooldown
+---@param carIndex integer
+---@return number
+function M.getMistakeCooldown(carIndex)
+  return _mistakeCooldown[carIndex] or 0.0
+end
+
+--- Set explicit physical mistake cooldown (for testing or external controls)
+---@param carIndex integer
+---@param seconds number
+function M.setMistakeCooldown(carIndex, seconds)
+  _mistakeCooldown[carIndex] = seconds or 0.0
+end
+
+--- Multi-Factorial Driving Mistake Evaluation
+--- Jointly evaluates driver DNA persona, environmental race stress, tyre thermals & telemetry gating.
+--- Pure scalar mathematics, zero dynamic memory allocation.
 ---@param carIndex integer
 ---@param stress number Current stress (0 ~ 10)
 ---@param persona table Driver persona
 ---@param rivalryScore number Rivalry grievance
 ---@param hotspotDanger number Danger level (0 ~ 1)
----@param dt number
----@return string mistakeType, number duration, number offset, number caution, number gripMod
-function M.rollMistake(carIndex, stress, persona, rivalryScore, hotspotDanger, dt)
-  local stressThreshold = 6.0 * (persona.pressure_resist or 0.6)
-  if stress <= stressThreshold then
-    return M.TYPE_NONE, 0, 0, 1.0, 0.0
+---@param dt number Tick time step
+---@param car ac.StateCar|table|nil Real-time telemetry car state
+---@param raceContext table|nil Race context (tyreWear, tyreTempNorm, isInPitlane, etc.)
+---@return string mistakeType, number duration, number offset, number caution, number gripMod, string? physicalType, number physicalDur, number physicalSev
+function M.rollMistake(carIndex, stress, persona, rivalryScore, hotspotDanger, dt, car, raceContext)
+  -- 1. Safety Gates: Opening lap & crawl protection, pitlane absolute authority
+  if car then
+    local speed = car.speedKmh or 0.0
+    local lapCount = car.lapCount or 0
+    if lapCount == 0 or speed < 75.0 then
+      return M.TYPE_NONE, 0, 0, 1.0, 0.0, nil, 0, 0
+    end
+    if car.isInPitlane or car.isInPit then
+      return M.TYPE_NONE, 0, 0, 1.0, 0.0, nil, 0, 0
+    end
+  end
+  if raceContext and (raceContext.isInPitlane or raceContext.isInPit) then
+    return M.TYPE_NONE, 0, 0, 1.0, 0.0, nil, 0, 0
   end
 
-  local errProb = (persona.error_probability or 0.1) * (1.0 + (rivalryScore or 0) * 0.1) * (1.0 - (hotspotDanger or 0) * 0.5)
+  local p = persona or {}
+
+  -- 2. Driver Persona Factor (mistake_resistance & pressure_handling)
+  local pResist = p.mistake_resistance
+  if not pResist then
+    pResist = p.pressure_resist or 0.70
+  end
+  -- Anti-immunization rule: strictly capped at 0.96 (no driver is 100% immune)
+  if pResist > 0.96 then pResist = 0.96 end
+  if pResist < 0.0 then pResist = 0.0 end
+
+  local pHandling = p.pressure_handling or p.pressure_resist or 0.70
+  if pHandling > 1.0 then pHandling = 1.0 end
+  if pHandling < 0.0 then pHandling = 0.0 end
+
+  local baseErrProb = p.error_probability or 0.10
+  if baseErrProb < 0.02 then baseErrProb = 0.02 end
+
+  -- Driver vulnerability factor:
+  -- Verstappen (resist=0.95, baseErr=0.03): (1 - 0.95) * (0.03 / 0.10) = 0.015
+  -- Colapinto  (resist=0.62, baseErr=0.16): (1 - 0.62) * (0.16 / 0.10) = 0.608
+  local personaFactor = (1.0 - pResist) * (baseErrProb / 0.10)
+
+  -- 3. Dynamic Environmental & Psychological Stress Evaluation
+  -- Stress threshold scaled by pressure handling (higher handling requires more stress to start inducing mistakes)
+  local stressThreshold = 3.5 + (pHandling * 3.5) -- 3.5 to 7.0 threshold
+  local curStress = stress or 0.0
+  if curStress <= stressThreshold then
+    return M.TYPE_NONE, 0, 0, 1.0, 0.0, nil, 0, 0
+  end
+
+  local excessStress = curStress - stressThreshold
+
+  -- Track hotspot danger and rivalry score multipliers
+  local envMult = 1.0 + ((rivalryScore or 0.0) * 0.15) + ((hotspotDanger or 0.0) * 0.40)
+
+  -- Tyre degradation and thermal condition multipliers
+  local tyreMult = 1.0
+  if raceContext then
+    local wear = raceContext.tyreWear or 0.0
+    if wear > 0.50 then
+      tyreMult = tyreMult + (wear - 0.50) * 1.5
+    end
+    local temp = raceContext.tyreTempNorm or 1.0
+    if temp > 1.20 then
+      tyreMult = tyreMult + (temp - 1.20) * 2.0 -- Overheated surface slip
+    elseif temp < 0.85 then
+      tyreMult = tyreMult + (0.85 - temp) * 1.2 -- Cold tyre surface slip
+    end
+    local warmup = raceContext.tyreWarmupProgress
+    if warmup and warmup < 0.90 then
+      tyreMult = tyreMult + (0.90 - warmup) * 0.8
+    end
+  end
+
+  -- Combined trigger probability per tick
+  local triggerProb = personaFactor * (excessStress * 0.25) * envMult * tyreMult * ((dt or 0.1) * 2.5)
+  if triggerProb > 0.85 then triggerProb = 0.85 end
+
   local roll = math.random()
-
-  -- Check if mistake triggered this tick
-  if roll >= (errProb * (dt * 2.5)) then
-    return M.TYPE_NONE, 0, 0, 1.0, 0.0
+  if roll >= triggerProb then
+    return M.TYPE_NONE, 0, 0, 1.0, 0.0, nil, 0, 0
   end
 
-  -- Distribute across full spectrum:
-  -- 1. Micro-Mistakes (50%):
-  --    - 25% OVERSLOW: Early braking, enter corner hesitant
-  --    - 25% TRAIL_UNDERSTEER: Released trail-brake too late, understeer push
-  -- 2. Macro-Mistakes (50%):
-  --    - 20% MISSED_APEX: Run wide
-  --    - 15% BRAKE_LOCKUP: Front lockup
-  --    - 15% TRACTION_SLIDE: Rear slide
+  -- 4. Physical Telemetry Gating: Detect Brake Lock-up vs Traction Snap vs Micro-Mistakes
+  local cIdx = carIndex or 0
+  local cd = _mistakeCooldown[cIdx] or 0.0
+  local canPhysical = (cd <= 0.0)
+
+  local isHeavyBraking = false
+  local isCornerExitThrottle = false
+
+  if car then
+    local spd = car.speedKmh or 0.0
+    local accelZ = (car.acceleration and car.acceleration.z) or 0.0
+    local accelX = (car.acceleration and car.acceleration.x) or 0.0
+    local brakePedal = car.brake or 0.0
+    local gasPedal = car.gas or 0.0
+
+    -- Brake Lock-up zone: high speed (> 120 km/h), heavy braking / deceleration
+    if spd > 120.0 and (accelZ < -6.0 or brakePedal > 0.75) then
+      isHeavyBraking = true
+    end
+
+    -- Traction loss snap zone: 50~130 km/h, corner exit acceleration, lateral turning
+    if spd >= 50.0 and spd <= 130.0 and (accelZ > 2.0 or gasPedal > 0.70) and math.abs(accelX) > 1.8 then
+      isCornerExitThrottle = true
+    end
+  end
+
   local mRoll = math.random()
 
-  if mRoll < 0.25 then
-    -- OVERSLOW: Caution elevated to 2.8, vehicle brakes early
-    return M.TYPE_OVERSLOW, 1.8, 0.0, 2.8, 0.0
-  elseif mRoll < 0.50 then
-    -- TRAIL_UNDERSTEER: Front grip penalty -8%, pushes car 0.4 wide
-    return M.TYPE_TRAIL_UNDERSTEER, 2.2, 0.40, 0.5, -0.08
-  elseif mRoll < 0.70 then
-    -- MISSED_APEX: Spline offset +0.65 overshoot, caution dropped to 0.2
-    return M.TYPE_MISSED_APEX, 2.5, 0.65, 0.2, 0.0
-  elseif mRoll < 0.85 then
-    -- BRAKE_LOCKUP: Classic wheel lock
-    return M.TYPE_BRAKE_LOCKUP, 1.2, 0.0, 1.8, -0.15
+  -- If in heavy braking zone and physical cooldown ready -> high probability of BRAKE_LOCKUP
+  if isHeavyBraking and canPhysical and mRoll < 0.75 then
+    _mistakeCooldown[cIdx] = PHYSICAL_COOLDOWN_SEC
+    local dur = 0.25 + math.random() * 0.20 -- 0.25 ~ 0.45s
+    return M.TYPE_BRAKE_LOCKUP, 1.4, 0.0, 1.8, -0.15, "BRAKE", dur, 0.0
+  elseif isCornerExitThrottle and canPhysical and mRoll < 0.75 then
+    _mistakeCooldown[cIdx] = PHYSICAL_COOLDOWN_SEC
+    local dur = 0.25 + math.random() * 0.20 -- 0.25 ~ 0.45s
+    local sev = 1.20 + math.random() * 0.15 -- 1.20 ~ 1.35
+    return M.TYPE_TRACTION_SLIDE, 1.6, 0.0, 1.6, -0.10, "TRACTION", dur, sev
+  end
+
+  -- Spectrum of micro/macro mistakes if not in specific physical zone or physical on cooldown:
+  if mRoll < 0.30 then
+    -- OVERSLOW: Hesitation into corner, early brake
+    return M.TYPE_OVERSLOW, 1.8, 0.0, 2.8, 0.0, nil, 0, 0
+  elseif mRoll < 0.60 then
+    -- TRAIL_UNDERSTEER: Trail brake released too late, pushes wide
+    return M.TYPE_TRAIL_UNDERSTEER, 2.2, 0.40, 0.5, -0.08, nil, 0, 0
+  elseif mRoll < 0.80 then
+    -- MISSED_APEX: Spline overshoot
+    return M.TYPE_MISSED_APEX, 2.5, 0.65, 0.2, 0.0, nil, 0, 0
+  elseif canPhysical and mRoll < 0.90 then
+    -- BRAKE_LOCKUP fallback
+    _mistakeCooldown[cIdx] = PHYSICAL_COOLDOWN_SEC
+    return M.TYPE_BRAKE_LOCKUP, 1.2, 0.0, 1.8, -0.15, "BRAKE", 0.30, 0.0
+  elseif canPhysical then
+    -- TRACTION_SLIDE fallback
+    _mistakeCooldown[cIdx] = PHYSICAL_COOLDOWN_SEC
+    return M.TYPE_TRACTION_SLIDE, 1.6, 0.0, 1.6, -0.10, "TRACTION", 0.35, 1.25
   else
-    -- TRACTION_SLIDE: Rear slide, throttle oversteer
-    return M.TYPE_TRACTION_SLIDE, 1.6, 0.0, 1.6, -0.10
+    -- Fallback to OVERSLOW if physical on cooldown
+    return M.TYPE_OVERSLOW, 1.8, 0.0, 2.5, 0.0, nil, 0, 0
   end
 end
 
@@ -151,6 +295,7 @@ function M.reset()
     _startHandled[i] = false
     _startDelayTimer[i] = 0.0
     _startBlunderType[i] = M.TYPE_NONE
+    _mistakeCooldown[i] = 0.0
   end
 end
 

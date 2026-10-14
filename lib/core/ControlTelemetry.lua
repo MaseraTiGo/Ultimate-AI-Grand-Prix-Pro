@@ -475,6 +475,61 @@ function M.dispatchCarFuel(carIdx, fuelLiters, car, driverName)
   return true
 end
 
+--- Intercept & Dispatch AI Brake Mistake (Brake lockup simulation)
+function M.dispatchBrakeMistake(carIdx, duration, descText, car, driverName)
+  local cIdx = carIdx or 0
+  if not physics or not physics.setAIBrakeMistake then
+    if _enabled then
+      M.logError(cIdx, "Brake Lockup", "CSP physics.setAIBrakeMistake API unavailable", car, driverName)
+    end
+    return false
+  end
+
+  local dur = duration or 0.35
+  if not _enabled then
+    physics.setAIBrakeMistake(cIdx, dur)
+    return true
+  end
+
+  local ok, err = pcall(physics.setAIBrakeMistake, cIdx, dur)
+  if not ok then
+    M.logError(cIdx, "Brake Lockup", tostring(err), car, driverName)
+    return false
+  end
+
+  local desc = descText or string.format("Induced front tyre lock-up (duration: %.2fs)", dur)
+  M.logAction(cIdx, "Brake Lockup", desc, car, driverName, true)
+  return true
+end
+
+--- Intercept & Dispatch AI Traction Mistake (Snap oversteer / wheelspin simulation)
+function M.dispatchTractionMistake(carIdx, duration, severity, descText, car, driverName)
+  local cIdx = carIdx or 0
+  if not physics or not physics.setAITractionMistake then
+    if _enabled then
+      M.logError(cIdx, "Traction Mistake", "CSP physics.setAITractionMistake API unavailable", car, driverName)
+    end
+    return false
+  end
+
+  local dur = duration or 0.35
+  local sev = severity or 1.25
+  if not _enabled then
+    physics.setAITractionMistake(cIdx, dur, sev)
+    return true
+  end
+
+  local ok, err = pcall(physics.setAITractionMistake, cIdx, dur, sev)
+  if not ok then
+    M.logError(cIdx, "Traction Mistake", tostring(err), car, driverName)
+    return false
+  end
+
+  local desc = descText or string.format("Induced rear traction loss snap (duration: %.2fs, severity: %.2f)", dur, sev)
+  M.logAction(cIdx, "Traction Mistake", desc, car, driverName, true)
+  return true
+end
+
 --- Resolve real tyre compound index recognized by AC/CSP physics for a car
 ---@param carIdx number
 ---@param requestedIdx number|nil

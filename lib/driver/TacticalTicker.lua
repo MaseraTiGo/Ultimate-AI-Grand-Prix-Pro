@@ -61,6 +61,10 @@ for i = 0, MAX_CARS - 1 do
     committedState = nil,
     dirtyAirLoss = 0.0,
     mistakeGripPenalty = 0.0,
+    physicalMistakeType = nil,
+    physicalMistakeDur = 0.0,
+    physicalMistakeSev = 0.0,
+    physicalDispatched = false,
     switchbackTimer = 0.0,
     overlapRatio = 0.0,
     rivalRelX = 0.0,
@@ -256,6 +260,7 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
   local idx = (car and car.index) or (raceContext and raceContext.carIndex) or 0
   local s = _aiStates[idx] or _aiStates[0]
   s.persona = persona
+  MistakeEngine.stepCooldown(idx, dt)
 
   -- -1. Pit Lane & Pit Bay Authority Gate:
   -- While car is entering, dwelling, or exiting pits, lock into PIT_BAY cruise
@@ -323,6 +328,8 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
       s.targetSplineOffset = 0.0
       s.mistakeGripPenalty = 0.0
       s.targetCaution = persona and persona.base_caution or 1.0
+      s.physicalMistakeType = nil
+      s.physicalDispatched = false
     else
       -- Progressive recovery: caution smoothly relaxes as recovery timer expires
       local recovProgress = 1.0 - (s.recoveryTimer / 2.0)
@@ -435,7 +442,9 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
     effectiveStress = math.min(10.0, effectiveStress * 1.5 + 1.0)
   end
 
-  local mType, mDur, mOff, mCaut, mGrip = MistakeEngine.rollMistake(idx, effectiveStress, persona, rivalryScore, hotspotDanger, dt)
+  local mType, mDur, mOff, mCaut, mGrip, pType, pDur, pSev = MistakeEngine.rollMistake(
+    idx, effectiveStress, persona, rivalryScore, hotspotDanger, dt, car, raceContext
+  )
   if mType ~= MistakeEngine.TYPE_NONE then
     s.state = M.STATE_MISTAKE
     s.lastMistakeType = mType
@@ -443,6 +452,10 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
     s.targetSplineOffset = mOff
     s.targetCaution = mCaut
     s.mistakeGripPenalty = math.abs(mGrip)
+    s.physicalMistakeType = pType
+    s.physicalMistakeDur = pDur
+    s.physicalMistakeSev = pSev
+    s.physicalDispatched = false
     M.recordTrackIncident(car.splinePosition)
     TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
     return s

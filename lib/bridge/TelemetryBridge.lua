@@ -43,6 +43,7 @@ local C_STRUCT_DEF = [[
 local _hasFFI = false
 local _ffi = nil
 local _sharedBuffer = nil
+local _cachedEntries = {}
 
 -- Check FFI availability
 local okFFI, ffiLib = pcall(require, "ffi")
@@ -54,6 +55,9 @@ if okFFI and ffiLib and ffiLib.cdef then
     _sharedBuffer = _ffi.new("AiTelemetryPacket")
     _sharedBuffer.version = 300
     _sharedBuffer.cars_count = 0
+    for i = 0, MAX_CARS - 1 do
+      _cachedEntries[i] = _sharedBuffer.cars[i]
+    end
   end)
 end
 
@@ -124,20 +128,8 @@ function M.updateCarTelemetry(carIndex, stateStr, stress, momentum, tyreWear, is
   local lac = isLiftAndCoast and 1 or 0
   local btw = isBreakingTow and 1 or 0
 
-  if _hasFFI and _sharedBuffer then
-    local entry = _sharedBuffer.cars[carIndex]
-    entry.car_index = carIndex
-    entry.state_id = sId
-    entry.stress = stress or 0.0
-    entry.momentum = momentum or 0.0
-    entry.tyre_wear = tyreWear or 0.0
-    entry.lift_and_coast = lac
-    entry.breaking_tow = btw
-    entry.mistake_type_id = mId
-    entry.spline_offset = splineOffset or 0.0
-    entry.target_caution = caution or 1.0
-  else
-    local entry = _fallbackPacket.cars[carIndex]
+  local entry = (_hasFFI and _cachedEntries[carIndex]) or _fallbackPacket.cars[carIndex]
+  if entry then
     entry.car_index = carIndex
     entry.state_id = sId
     entry.stress = stress or 0.0

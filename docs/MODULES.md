@@ -81,11 +81,14 @@
 ## 3. 微观车手决策与执行层 (`lib/driver/`)
 
 ### `persona_loader.lua`
-- **职责**：现役 22 位 F1 车手预设人格库（`config/personas.json`）与 7D 连续 DNA 基因图谱展开。
+- **职责**：现役 22 位 F1 车手预设人格库（`config/personas.json`）、10 款内置核心模版后备库（`_defaultPresets`）与 7D 连续 DNA 基因图谱展开。
 - **公共接口**：
-  - `M.init(path)`: 解析车手数据库。
-  - `M.getPersonaForCar(carIndex, driverName)`: 匹配或程序化生成 7D 基因。
-  - `M.setManualOverride(carIndex, personaKey)`: 手动覆写指定车手驾驶风格。
+  - `M.init(path)`: 支持多路径自适应解析车手数据库（支持短路径、`apps/lua/...` 及 CSP 根目录探测）。
+  - `M.getPersonaForCar(carIndex, driverName)`: 匹配或程序化生成 7D 基因（带内置模版保底，绝不返空）。
+  - `M.setManualOverride(carIndex, personaKey)`: 无条件持久化手动覆写指定车手驾驶风格。
+  - `M.getManualOverride(carIndex)`: 获取指定车手当前手动覆写的模版 Key。
+  - `M.getActivePersonaKey(carIndex, driverName)`: 查询车手当前生效的性格 Key（供 UI 选项精准高亮与状态同步）。
+  - `M.getAllPersonas()`: 获取当前全量可用的人格字典。
 
 ### `TacticalTicker.lua`
 - **职责**：10Hz 战术调度、生理感知延迟环（200ms）、攻防博弈与无线电指令消费。

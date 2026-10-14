@@ -206,17 +206,19 @@ function M.applyActuator(car, aiState, dt)
     -- ALWAYS false for overrideAwareness so native AC AI obstacle/collision avoidance is never blinded!
     if math.abs(safeOffset) > 0.02 then
       local latDesc = nil
-      if aiState.isBreakingTow or aiState.activeSkill == "TOW_WEAVE" then
-        latDesc = string.format("Set defensive lateral offset (Breaking tow weave, offset: %+.2f)", safeOffset)
-      elseif aiState.state == "DEFEND" then
-        latDesc = (safeOffset < 0) and "Set defensive lateral offset (Holding inside line)"
-                                    or "Set defensive lateral offset (Guarding outer lane)"
-      elseif aiState.state == "ATTACK" or aiState.activeSkill == "LATE_BRAKE_DIVE" or aiState.activeSkill == "SWITCHBACK" then
-        latDesc = string.format("Dynamic apex dive counter-attack (Offset: %+.2f)", safeOffset)
-      elseif aiState.state == "YIELD" then
-        latDesc = "Moved off racing line for blue flag safe passage"
-      elseif aiState.isFeinting or aiState.activeSkill == "FEINT_DUMMY" then
-        latDesc = "Executing feint move outside to open inside pass lane"
+      if ControlTelemetry.isEnabled() then
+        if aiState.isBreakingTow or aiState.activeSkill == "TOW_WEAVE" then
+          latDesc = string.format("Set defensive lateral offset (Breaking tow weave, offset: %+.2f)", safeOffset)
+        elseif aiState.state == "DEFEND" then
+          latDesc = (safeOffset < 0) and "Set defensive lateral offset (Holding inside line)"
+                                      or "Set defensive lateral offset (Guarding outer lane)"
+        elseif aiState.state == "ATTACK" or aiState.activeSkill == "LATE_BRAKE_DIVE" or aiState.activeSkill == "SWITCHBACK" then
+          latDesc = string.format("Dynamic apex dive counter-attack (Offset: %+.2f)", safeOffset)
+        elseif aiState.state == "YIELD" then
+          latDesc = "Moved off racing line for blue flag safe passage"
+        elseif aiState.isFeinting or aiState.activeSkill == "FEINT_DUMMY" then
+          latDesc = "Executing feint move outside to open inside pass lane"
+        end
       end
       ControlTelemetry.dispatchSplineOffset(idx, safeOffset, false, latDesc, car)
     end
@@ -254,6 +256,22 @@ function M.applyActuator(car, aiState, dt)
     ControlTelemetry.dispatchThrottleLimit(idx, 0.0, "Engaged Lift and Coast into braking zone (Saving fuel & tyres)", car)
   else
     ControlTelemetry.dispatchThrottleLimit(idx, 1.0, "Restored 100% full throttle delivery", car)
+  end
+
+  -- 6. Physical Anthropomorphic Mistake Actuation (Brake Lockup & Traction Loss Snap)
+  if aiState.state == "MISTAKE" and not aiState.physicalDispatched then
+    aiState.physicalDispatched = true
+    if aiState.physicalMistakeType == "BRAKE" or aiState.lastMistakeType == "BRAKE_LOCKUP" then
+      local dur = aiState.physicalMistakeDur
+      if not dur or dur <= 0 then dur = 0.35 end
+      ControlTelemetry.dispatchBrakeMistake(idx, dur, "Front tyre brake lock-up induced under heavy deceleration", car)
+    elseif aiState.physicalMistakeType == "TRACTION" or aiState.lastMistakeType == "TRACTION_SLIDE" then
+      local dur = aiState.physicalMistakeDur
+      if not dur or dur <= 0 then dur = 0.35 end
+      local sev = aiState.physicalMistakeSev
+      if not sev or sev <= 0 then sev = 1.25 end
+      ControlTelemetry.dispatchTractionMistake(idx, dur, sev, "Rear traction loss snap induced on corner exit acceleration", car)
+    end
   end
 end
 

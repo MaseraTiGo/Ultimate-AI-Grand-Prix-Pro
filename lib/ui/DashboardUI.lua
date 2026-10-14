@@ -48,6 +48,10 @@ local COLOR_MUTED = makeColor(0.58, 0.64, 0.69, 1.0) -- #90A4AE
 local COLOR_WHITE = makeColor(1.00, 1.00, 1.00, 1.0) -- #FFFFFF
 local COLOR_PURPLE = makeColor(0.85, 0.20, 1.00, 1.0) -- #D500F9
 local COLOR_WET_BLUE = makeColor(0.16, 0.47, 1.00, 1.0) -- #2979FF
+local COLOR_BTN_OVERRIDE       = makeColor(0.00, 0.42, 0.65, 0.90)
+local COLOR_BTN_OVERRIDE_HOVER = makeColor(0.00, 0.58, 0.88, 1.00)
+local COLOR_BTN_NATIVE         = makeColor(0.00, 0.45, 0.28, 0.90)
+local COLOR_BTN_NATIVE_HOVER   = makeColor(0.00, 0.60, 0.38, 1.00)
 
 local function getCompoundVisual(compName, compIndex)
   local nameUpper = string.upper(tostring(compName or "")):gsub("^%s+", ""):gsub("%s+$", "")
@@ -117,6 +121,42 @@ local function setTooltip(tipText)
   if ui and ui.isItemHovered and ui.isItemHovered() and ui.setTooltip then
     ui.setTooltip(tipText)
   end
+end
+
+local function drawPersonaOptionButton(label, key, carIndex, isCurrent, isOverride)
+  local pushed = 0
+  if isCurrent and ui and ui.pushStyleColor then
+    local colBtn = isOverride and COLOR_BTN_OVERRIDE or COLOR_BTN_NATIVE
+    local colHover = isOverride and COLOR_BTN_OVERRIDE_HOVER or COLOR_BTN_NATIVE_HOVER
+    local colText = isOverride and COLOR_CYAN or COLOR_GREEN
+
+    if ui.StyleColor and ui.StyleColor.Button then
+      ui.pushStyleColor(ui.StyleColor.Button, colBtn)
+      pushed = pushed + 1
+      if ui.StyleColor.ButtonHovered then
+        ui.pushStyleColor(ui.StyleColor.ButtonHovered, colHover)
+        pushed = pushed + 1
+      end
+      if ui.StyleColor.Text then
+        ui.pushStyleColor(ui.StyleColor.Text, colText)
+        pushed = pushed + 1
+      end
+    elseif ui.Col and ui.Col.Button then
+      ui.pushStyleColor(ui.Col.Button, colBtn)
+      pushed = pushed + 1
+    end
+  end
+
+  local btnTxt = string.format("%s%s##sel_p_%d_%s", isCurrent and "[● " or "  ", label, carIndex, key)
+  if isCurrent then btnTxt = btnTxt .. " ]" else btnTxt = btnTxt .. "  " end
+
+  local clicked = ui.button and ui.button(btnTxt)
+
+  if pushed > 0 and ui and ui.popStyleColor then
+    ui.popStyleColor(pushed)
+  end
+
+  return clicked
 end
 
 local function safeGetCar(idx)
@@ -964,7 +1004,8 @@ function M.renderGridSetupTab()
     local dLabel = EventHub.formatDriverLabel(i, fullDriverName)
     local curOverride = personaLoader.getManualOverride(i)
     local persona = personaLoader.getPersonaForCar(i, fullDriverName)
-    local pDisplay = _personaNames[curOverride] or (persona.name or "均衡配置")
+    local activeKey = (personaLoader.getActivePersonaKey and personaLoader.getActivePersonaKey(i, fullDriverName)) or curOverride
+    local pDisplay = _personaNames[curOverride] or (activeKey and _personaNames[activeKey]) or (persona.name or "均衡配置")
 
     ui.text(string.format("  #%02d %-10s: ", i + 1, dName))
     setTooltip(string.format("车手: %s", fullDriverName))
@@ -990,32 +1031,42 @@ function M.renderGridSetupTab()
     setTooltip("清除当前手动覆写，恢复该车手原厂名字对应的基因")
 
     if isEditing then
+      local isManual = (curOverride ~= nil)
+      local activeDesc = (curOverride and _personaNames[curOverride])
+        or (activeKey and _personaNames[activeKey])
+        or (persona.name and (persona.name .. (persona.is_procedural and " (7D连续基因)" or "")))
+        or "均衡配置"
+
+      ui.text("    当前生效性格:")
+      ui.sameLine()
+      drawInlineColored(isManual and COLOR_CYAN or COLOR_GREEN, string.format("[● %s]", activeDesc))
+      ui.sameLine()
+      drawInlineColored(COLOR_MUTED, isManual and "(玩家手动覆写)" or "(原生AI匹配)")
+
       ui.text("    [性格流派]:")
       for idx = 1, 5 do
         local pBtn = _personaButtons[idx]
         ui.sameLine()
-        local isCurrent = (curOverride == pBtn.key)
-        local btnTxt = string.format("%s%s##sel_p_%d_%s", isCurrent and "[ " or " ", pBtn.label, i, pBtn.key)
-        if isCurrent then btnTxt = btnTxt .. " ]" else btnTxt = btnTxt .. " " end
-        if ui.button(btnTxt) then
+        local isCurrent = (activeKey == pBtn.key)
+        local isOverride = (curOverride == pBtn.key)
+        if drawPersonaOptionButton(pBtn.label, pBtn.key, i, isCurrent, isOverride) then
           personaLoader.setManualOverride(i, pBtn.key)
           EventHub.pushCommandEvent("GRID", string.format("已将 %s 性格覆写为: %s", dLabel, _personaNames[pBtn.key] or pBtn.key), "SUCCESS")
         end
-        setTooltip(string.format("套用原型模版: %s", _personaNames[pBtn.key] or pBtn.key))
+        setTooltip(string.format("套用原型模版: %s%s", _personaNames[pBtn.key] or pBtn.key, isCurrent and " (当前生效中)" or ""))
       end
 
       ui.text("    [F1 传奇]:")
       for idx = 6, 10 do
         local pBtn = _personaButtons[idx]
         ui.sameLine()
-        local isCurrent = (curOverride == pBtn.key)
-        local btnTxt = string.format("%s%s##sel_p_%d_%s", isCurrent and "[ " or " ", pBtn.label, i, pBtn.key)
-        if isCurrent then btnTxt = btnTxt .. " ]" else btnTxt = btnTxt .. " " end
-        if ui.button(btnTxt) then
+        local isCurrent = (activeKey == pBtn.key)
+        local isOverride = (curOverride == pBtn.key)
+        if drawPersonaOptionButton(pBtn.label, pBtn.key, i, isCurrent, isOverride) then
           personaLoader.setManualOverride(i, pBtn.key)
           EventHub.pushCommandEvent("GRID", string.format("已将 %s 性格覆写为: %s", dLabel, _personaNames[pBtn.key] or pBtn.key), "SUCCESS")
         end
-        setTooltip(string.format("套用 F1 传奇基因: %s", _personaNames[pBtn.key] or pBtn.key))
+        setTooltip(string.format("套用 F1 传奇基因: %s%s", _personaNames[pBtn.key] or pBtn.key, isCurrent and " (当前生效中)" or ""))
       end
     end
   end
