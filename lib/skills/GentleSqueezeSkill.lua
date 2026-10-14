@@ -46,7 +46,16 @@ end
 
 function M.stepExecution(skillCtx, car, aheadCar, behindCar, dt)
   skillCtx.phaseTimer = skillCtx.phaseTimer + dt
-  local behindRelX = behindCar and behindCar.position and car.worldToLocal and (car.worldToLocal:transformPoint(behindCar.position).x) or 0.0
+  local behindRelX = 0.0
+  if behindCar and behindCar.position and car.position then
+    local bx = behindCar.position.x - car.position.x
+    local bz = behindCar.position.z - car.position.z
+    if car.side then
+      behindRelX = bx * (car.side.x or 1.0) + bz * (car.side.z or 0.0)
+    else
+      behindRelX = bx
+    end
+  end
 
   -- Gentle Squeeze: push lateral offset toward rival with gentle rate
   local squeezeDir = (behindRelX > 0) and 1.0 or -1.0

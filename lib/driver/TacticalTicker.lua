@@ -93,6 +93,15 @@ for i = 0, MAX_CARS - 1 do
     towBreakOffset = 0.0,
     isLiftAndCoast = false,
 
+    -- Anthropomorphic Body Language (Headlights & Horn Agitation)
+    bodyLangAction = "NONE",
+    bodyLangTarget = -1,
+    bodyLangReason = "",
+    bodyLangHorn = false,
+    bodyLangFlashCount = 0,
+    lastAheadIdx = -1,
+    overtakeCooldown = 0.0,
+
     -- Perception Ring Buffer (flat array of 4 history snapshots)
     ringHead = 1,
     ringInitialized = false,
@@ -241,6 +250,81 @@ local function computeStress(s, dist, deltaV, persona, raceContext, dt)
   return newStress
 end
 
+--- Evaluate Anthropomorphic Body Language (Headlights Flashing & Horn Honking Intent)
+--- Scenarios:
+---   1. PROTEST: Anger at ahead car's illegal blocking / weave-to-break-tow (Flash 4x + Horn 0.4s)
+---   2. BLUE_FLAG: Demanding slower / lapped car to yield racing line (Flash 2x)
+---   3. HUNTING: Intimidation & psychological warfare in braking zone (Flash 2x)
+---   4. TAUNT / THANKS: Flash 1x upon completing critical overtake
+---   5. HAZARD: Warning flash for slow / spun car ahead
+local function evaluateBodyLanguage(s, car, aheadCar, behindCar, aheadDist, behindDist, persona, rivalryScore, raceContext, dt)
+  s.bodyLangAction = "NONE"
+  s.overtakeCooldown = math.max(0.0, (s.overtakeCooldown or 0.0) - dt)
+
+  -- 1. Overtake Taunt or Courtesy Thanks
+  if behindCar and s.lastAheadIdx == behindCar.index and behindDist < 12.0 and s.overtakeCooldown <= 0.0 then
+    s.overtakeCooldown = 12.0
+    if (rivalryScore or 0) > 0.40 and (persona and persona.base_aggression or 0.7) > 0.80 then
+      s.bodyLangAction = "TAUNT"
+      s.bodyLangTarget = behindCar.index
+      s.bodyLangFlashCount = 1
+      s.bodyLangHorn = false
+      s.bodyLangReason = "绝杀超越后闪灯示威"
+    else
+      s.bodyLangAction = "THANKS"
+      s.bodyLangTarget = behindCar.index
+      s.bodyLangFlashCount = 1
+      s.bodyLangHorn = false
+      s.bodyLangReason = "超越后闪灯致意"
+    end
+  end
+
+  if aheadCar then
+    s.lastAheadIdx = aheadCar.index
+    local mySpeed = (car and car.speedKmh) or 0.0
+    local aheadSpeed = (aheadCar and aheadCar.speedKmh) or 0.0
+    local aheadState = _aiStates[aheadCar.index]
+
+    -- Priority 1: PROTEST (Dirty blocking / weaving / dangerous defense)
+    local aheadWeaving = aheadState and (aheadState.isBreakingTow or aheadState.activeSkill == "TOW_WEAVE" or aheadState.activeSkill == "GENTLE_SQUEEZE")
+    local highRivalry = ((rivalryScore or 0) > 0.45) or s.isTilting
+    if aheadDist < 15.0 and (aheadWeaving or (highRivalry and (s.state == M.STATE_ATTACK or s.activeSkill == "LATE_BRAKE_DIVE"))) then
+      s.bodyLangAction = "PROTEST"
+      s.bodyLangTarget = aheadCar.index
+      s.bodyLangFlashCount = 4
+      s.bodyLangHorn = true
+      s.bodyLangReason = "抗议恶意变道阻挡"
+
+    -- Priority 2: BLUE_FLAG (Lapping slower / blue-flagged car ahead - 适当节奏礼貌提示让路)
+    elseif aheadDist >= 7.0 and aheadDist <= 35.0 and (((car and car.lapCount or 0) > (aheadCar.lapCount or 0)) or (raceContext and raceContext.isLappingAhead)) then
+      s.bodyLangAction = "BLUE_FLAG"
+      s.bodyLangTarget = aheadCar.index
+      s.bodyLangFlashCount = 2
+      s.bodyLangHorn = false
+      s.bodyLangReason = "示意前车让出赛车线"
+
+    -- Priority 3: HUNTING (Close-quarters attack intimidation - 贴身逼抢/超车连续狂闪后视镜施压)
+    elseif (s.state == M.STATE_ATTACK or s.activeSkill == "LATE_BRAKE_DIVE" or s.activeSkill == "SWITCHBACK" or s.activeSkill == "FEINT_DUMMY") and aheadDist < 18.0 and aheadDist > 2.5 and mySpeed > 85.0 then
+      local aggr = persona and persona.base_aggression or 0.75
+      if aggr >= 0.70 then
+        s.bodyLangAction = "HUNTING"
+        s.bodyLangTarget = aheadCar.index
+        s.bodyLangFlashCount = 6
+        s.bodyLangHorn = false
+        s.bodyLangReason = "超车进攻狂闪大灯极限施压"
+      end
+
+    -- Priority 4: HAZARD (Spun/crawling car ahead)
+    elseif aheadDist < 50.0 and aheadDist > 15.0 and aheadSpeed < 35.0 and mySpeed > 80.0 then
+      s.bodyLangAction = "HAZARD"
+      s.bodyLangTarget = aheadCar.index
+      s.bodyLangFlashCount = 2
+      s.bodyLangHorn = false
+      s.bodyLangReason = "前方慢车避险慢闪警示"
+    end
+  end
+end
+
 --- Main 10Hz Tactical Decision Tick for AI Car
 --- Pure scalar mathematics, NYI-free
 ---@param car ac.StateCar
@@ -373,6 +457,15 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
   local instantDeltaV = 0.0
   local instantTTC = 999.0
 
+  local aheadDist = 999.0
+  if aheadCar and car.position and aheadCar.position then
+    local ax = aheadCar.position.x - car.position.x
+    local ay = aheadCar.position.y - car.position.y
+    local az = aheadCar.position.z - car.position.z
+    aheadDist = math.sqrt(ax * ax + ay * ay + az * az)
+  end
+  s.aheadDist = aheadDist
+
   if behindCar and car.position and behindCar.position then
     local dx = car.position.x - behindCar.position.x
     local dy = car.position.y - behindCar.position.y
@@ -504,6 +597,7 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
       s.defenseHeatTimer = 0.0
     end
 
+    evaluateBodyLanguage(s, car, aheadCar, behindCar, s.aheadDist or 999.0, s.behindDist or 999.0, persona, rivalryScore, raceContext, dt)
     TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
     return s
   else
@@ -559,9 +653,17 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
         s.defendMoveDone = true
         local blockWidth = 0.55 * (persona.block_tendency or 0.7) + ((rivalryScore or 0) * 0.03)
         local behindRelX = 0.0
-        if car.worldToLocal and behindCar and behindCar.position then
-          local localBehind = car.worldToLocal:transformPoint(behindCar.position)
-          behindRelX = localBehind.x
+        if behindCar and behindCar.position and car.position then
+          local bx = behindCar.position.x - car.position.x
+          local bz = behindCar.position.z - car.position.z
+          if car.side then
+            behindRelX = bx * (car.side.x or 1.0) + bz * (car.side.z or 0.0)
+          elseif car.worldToLocal and car.worldToLocal.transformPoint then
+            local localBehind = car.worldToLocal:transformPoint(behindCar.position)
+            behindRelX = localBehind and localBehind.x or 0.0
+          else
+            behindRelX = bx
+          end
         end
 
         s.rivalRelX = behindRelX
@@ -603,6 +705,7 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
         end
       end
 
+      evaluateBodyLanguage(s, car, aheadCar, behindCar, s.aheadDist or 999.0, s.behindDist or 999.0, persona, rivalryScore, raceContext, dt)
       TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
       return s
     end
@@ -628,6 +731,7 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
       local aggr = persona and (persona.base_aggression or 0.7) or 0.7
       if aggr > 0.72 then
         s.isBreakingTow = true
+        s.state = "TOW_WEAVE"
         s.towBreakTimer = s.towBreakTimer + dt
         -- Oscillate weave: +/-0.35 spline units @ ~3.0 rad/s
         s.towBreakOffset = math.sin(s.towBreakTimer * 3.0) * 0.35
@@ -642,6 +746,7 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
           if raceContext then raceContext.tyreTempNorm = s.tireTempNorm end
         end
 
+        evaluateBodyLanguage(s, car, aheadCar, behindCar, s.aheadDist or 999.0, s.behindDist or 999.0, persona, rivalryScore, raceContext, dt)
         TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
         return s
       end
@@ -713,6 +818,7 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
     s.targetSplineOffset = aheadState and aheadState.currentSplineOffset or 0.0
     s.targetAggression = math.min(0.95, (persona.base_aggression or 0.8) + 0.05)
     s.targetCaution = math.max(0.4, (persona.base_caution or 0.7) * 0.8)
+    evaluateBodyLanguage(s, car, aheadCar, behindCar, s.aheadDist or 999.0, s.behindDist or 999.0, persona, rivalryScore, raceContext, dt)
     TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, tyreWear, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
     return s
   end
@@ -760,6 +866,7 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
       end
       s.targetSplineOffset = s.decoyOffset
     end
+    evaluateBodyLanguage(s, car, aheadCar, behindCar, s.aheadDist or 999.0, s.behindDist or 999.0, persona, rivalryScore, raceContext, dt)
     TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, tyreWear, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
     return s
   end
@@ -783,6 +890,7 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
     s.state = M.STATE_DEFEND
     -- targetCaution and targetAggression already set by DEFEND above
   end
+  evaluateBodyLanguage(s, car, aheadCar, behindCar, s.aheadDist or 999.0, s.behindDist or 999.0, persona, rivalryScore, raceContext, dt)
   TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, tyreWear, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
   return s
 end
@@ -824,6 +932,13 @@ function M.reset()
     s.recoveryTimer = 0.0
     s.lastMistakeType = MistakeEngine.TYPE_NONE
     s.outLapColdGrip = 1.0
+    s.bodyLangAction = "NONE"
+    s.bodyLangTarget = -1
+    s.bodyLangReason = ""
+    s.bodyLangHorn = false
+    s.bodyLangFlashCount = 0
+    s.lastAheadIdx = -1
+    s.overtakeCooldown = 0.0
     s.ringHead = 1
     s.ringInitialized = false
     for k = 1, RING_SIZE do

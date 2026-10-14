@@ -91,12 +91,15 @@
   - `M.getAllPersonas()`: 获取当前全量可用的人格字典。
 
 ### `TacticalTicker.lua`
-- **职责**：10Hz 战术调度、生理感知延迟环（200ms）、攻防博弈与无线电指令消费。
+- **职责**：10Hz 战术调度、生理感知延迟环（200ms）、攻防博弈、心态流动（Flow/Tilt）状态机、无线电指令消费，以及**多场景拟人化肢体语言触发（超车贴身 6 连暴闪、蓝旗借道 2 连从容双闪、恶意变道鸣笛抗议）**。
 - **输入**：`car, aheadCar, behindCar, persona, rivalryGrievance, raceCtx, dt`。
-- **输出**：`aiState`（包含 `targetSplineOffset, targetCaution, targetAggression, isLiftAndCoast, isBreakingTow, stress, momentum`）。
+- **输出**：`aiState`（包含 `targetSplineOffset, targetCaution, targetAggression, isLiftAndCoast, isBreakingTow, stress, momentum, bodyLangAction, bodyLangTarget, bodyLangFlashCount, bodyLangHorn`）。
 
 ### `BehaviorActuator.lua`
-- **职责**：横向样条线平滑速率自适应控制、并排一车宽保护、大灯施压、微纠正抖舵拟真与冷胎抓地力调整。
+- **职责**：横向样条线平滑速率自适应限幅、并排一车宽（0.40 走廊）防碰撞挤压保护、微纠正抖舵拟真、冷热胎抓地力调整，以及**大灯与鸣笛多频次/变周期物理动态脉冲执行**（支持 0.07s 极速暴闪与 0.16s 适度双闪）。
+
+### `ControlTelemetry.lua`
+- **职责**：2-4Hz 动态抽样的 AI 控制遥测流中枢。实时拦截并语义化转译底层物理与控制动作（配速推圈、进站换胎加注、防守卡位走线、大灯/鸣笛肢体语言及异常拦截告警），供诊断面板可视化并支持跨会话安全持久化开关。
 
 ### `watchdog.lua`
 - **职责**：60Hz 瞬态物理看门狗、物理 J-Turn 掉头脱困、冷胎起步防打滑油门渐进爬坡、内置 `safeGetCar` 严格越界保护。

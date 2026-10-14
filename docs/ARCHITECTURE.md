@@ -36,6 +36,7 @@
 │  [4. 微观车手决策与执行层 (AI Driver & Reflex Layer)] ── 10Hz/60Hz 空间调度            │
 │     ├─ persona_loader.lua: 7D 连续 DNA 基因图谱 (攻防/抗压/保胎/停站/球商/耐心倾向)    │
 │     ├─ TacticalTicker.lua: 全局感官缓冲 (200ms延迟)、心态流动 (Flow/Tilt) 状态机       │
+│     │                      多场景拟人化肢体语言调度 (超车狂闪暴闪 / 蓝旗从容双闪 / 鸣笛抗议)│
 │     ├─ X-Skill 拟人化技能体系 (lib/skills/):                                            │
 │     │   ├─ SkillRegistry.lua: 契约校验、快速检索与零修改 manifest 自动注册机制         │
 │     │   ├─ SkillArbitrator.lua: 二阶段门控 (硬性前置 O(1) 过滤 -> 效用函数评分)        │
@@ -47,7 +48,8 @@
 │     │   └─ LateBrakeDiveSkill.lua: 内线晚刹俯冲超车 (轮胎抓地力边界极限攻防)           │
 │     ├─ LODScheduler.lua: 三级空间调度 (聚焦 10Hz / 中距 3.33Hz / 远端 0Hz 深度休眠)    │
 │     ├─ MistakeEngine.lua: 拟人化微失误谱系 (入弯迟疑/循迹推头/起步打滑/抱死)           │
-│     ├─ BehaviorActuator.lua: 物理反打与油门切断、一车宽并排走廊、大灯施压、冷热胎抓地   │
+│     ├─ BehaviorActuator.lua: 物理反打与油门切断、一车宽并排走廊、大灯/鸣笛动态脉冲执行 │
+│     ├─ ControlTelemetry.lua: 2-4Hz 动态抽样 AI 原生动作控制遥测流与异常告警追踪        │
 │     └─ watchdog.lua @ 60Hz: 瞬态物理看门狗、J-Turn 掉头自救与零内存物理沙盒            │
 │                                                                                        │
 │  [5. 外部生态开放层 (Zero-Overhead Bridge)] (lib/bridge/TelemetryBridge.lua)          │
@@ -61,16 +63,21 @@
 
 1. **比赛时局动态采样**：每帧调用 `RaceContext.updateFromSim(sim)`，通过严格校验的 `safeGetCar` 与 `safeGetDriverName` 规避 CSP 越界崩溃；自动捕获全局赛局圈数（优先绑定 `sim.raceLaps`）、比赛阶段、全场黄旗与安全车。
 2. **策略异步解算 (1Hz)**：`StrategyCoordinator.stepStrategy(dt)` 计算进站窗口与 Undercut 收益，若判定进站时机成熟或满足车队要求，将 `radioCommand` 标记为 `BOX_THIS_LAP`，并同步推送事件至 `EventHub`。
-3. **车手战术响应 (10Hz)**：`TacticalTicker.stepCar(...)` 从 `RaceContext` 消费 `radioCommand`，更新生理感知环形缓冲区与压力/士气：
+3. **车手战术响应与拟人化肢体语言 (10Hz)**：`TacticalTicker.stepCar(...)` 从 `RaceContext` 消费 `radioCommand`，更新生理感知环形缓冲区与压力/士气：
    - 收到 `PUSH`：caution 降低 60%，aggression 提升 25%，士气提升进入 Flow；
    - 收到 `SAVE`：触发 `isLiftAndCoast = true`，直道末端提前 50m 滑行断油；
-   - 收到 `BOX_THIS_LAP`：贴向维修区外侧走线，准备安全进站。
+   - 收到 `BOX_THIS_LAP`：贴向维修区外侧走线，准备安全进站；
+   - **拟人化肢体语言调度（Body Language Orchestration）**：
+     - 超车进攻 / 贴身逼抢（`HUNTING`）：车距 $< 18\text{m}$，触发 **6 次机枪式极速高频暴闪（0.07s 脉冲）**，极限施压前车后视镜；
+     - 蓝旗提示让路（`BLUE_FLAG`）：车距 $7 \sim 35\text{m}$，触发 **2 次礼貌双闪（0.16s 从容节奏）**，坚定但礼貌示意借道；
+     - 恶意阻挡抗议（`PROTEST`）：前车危险蛇形画龙阻挡时，触发 **5 次急促双闪 + 0.45s 鸣笛示警**；
+     - 超越示威/致意（`TAUNT` / `THANKS`）：绝杀超越后触发 1 次尾随闪灯。
 4. **X-Skill 战术技能仲裁**：`SkillArbitrator.stepCarSkill(...)` 驱动二阶段门控：
    - **Phase 1 (硬性物理前置过滤)**：以标量几何（车距、闭合速度、相对方位、直道/弯道曲率）为 O(1) 准入条件，未满足者直接 early-exit；
    - **Phase 2 (效用函数综合评分)**：结合车手性格画像（激进、防守、球商、耐心）、心流状态（Flow/Tilt）与轮胎抓地力计算 utility 分数，竞争选出最高效用技能；
    - **承诺锁（Commitment Hold）与安全中止**：触发后维持至少 0.6s 决策稳定期防抖；若出现严重碰撞风险或弯道曲率危险，即刻触发 `checkAbort` 安全降级。
-5. **底层物理执行 (60Hz)**：`watchdog.stepPhysics(dt)` 负责瞬态微操控的安全沙盒熔断与逆向 J-Turn 物理自救。
-6. **双轨事件分发与 UI 回显**：`EventHub.lua` 维护两路独立有界环形缓冲池（Track 1 玩家与系统下发指令的回执与合流/批量结算状态确认；Track 2 全场 AI 拟人化决策、蓝旗让行、攻防博弈、进出站作业广播）。UI 底部常驻独立展示，保证操作反馈具备毫秒级可观测性与闭环回执。
+5. **底层物理执行与动态脉冲执行 (60Hz)**：`BehaviorActuator.lua` 负责平滑速率自适应限幅、一车宽防挤压走廊与大灯/鸣笛动态物理脉冲发射；`watchdog.stepPhysics(dt)` 负责瞬态微操控的安全沙盒熔断与逆向 J-Turn 物理自救。
+6. **双轨事件分发、控制遥测与 UI 回显**：`EventHub.lua` 维护两路独立有界环形缓冲池（Track 1 玩家与系统下发指令的回执与合流/批量结算状态确认；Track 2 全场 AI 拟人化决策、蓝旗让行、肢体语言闪灯/鸣笛、攻防博弈、进出站作业广播）。`ControlTelemetry.lua` 则提供 2-4Hz 动态抽样的底层原生动作语义化转译，确保策略执行与物理姿态具备毫秒级可观测性。
 
 ---
 

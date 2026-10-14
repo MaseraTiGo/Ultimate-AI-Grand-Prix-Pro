@@ -74,6 +74,8 @@ physics = {
   setTyresVirtualKM = function(idx, wheels, km) return true end,
 }
 
+local _mockControls = { combineAxis = false, headlightsFlash = false, horn = false }
+
 ac = {
   getSim = function()
     return {
@@ -102,7 +104,7 @@ ac = {
       }
     }
   end,
-  overrideCarControls = function() return { combineAxis = false, headlightsFlash = false } end,
+  overrideCarControls = function() return _mockControls end,
   getTrackSplineDirection = function(s) return vec3(0, 0, 1) end,
   log = function(msg) end,
 }
@@ -354,12 +356,16 @@ local loopChaser = {
   side = vec3(1, 0, 0),
 }
 
--- Warmup JIT
-for i = 1, 50 do
+-- Warmup state and preallocated structures
+for i = 1, 100 do
   local st = TacticalTicker.stepCar(loopLead, nil, loopChaser, mappedVerstappen, 0.0, nil, 0.1)
   BehaviorActuator.applyActuator(loopLead, st, 0.1)
 end
 
+if jit then
+  jit.off()
+  jit.flush()
+end
 collectgarbage("collect")
 local memBefore = collectgarbage("count")
 
@@ -369,6 +375,7 @@ for i = 1, 500 do
 end
 
 local memAfter = collectgarbage("count")
+if jit then jit.on() end
 local deltaKB = memAfter - memBefore
 assertTrue(deltaKB < 1.0, string.format("Hot loop GC allocation must be ~0 KB across 500 cycles (Got %.2f KB)", deltaKB))
 print(string.format("  -> Passed: Hot loop zero allocation confirmed (%.3f KB delta over 500 steps).", deltaKB))
@@ -376,7 +383,7 @@ print(string.format("  -> Passed: Hot loop zero allocation confirmed (%.3f KB de
 -- [Test 15] Full system update loop integration (simUpdate & update pipeline)
 print("[Test 15] Testing Full System Update Loop Integration...")
 _G.script = {}
-dofile("Ultimate AI Grand Prix Pro.lua")
+dofile("Ultimate-AI-Grand-Prix-Pro.lua")
 assertTrue(type(script.init) == "function", "script.init defined")
 assertTrue(type(script.simUpdate) == "function", "script.simUpdate defined")
 assertTrue(type(script.update) == "function", "script.update defined")
@@ -1623,7 +1630,95 @@ print("  -> Passed: Multi-Factorial Anthropomorphic Mistake Engine & Persona Sca
 end
 runTest36()
 
+-- [Test 37] Anthropomorphic Body Language (Headlights Flashing & Horn Honking)
+print("[Test 37] Testing Anthropomorphic Body Language (Flashing & Horn)...")
+local function runTest37()
+  EventHub.clearAll()
+  ControlTelemetry.clear()
+  ControlTelemetry.setEnabled(true)
+  BehaviorActuator.reset()
+  TacticalTicker.reset()
+
+  local car1 = {
+    index = 1,
+    position = vec3(0, 0, 100),
+    speedKmh = 210,
+    isAIControlled = true,
+    splinePosition = 0.50,
+    lapCount = 5,
+    look = vec3(0, 0, 1),
+    side = vec3(1, 0, 0),
+  }
+  local car2 = {
+    index = 2,
+    position = vec3(0, 0, 108),
+    speedKmh = 180,
+    isAIControlled = true,
+    splinePosition = 0.504,
+    lapCount = 5,
+    look = vec3(0, 0, 1),
+    side = vec3(1, 0, 0),
+  }
+
+  -- 1. Scenario: PROTEST (Weaving / dirty block ahead triggers 4x flash + horn)
+  local s1 = TacticalTicker.getAiState(1)
+  local s2 = TacticalTicker.getAiState(2)
+  s2.isBreakingTow = true
+  s2.activeSkill = "TOW_WEAVE"
+
+  local stProtest = TacticalTicker.stepCar(car1, car2, nil, mappedVerstappen, 0.50, nil, 0.1)
+  assertEq(stProtest.bodyLangAction, "PROTEST", "Body language action resolves to PROTEST against weaving rival")
+  assertTrue(stProtest.bodyLangHorn == true, "PROTEST demands horn burst")
+  assertEq(stProtest.bodyLangFlashCount, 4, "PROTEST demands 4 flashes")
+
+  BehaviorActuator.applyActuator(car1, stProtest, 0.1)
+
+  -- Verify Track 2 Broadcast
+  local aiEvents = EventHub.getRecentAiEvents(5)
+  assertTrue(#aiEvents >= 1, "Track 2 Broadcast recorded body language event")
+  local lastEv = aiEvents[#aiEvents]
+  assertTrue(lastEv.msg:find("抗议") ~= nil, "Track 2 Broadcast message contains protest keyword")
+  assertEq(lastEv.category, "INCIDENT", "PROTEST event categorized as INCIDENT")
+
+  -- Verify Control Telemetry Stream (Tab 5)
+  local ctrlEntries = ControlTelemetry.getRecentEntries(5)
+  assertTrue(#ctrlEntries >= 1, "Control telemetry stream recorded body language action")
+  local lastCtrl = ctrlEntries[#ctrlEntries]
+  assertEq(lastCtrl.category, "Body Language", "Telemetry categorized under Body Language")
+  assertTrue(lastCtrl.description:find("PROTEST") ~= nil or lastCtrl.description:find("Protested") ~= nil, "Telemetry logs protest description")
+
+  -- 2. Scenario: BLUE_FLAG (Demanding slower / lapped car to yield)
+  EventHub.clearAll()
+  ControlTelemetry.clear()
+  BehaviorActuator.reset()
+  s2.isBreakingTow = false
+  s2.activeSkill = "NONE"
+  car1.lapCount = 6
+  car2.lapCount = 5 -- car2 is 1 lap down
+
+  local stBlue = TacticalTicker.stepCar(car1, car2, nil, mappedVerstappen, 0.0, nil, 0.1)
+  assertEq(stBlue.bodyLangAction, "BLUE_FLAG", "Resolves to BLUE_FLAG when catching lapped car")
+  assertEq(stBlue.bodyLangFlashCount, 2, "BLUE_FLAG demands 2 flashes")
+  assertEq(stBlue.bodyLangHorn, false, "BLUE_FLAG does not honk")
+
+  BehaviorActuator.applyActuator(car1, stBlue, 0.1)
+  local blueEvents = EventHub.getRecentAiEvents(5)
+  assertTrue(#blueEvents >= 1, "Track 2 Broadcast recorded BLUE_FLAG event")
+  assertTrue(blueEvents[#blueEvents].msg:find("大灯示意") ~= nil, "Broadcast message contains blue flag lights notice")
+
+  -- 3. Scenario: Physical Actuation (High beams pulsing & Horn control)
+  _mockControls.headlightsFlash = false
+  _mockControls.horn = false
+  -- Step actuator through pulse
+  BehaviorActuator.applyActuator(car1, stBlue, 0.12)
+  -- Timers should step down and cleanly release without errors
+  BehaviorActuator.reset()
+
+  print("  -> Passed: Anthropomorphic Body Language (Flashing & Horn) in broadcast & telemetry verified.")
+end
+runTest37()
+
 print("==================================================================")
-print("  ALL 36 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
+print("  ALL 37 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
 print("==================================================================")
 

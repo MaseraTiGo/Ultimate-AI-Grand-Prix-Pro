@@ -218,11 +218,8 @@ function M.stepCarSkill(car, aheadCar, behindCar, persona, rivalryScore, raceCtx
 
     -- Check Abort condition (Safety Net)
     local shouldAbort = false
-    if skill.checkAbort then
-      local ok, res = pcall(skill.checkAbort, car, aheadCar, behindCar, _geoState)
-      if ok and res == true then
-        shouldAbort = true
-      end
+    if skill.checkAbort and skill.checkAbort(car, aheadCar, behindCar, _geoState) == true then
+      shouldAbort = true
     end
 
     if shouldAbort then
@@ -236,15 +233,7 @@ function M.stepCarSkill(car, aheadCar, behindCar, persona, rivalryScore, raceCtx
     end
 
     -- Advance execution
-    local okExec, off, caut, aggr, grip = pcall(skill.stepExecution, ctx, car, aheadCar, behindCar, dt)
-    if not okExec then
-      -- Anomaly protection: skill step errored, graceful fallback
-      Logger.warn("SKILLS", string.format("Skill %s step execution error on Car #%d: %s", skill.name, idx + 1, tostring(off)), 10.0)
-      ctx.activeSkillId = 0
-      ctx.activeSkillName = "NONE"
-      return false, 0.0, 1.0, 0.7, 0.0
-    end
-
+    local off, caut, aggr, grip = skill.stepExecution(ctx, car, aheadCar, behindCar, dt)
     ctx.targetOffset = off or 0.0
     ctx.targetCaution = caut or 1.0
     ctx.targetAggression = aggr or 0.7
@@ -261,6 +250,7 @@ function M.stepCarSkill(car, aheadCar, behindCar, persona, rivalryScore, raceCtx
         ctx.activeSkillId = 0
         ctx.activeSkillName = "NONE"
         ctx.currentPhase = 0
+        return false, 0.0, 1.0, 0.7, 0.0
       end
     end
 
@@ -279,11 +269,10 @@ function M.stepCarSkill(car, aheadCar, behindCar, persona, rivalryScore, raceCtx
 
     if cd <= 0.0 then
       -- Phase 1: Hard Prerequisites Gate
-      local okPre, prePass = pcall(candidate.checkPrerequisites, car, aheadCar, behindCar, _geoState, _memState)
-      if okPre and prePass == true then
+      if candidate.checkPrerequisites(car, aheadCar, behindCar, _geoState, _memState) == true then
         -- Phase 2: Utility Scoring
-        local okUtil, score = pcall(candidate.evaluateUtility, car, aheadCar, behindCar, persona, _geoState, _memState)
-        if okUtil and type(score) == "number" and score > bestScore then
+        local score = candidate.evaluateUtility(car, aheadCar, behindCar, persona, _geoState, _memState)
+        if type(score) == "number" and score > bestScore then
           bestScore = score
           bestSkill = candidate
         end
@@ -300,14 +289,12 @@ function M.stepCarSkill(car, aheadCar, behindCar, persona, rivalryScore, raceCtx
     ctx.commitTimer = MIN_COMMIT_HOLD
     ctx.utilityScore = bestScore
 
-    local okExec, off, caut, aggr, grip = pcall(bestSkill.stepExecution, ctx, car, aheadCar, behindCar, dt)
-    if okExec then
-      ctx.targetOffset = off or 0.0
-      ctx.targetCaution = caut or 1.0
-      ctx.targetAggression = aggr or 0.7
-      ctx.extraGrip = grip or 0.0
-      return true, ctx.targetOffset, ctx.targetCaution, ctx.targetAggression, ctx.extraGrip
-    end
+    local off, caut, aggr, grip = bestSkill.stepExecution(ctx, car, aheadCar, behindCar, dt)
+    ctx.targetOffset = off or 0.0
+    ctx.targetCaution = caut or 1.0
+    ctx.targetAggression = aggr or 0.7
+    ctx.extraGrip = grip or 0.0
+    return true, ctx.targetOffset, ctx.targetCaution, ctx.targetAggression, ctx.extraGrip
   end
 
   return false, 0.0, 1.0, 0.7, 0.0

@@ -124,8 +124,18 @@ end
 --- Standardized driver identifier: [#02] Driver Name
 function M.formatDriverLabel(carIdx, driverName)
   local carNum = (carIdx or 0) + 1
-  local name = driverName
-  if not name or name == "" or name:find("^AI #") or name:find("^Car #") or name:find("^AI车手") then
+  local name = nil
+  if type(driverName) == "string" and driverName ~= "" then
+    name = driverName
+  elseif ac and ac.getDriverName and carIdx ~= nil then
+    local ok, res = pcall(ac.getDriverName, carIdx)
+    if ok and type(res) == "string" and res ~= "" then
+      name = res
+    end
+  end
+
+  if not name or type(name) ~= "string" or name == ""
+     or string.find(name, "^AI #") or string.find(name, "^Car #") or string.find(name, "^AI车手") then
     name = (carIdx == 0) and "Player" or string.format("Driver #%02d", carNum)
   end
   return string.format("[#%02d] %s", carNum, name)

@@ -449,6 +449,27 @@ function M.logEnergyDeployment(carIdx, modeDesc, car, driverName)
   M.logAction(cIdx, "Energy Deployment", desc, car, driverName, true)
 end
 
+--- Intercept & Log Body Language (Headlight Flashing & Horn Honking)
+function M.dispatchBodyLanguage(carIdx, actionType, flashCount, hasHorn, reasonDesc, car, driverName)
+  local cIdx = carIdx or 0
+  if not _enabled then return true end
+
+  local desc = nil
+  local rText = reasonDesc or "Tactical communication"
+  if hasHorn and flashCount > 0 then
+    desc = string.format("Flashed headlights %dx & Honked horn (%s)", flashCount, rText)
+  elseif hasHorn then
+    desc = string.format("Honked horn (%s)", rText)
+  elseif flashCount > 0 then
+    desc = string.format("Flashed headlights %dx (%s)", flashCount, rText)
+  else
+    desc = string.format("Body language action: %s (%s)", actionType or "SIGNAL", rText)
+  end
+
+  M.logAction(cIdx, "Body Language", desc, car, driverName, true)
+  return true
+end
+
 --- Log Fuel Delivery
 function M.dispatchCarFuel(carIdx, fuelLiters, car, driverName)
   local cIdx = carIdx or 0

@@ -16,6 +16,7 @@
 ]]
 
 local ControlTelemetry = require("lib/core/ControlTelemetry")
+local EventHub = require("lib/core/EventHub")
 
 local M = {}
 
@@ -24,12 +25,22 @@ local _twitchTimers = {}
 local _twitchPhases = {}
 local _flashTimers = {}
 local _flashCounters = {}
+local _flashReasons = {}
+local _flashCooldowns = {}
+local _flashPulseDurations = {}
+local _hornTimers = {}
+local _hornWasActive = {}
 
 for i = 0, MAX_CARS - 1 do
   _twitchTimers[i] = 0.0
   _twitchPhases[i] = 0.0
   _flashTimers[i] = 0.0
   _flashCounters[i] = 0
+  _flashReasons[i] = "NONE"
+  _flashCooldowns[i] = 0.0
+  _flashPulseDurations[i] = 0.10
+  _hornTimers[i] = 0.0
+  _hornWasActive[i] = false
 end
 
 --- Calculate Car's Width Boundary Margin (Side-by-side corridor rule)
@@ -273,6 +284,125 @@ function M.applyActuator(car, aiState, dt)
       ControlTelemetry.dispatchTractionMistake(idx, dur, sev, "Rear traction loss snap induced on corner exit acceleration", car)
     end
   end
+
+  -- 7. Anthropomorphic Body Language Actuation (Headlights Flashing & Horn Honking)
+  _flashCooldowns[idx] = math.max(0.0, (_flashCooldowns[idx] or 0.0) - dt)
+  _hornTimers[idx] = math.max(0.0, (_hornTimers[idx] or 0.0) - dt)
+
+  local reqAction = aiState.bodyLangAction
+  if reqAction and reqAction ~= "NONE" and (_flashCooldowns[idx] or 0.0) <= 0.0 then
+    local targetIdx = aiState.bodyLangTarget or 0
+    local targetNum = (targetIdx or 0) + 1
+    local dName = nil
+    if ac and ac.getDriverName then
+      local ok, n = pcall(ac.getDriverName, idx)
+      if ok and type(n) == "string" and n ~= "" then dName = n end
+    end
+    if not dName and car and type(car.driverName) == "string" then
+      dName = car.driverName
+    end
+    local dLabel = EventHub.formatDriverLabel(idx, dName)
+    local targetLabel = EventHub.formatDriverLabel(targetIdx, nil)
+
+    if reqAction == "PROTEST" then
+      _flashCounters[idx] = 10 -- 5 double flashes
+      _flashPulseDurations[idx] = 0.08 -- 快速急促连闪
+      _hornTimers[idx] = 0.45  -- 0.45s 鸣笛示警
+      _hornWasActive[idx] = true
+      _flashCooldowns[idx] = 14.0
+      _flashReasons[idx] = "PROTEST"
+      EventHub.pushAiEvent(idx, "HORN", string.format("【抗议阻挡】%s 鸣笛并狂闪大灯，抗议前方 %s 恶意变道阻挡！", dLabel, targetLabel), "INCIDENT")
+      ControlTelemetry.dispatchBodyLanguage(idx, "PROTEST", 5, true, string.format("Protested illegal block by #%02d with rapid flash & horn", targetNum), car, dName)
+    elseif reqAction == "BLUE_FLAG" then
+      _flashCounters[idx] = 4 -- 2 次礼貌双闪
+      _flashPulseDurations[idx] = 0.16 -- 适度从容节奏
+      _hornTimers[idx] = 0.0
+      _flashCooldowns[idx] = 8.0
+      _flashReasons[idx] = "BLUE_FLAG"
+      EventHub.pushAiEvent(idx, "LIGHTS", string.format("【大灯示意】%s 适度闪烁大灯示意前车 %s 尽快让出赛车线", dLabel, targetLabel), "TACTICAL")
+      ControlTelemetry.dispatchBodyLanguage(idx, "BLUE_FLAG", 2, false, string.format("Demanded blue flag pass from #%02d with calm 2x flash", targetNum), car, dName)
+    elseif reqAction == "HUNTING" then
+      _flashCounters[idx] = 12 -- 6 次超高频狂闪暴闪
+      _flashPulseDurations[idx] = 0.07 -- 0.07s 极速暴闪，压迫后视镜
+      _hornTimers[idx] = 0.0
+      _flashCooldowns[idx] = 9.0
+      _flashReasons[idx] = "HUNTING"
+      EventHub.pushAiEvent(idx, "LIGHTS", string.format("【大灯逼抢】%s 进入绝杀距离，连续狂闪大灯向前方 %s 施加极限威慑！", dLabel, targetLabel), "PRESSURE")
+      ControlTelemetry.dispatchBodyLanguage(idx, "HUNTING", 6, false, string.format("Aggressively machine-gun flashed headlights 6x to intimidate #%02d in braking zone", targetNum), car, dName)
+    elseif reqAction == "TAUNT" then
+      _flashCounters[idx] = 2 -- 1 flash
+      _flashPulseDurations[idx] = 0.12
+      _hornTimers[idx] = 0.0
+      _flashCooldowns[idx] = 12.0
+      _flashReasons[idx] = "TAUNT"
+      EventHub.pushAiEvent(idx, "LIGHTS", string.format("【挑衅示威】%s 绝杀超越 %s 后闪灯挑衅", dLabel, targetLabel), "TACTICAL")
+      ControlTelemetry.dispatchBodyLanguage(idx, "TAUNT", 1, false, string.format("Flashed headlights 1x after overtaking #%02d", targetNum), car, dName)
+    elseif reqAction == "THANKS" then
+      _flashCounters[idx] = 2 -- 1 flash
+      _flashPulseDurations[idx] = 0.15
+      _hornTimers[idx] = 0.0
+      _flashCooldowns[idx] = 12.0
+      _flashReasons[idx] = "THANKS"
+      EventHub.pushAiEvent(idx, "LIGHTS", string.format("【闪灯致意】%s 完成对 %s 超越后闪灯致意", dLabel, targetLabel), "TACTICAL")
+      ControlTelemetry.dispatchBodyLanguage(idx, "THANKS", 1, false, string.format("Flashed headlights 1x after overtaking #%02d", targetNum), car, dName)
+    elseif reqAction == "HAZARD" then
+      _flashCounters[idx] = 6 -- 3 flashes
+      _flashPulseDurations[idx] = 0.18 -- 慢速警示闪烁
+      _hornTimers[idx] = 0.0
+      _flashCooldowns[idx] = 10.0
+      _flashReasons[idx] = "HAZARD"
+      ControlTelemetry.dispatchBodyLanguage(idx, "HAZARD", 3, false, "Hazard warning flash for slow/spun car ahead", car, dName)
+    end
+    aiState.bodyLangAction = "NONE"
+  end
+
+  -- Physical execution of headlight pulsing & horn
+  if (_flashCounters[idx] or 0) > 0 then
+    local pDur = _flashPulseDurations[idx] or 0.10
+    local fTimer = (_flashTimers[idx] or 0.0) + dt
+    if fTimer >= pDur then
+      fTimer = 0.0
+      _flashCounters[idx] = _flashCounters[idx] - 1
+    end
+    _flashTimers[idx] = fTimer
+
+    local isLightOn = (_flashCounters[idx] > 0) and (_flashCounters[idx] % 2 == 1)
+    if ac and ac.setTargetCar and ac.setHighBeams then
+      ac.setTargetCar(idx)
+      ac.setHighBeams(isLightOn)
+      ac.setTargetCar(0)
+    end
+    if ac and ac.overrideCarControls then
+      local input = ac.overrideCarControls(idx)
+      if input and isLightOn then
+        input.headlightsFlash = true
+      end
+    end
+  elseif (_flashTimers[idx] or 0.0) > 0.0 then
+    _flashTimers[idx] = 0.0
+    if ac and ac.setTargetCar and ac.setHighBeams then
+      ac.setTargetCar(idx)
+      ac.setHighBeams(false)
+      ac.setTargetCar(0)
+    end
+  end
+
+  if (_hornTimers[idx] or 0.0) > 0.0 then
+    if ac and ac.overrideCarControls then
+      local input = ac.overrideCarControls(idx)
+      if input then
+        input.horn = true
+      end
+    end
+  elseif _hornWasActive[idx] then
+    _hornWasActive[idx] = false
+    if ac and ac.overrideCarControls then
+      local input = ac.overrideCarControls(idx)
+      if input then
+        input.horn = false
+      end
+    end
+  end
 end
 
 function M.reset()
@@ -281,6 +411,11 @@ function M.reset()
     _twitchPhases[i] = 0.0
     _flashTimers[i] = 0.0
     _flashCounters[i] = 0
+    _flashReasons[i] = "NONE"
+    _flashCooldowns[i] = 0.0
+    _flashPulseDurations[i] = 0.10
+    _hornTimers[i] = 0.0
+    _hornWasActive[i] = false
   end
 end
 

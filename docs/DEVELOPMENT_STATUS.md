@@ -38,7 +38,15 @@
 ## 2. 验收状态与事实标记
 
 - **已验证事实**：
-  - **35 项核心集成与实机安全防护测试 100% 通过**（`tests/test_grand_prix_pro.lua`）。
+  - **37 项核心集成与实机安全防护测试 100% 通过**（`tests/test_grand_prix_pro.lua`）。
+  - **多场景拟人化肢体语言与动态脉冲系统（Multi-Scenario Anthropomorphic Body Language & Variable Pulse Cadence）**：
+    - **进攻超车贴身逼抢（`HUNTING`）**：进入后方 18m 进攻窗口且车速 $> 85\text{km/h}$ 时，触发 **6 次机枪式连续暴闪**（0.07s/脉冲），强力扰乱前车后视镜与心理防线；
+    - **蓝旗套圈让路示意（`BLUE_FLAG`）**：迫近慢车（7~35m）时，触发 **2 次从容双闪**（0.16s/脉冲），礼貌坚定示意借道；
+    - **恶意变道阻挡抗议（`PROTEST`）**：侦测到前车违规画龙或危险阻挡时，触发 **5 次急促双闪 + 0.45s 鸣笛**；
+    - **超越挑衅与致意（`TAUNT` / `THANKS`）**：绝杀超越后触发 1 次尾随闪灯；
+    - **慢车避险慢闪（`HAZARD`）**：遇前方打转慢车触发 3 次慢速警示闪烁（0.18s/脉冲）；
+    - 全事件同步通过 `EventHub` 推送至 Track 2 赛事广播，并在 `ControlTelemetry` 中以语义化日志实时记录。
+  - **诊断日志 Dear ImGui 单帧点击事件模型彻底修复**：重构 `DashboardUI.lua` 中的控制遥测流开关，剔除高频触发翻转的 `ui.itemClicked()`，严格支持单次幂等赋值，彻底解决“按住鼠标才输出，松手即失效”的交互缺陷。
   - **真实轮胎配方槽位解析与物理多级装配（Real Tyre Compound Resolution & Multi-Tier Fitting）**：彻底攻克了进站换胎提示成功但实车未生效的隐患。在 `ControlTelemetry.lua` 中引入 `resolveRealCompoundIndex`，结合 `ac.getTyresIndex`、名称代号解析与 `ac.getTyresName`/`ac.getTyresLongName` 双向模糊遍历，将界面选中的配方准确映射到底层物理真实存在的有效槽位（消除越界槽位导致的 C++ 静默丢弃）；同时通过 `physics.setAITyres`、`physics.setAIRainTyres`（雨胎/干胎意向同步）、`physics.setTyresCompound`（全轮 60 及 0~3 轮毂逐轮注入）与 `physics.setTyresVirtualKM`（虚拟磨损里程与胎损归零）进行四重物理层强制换装；并在 `RaceContext.lua` 中实现 `compoundIndex` 变更时自动调用 CSP API 回读刷新真实的 `compoundName`，杜绝 UI 虚假与显示滞后。
   - **维修区工单防早产与工位停稳释放闭锁（Pit Stop Service Gate & Departure Release）**：进站作业严格隔离限速通道行驶阶段（`IN_PITLANE`）与工位停稳阶段（`IN_BAY`），严格仅在 `speedKmh < 1.0` 且在停站工位静止时单次幂等触发加注与换胎；离站加速时（`speedKmh >= 1.0`）平滑过渡至 `RELEASED`，彻底消除由于重置油量过低引发的燃油保护看门狗覆盖、减速锁死及原地橡皮筋死锁。
   - **诊断日志实时 AI 原生控制遥测流与开关（AI Control Telemetry Stream & Toggle）**：在诊断日志工具栏新增交互式开关 `[ ] 实时 AI 直接控制日志 (Live AI Control Stream)`，严格遵循 Dear ImGui 单帧点击事件模型（修复了返回值误作稳态变量导致次帧自复位的 Bug），并支持点击状态标签双向快速切换与 `ac.storage` 安全持久化；默认关闭维持零性能损耗与日志纯净度；开启后以 2–4Hz 动态抽样捕获底层物理动作，杜绝原生函数名转储，语义化转译为 `[HH:mm:ss.fff] [#CarNum DriverName] Action Category -> Operational Description`（如配速推圈、进站换胎加注、防守卡位走线、ERS/DRS 进攻超车模式等），并支持 CSP API 调用异常与前置校验拦截的 Red/Amber 显式告警追踪。

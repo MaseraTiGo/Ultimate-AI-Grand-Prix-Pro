@@ -1081,13 +1081,16 @@ function M.renderLogsTab()
   -- 1. Toolbar & Controls
   local isStreamActive = ControlTelemetry.isEnabled()
   if ui and ui.checkbox then
-    local clicked, newVal = ui.checkbox("实时 AI 直接控制日志 (Live AI Control Stream)##ctrl_telemetry_toggle", isStreamActive)
-    if clicked then
-      if newVal ~= nil then
-        ControlTelemetry.setEnabled(newVal)
-      else
-        ControlTelemetry.setEnabled(not isStreamActive)
+    local r1, r2 = ui.checkbox("实时 AI 直接控制日志 (Live AI Control Stream)##ctrl_telemetry_toggle", isStreamActive)
+    if r2 ~= nil then
+      -- Tuple return: (checked, changed)
+      if r2 == true then
+        local nextVal = (type(r1) == "boolean") and r1 or (not isStreamActive)
+        ControlTelemetry.setEnabled(nextVal)
       end
+    elseif r1 == true then
+      -- Single return boolean: true if clicked/toggled
+      ControlTelemetry.setEnabled(not isStreamActive)
     end
   elseif ui and ui.button then
     local toggleBtnText = isStreamActive and "[✔ 开启] 实时 AI 控制遥测流##ctrl_toggle" or "[  关闭] 实时 AI 控制遥测流##ctrl_toggle"
@@ -1152,6 +1155,8 @@ function M.renderLogsTab()
               catCol = COLOR_GOLD
             elseif e.category:find("Pace") or e.category:find("Energy") then
               catCol = COLOR_BLUE
+            elseif e.category:find("Body Language") then
+              catCol = COLOR_GOLD
             elseif e.category:find("Throttle") then
               catCol = COLOR_CYAN
             elseif e.category:find("Rescue") then
@@ -1246,8 +1251,9 @@ function M.renderEventFeed()
     drawTextColored(COLOR_MUTED, "  [监听中] 正在追踪全场 AI 攻防博弈、特技动作、失误修正与黄旗突发...")
   else
     for _, ev in ipairs(aiEvents) do
-      local isAlert = ev.msg:find("失误") or ev.msg:find("黄旗") or ev.msg:find("进站") or ev.msg:find("撞击") or ev.msg:find("Safety") or ev.msg:find("安全车") or ev.msg:find("蓝旗")
-      local evCol = isAlert and COLOR_GOLD or COLOR_BLUE
+      local isHornAlert = ev.msg:find("抗议") or ev.msg:find("鸣笛")
+      local isAlert = isHornAlert or ev.msg:find("大灯") or ev.msg:find("闪灯") or ev.msg:find("失误") or ev.msg:find("黄旗") or ev.msg:find("进站") or ev.msg:find("撞击") or ev.msg:find("Safety") or ev.msg:find("安全车") or ev.msg:find("蓝旗")
+      local evCol = isHornAlert and COLOR_RED or (isAlert and COLOR_GOLD or COLOR_BLUE)
       ui.text(string.format("  [%s] ", ev.timeStr))
       ui.sameLine()
       drawInlineColored(evCol, ev.msg)
