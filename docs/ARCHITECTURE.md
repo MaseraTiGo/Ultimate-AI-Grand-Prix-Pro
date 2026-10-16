@@ -1,59 +1,49 @@
 # 系统分层与架构设计说明 (docs/ARCHITECTURE.md)
 
-## 1. 整体架构全景
+## 1. 整体架构全景 (Master-Slave / Thin-Client 解耦架构)
 
-`Ultimate AI Grand Prix Pro` 采用五层解耦的高性能异步驱动架构，彻底融合了微观车手神经反射与宏观车队策略决策，并在底层具备 CSP 严格越界防护与单次幂等初始化机制：
+`Ultimate AI Grand Prix Pro` 采用彻底解耦的**主从式星型中继架构（Master-Slave / Thin-Client Hub-and-Spoke Architecture）**：
+- **CSP Lua 瘦客户端（Dumb Actuator & Broadcaster）**：彻底剔除宏观策略计算、AI 性格配置与繁杂 ImGui 界面，仅承担 60Hz 物理看门狗、10Hz 微观车手反射、10Hz~20Hz 紧凑遥测/事件广播，以及硬件级 API 控制指令执行；
+- **Python 独立策略中枢（`StrategyManager`）**：以双可执行程序体系（FIA Admin 与 Team Principal Pit Wall）统管真实规程解析、沙盒破坏者覆写、非线性轮胎/燃油数学模型、服务端“战争迷雾”脱敏广播与 ACL 权限拦截。
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
-│                     Ultimate AI Grand Prix Pro 统一产品架构 (24 车高拟真)              │
+│               Ultimate AI Grand Prix Pro 统一主从架构 (CSP Lua + Python Suite)         │
 │                                                                                        │
-│  [1. 交互与指挥层 (UI & Head-Up Display)] (lib/ui/DashboardUI.lua)                     │
-│     ├─ Tab 1 [1. 实时HUD]: 全场 24 车微观状态矩阵 (压力、士气 Flow/Tilt、战术动作)        │
-│     ├─ Tab 2 [2. 车队指挥]: 车队策略看板 (Stint 窗口、预估续航圈数、主动车队指令无线电)   │
-│     ├─ Tab 3 [3. 策略工坊]: 圈数动态增减、基准单圈油耗预设、0停/1停/2停全局策略重构    │
-│     ├─ Tab 4 [4. 车手配置]: 连续基因图谱/预设人格手动覆写面板                           │
-│     ├─ Tab 5 [5. 诊断日志]: 有界循环诊断日志流 (Bounded Ring Buffer)                   │
-│     └─ 底部常驻联动 [实时指令响应与赛事广播流] (Pinned Live Dual-Track Feed):          │
-│          ├─ Track 1 [指令回执]: 玩家下达指令状态、毫秒回显与合流幂等确认               │
-│          └─ Track 2 [赛事广播]: AI 拟人超车/失误/过热/进站/黄旗/安全车全局广播事件     │
+│  [A. 外部策略指挥中枢 (Python StrategyManager)] (PySide6 工业暗黑主题 #0F1115)          │
+│     ├─ 1. admin_main.py (FIA Race Control / God Mode 主控台)                           │
+│     │    ├─ 直连 Lua UDP:30888/30889 独占链路，控制广播开关与全场 AI 指令              │
+│     │    ├─ 开放 TCP:30890 Hub 服务端，管理全场车手名册与 Parc Fermé 锁定状态机       │
+│     │    ├─ 规则解析与 Copy-on-Write 沙盒破坏者预设引擎 (f1_2026, f1_2004, gt3)       │
+│     │    └─ 服务端“战争迷雾 (Fog of War)”脱敏广播与指令 ACL 鉴权拦截器                 │
+│     │                                                                                  │
+│     └─ 2. user_main.py (Team Principal Pit Wall 车队墙客户端)                          │
+│          ├─ 连入 Admin TCP:30890 (杜绝直连 Lua UDP 端口)，遵循网络星型拓扑            │
+│          ├─ 赛前车手选秀大厅 (Driver Draft Lobby: LOBBY_OPEN 自由绑定 / 锁定禁改)      │
+│          ├─ 公开 FIA 计时塔与动态 2D 赛道地图 (对手赛车深层数据自动掩码为 ---/---)    │
+│          └─ 己方车队全量深度遥测、Stint 甘特图、Undercut 雷达与一键车队无线电指令      │
 │                                                                                        │
-│  [2. 核心状态与数据契约层 (Core & State Contract)]                                     │
-│     ├─ RaceContext.lua: 全局唯一样条圈数、旗语、安全车、动态圈数与 24 车拓扑网络       │
-│     ├─ EventHub.lua: 双轨实时事件总线 (Track 1 指令回显 / Track 2 拟人与赛事广播)      │
-│     ├─ Config.lua: 统一参数配置、范围校验与默认值回退保护                             │
-│     └─ Logger.lua: 结构化分级日志、高频节流保护与有界内存池                            │
+│                    ▲ UDP : 30888 (Telemetry) / : 30889 (Commands)                     │
+│                    ▼                                                                   │
 │                                                                                        │
-│  [3. 宏观车队策略层 (AI Race Strategy Layer)] ── 1.0Hz 异步周期调度                    │
-│     ├─ StrategyCoordinator.lua: Stint 规划、进站窗口管理、3.0s换胎停顿与出站冷胎注入   │
-│     ├─ strategy_calculator.lua: 确定性多组别停站拆解与错峰计算                         │
-│     ├─ pit_strategy.lua: 实时 Undercut / Overcut 动态净收益评分                        │
-│     ├─ fuel_model.lua: 动态燃油消耗模型 (质量效应、推圈模式、脏空气跟车、安全车降耗)   │
-│     ├─ tyre_model.lua: 轮胎磨损非线性悬崖曲线与冷胎出站升温窗口解算                    │
-│     ├─ traffic_model.lua: 出站虚拟落点投影与交通密度惩罚                               │
-│     └─ safety_car.lua: 全场黄旗/安全车异常减速智能识别                                 │
-│                                                                                        │
-│  [4. 微观车手决策与执行层 (AI Driver & Reflex Layer)] ── 10Hz/60Hz 空间调度            │
-│     ├─ persona_loader.lua: 7D 连续 DNA 基因图谱 (攻防/抗压/保胎/停站/球商/耐心倾向)    │
-│     ├─ TacticalTicker.lua: 全局感官缓冲 (200ms延迟)、心态流动 (Flow/Tilt) 状态机       │
-│     │                      多场景拟人化肢体语言调度 (超车狂闪暴闪 / 蓝旗从容双闪 / 鸣笛抗议)│
-│     ├─ X-Skill 拟人化技能体系 (lib/skills/):                                            │
-│     │   ├─ SkillRegistry.lua: 契约校验、快速检索与零修改 manifest 自动注册机制         │
-│     │   ├─ SkillArbitrator.lua: 二阶段门控 (硬性前置 O(1) 过滤 -> 效用函数评分)        │
-│     │   │                       防抖锁定 (0.6s) 与技能冷却，全预分配 24 车上下文       │
-│     │   ├─ SwitchbackSkill.lua: 晚 Apex 交叉线下切反击 (三阶段状态机)                  │
-│     │   ├─ FeintDummySkill.lua: 假动作声东击西诱骗 (外侧佯攻 -> 内线下切)              │
-│     │   ├─ GentleSqueezeSkill.lua: 渐进式侧向挤压 (迫使对手进入脏线，保留一车宽)       │
-│     │   ├─ TowWeaveSkill.lua: 尾流破坏防守摇摆 (阻断后车吸尾流，附加轮胎热量累积)      │
-│     │   └─ LateBrakeDiveSkill.lua: 内线晚刹俯冲超车 (轮胎抓地力边界极限攻防)           │
-│     ├─ LODScheduler.lua: 三级空间调度 (聚焦 10Hz / 中距 3.33Hz / 远端 0Hz 深度休眠)    │
-│     ├─ MistakeEngine.lua: 拟人化微失误谱系 (入弯迟疑/循迹推头/起步打滑/抱死)           │
-│     ├─ BehaviorActuator.lua: 物理反打与油门切断、一车宽并排走廊、大灯/鸣笛动态脉冲执行 │
-│     ├─ ControlTelemetry.lua: 2-4Hz 动态抽样 AI 原生动作控制遥测流与异常告警追踪        │
-│     └─ watchdog.lua @ 60Hz: 瞬态物理看门狗、J-Turn 掉头自救与零内存物理沙盒            │
-│                                                                                        │
-│  [5. 外部生态开放层 (Zero-Overhead Bridge)] (lib/bridge/TelemetryBridge.lua)          │
-│     └─ LuaJIT FFI 共享内存块，无 GC 损耗直接反哺外部 AI 领航员与策略分析器              │
+│  [B. Assetto Corsa CSP Lua 瘦客户端] (Ultimate-AI-Grand-Prix-Pro.lua)                  │
+│     ├─ 1. 硬件级执行器与广播器 (dumb_actuator_broadcaster.lua)                         │
+│     │    ├─ 非阻塞 UDP 套接字循环 (10Hz~20Hz 紧凑位掩码 JSON 遥测流)                  │
+│     │    ├─ 边沿触发离散事件检测 (超车、进出站、碰撞摩擦、单圈结算)                   │
+│     │    ├─ 硬件指令安全执行 (BOX, CANCEL_BOX, RADIO, PERSONA, BROADCAST_TOGGLE)       │
+│     │    └─ 极简 ImGui 面板: 链路状态、广播主开关 (Broadcast Master Toggle)、日志开关 │
+│     │                                                                                  │
+│     ├─ 2. 微观车手决策与执行层 (AI Driver & Reflex Layer) ── 10Hz/60Hz                 │
+│     │    ├─ persona_loader.lua: 7D 连续 DNA 基因图谱 (攻防/抗压/保胎/停站倾向)        │
+│     │    ├─ TacticalTicker.lua: 生理延迟感知 (200ms)、心态心流 (Flow/Tilt)、肢体语言   │
+│     │    ├─ X-Skill 拟人化技能体系: 交叉线下切、假动作佯攻、尾流破坏、内线晚刹        │
+│     │    ├─ LODScheduler.lua: 三级空间调度 (聚焦 10Hz / 中距 3.33Hz / 远端 0Hz)      │
+│     │    ├─ MistakeEngine.lua: 拟人化微失误谱系 (入弯迟疑/循迹推头/起步打滑/抱死)      │
+│     │    ├─ BehaviorActuator.lua: 物理平滑限幅、一车宽防挤压走廊与大灯/鸣笛动态脉冲   │
+│     │    └─ watchdog.lua @ 60Hz: 瞬态物理看门狗、J-Turn 掉头自救与零内存物理沙盒       │
+│     │                                                                                  │
+│     └─ 3. 核心状态基石 (RaceContext.lua / EventHub.lua / Config.lua / Logger.lua)      │
+│          └─ CSP FFI 结构体安全防护、单次幂等初始化门闩与微扇区计时管理                 │
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 

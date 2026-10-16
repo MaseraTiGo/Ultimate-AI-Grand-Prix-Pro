@@ -26,12 +26,14 @@ local TelemetryBridge = require("lib/bridge/TelemetryBridge")
 local EventHub = require("lib/core/EventHub")
 local ControlTelemetry = require("lib/core/ControlTelemetry")
 local DashboardUI = require("lib/ui/DashboardUI")
+local DumbBroadcaster = require("dumb_actuator_broadcaster")
 
 local _initialized = false
 local _initAttempted = false
 local _inUpdate = false
 local _tacticalTimer = 0.0
 local _strategyTimer = 0.0
+local _broadcastTimer = 0.0
 local _flushTimer = 0.0
 local _perfMs = 0.0
 local _activeAiCount = 0
@@ -81,6 +83,7 @@ function script.init()
   TelemetryBridge.reset()
   EventHub.init()
   ControlTelemetry.init()
+  DumbBroadcaster.init()
 
   local sim = nil
   if ac and ac.getSim then
@@ -116,7 +119,18 @@ function script.update(dt)
   _inUpdate = true
   _tacticalTimer = _tacticalTimer + safeDt
   _strategyTimer = _strategyTimer + safeDt
+  _broadcastTimer = _broadcastTimer + safeDt
   _flushTimer = _flushTimer + safeDt
+
+  -- Step 0. Non-blocking hardware command execution from StrategyManager
+  DumbBroadcaster.stepCommands()
+
+  -- Step 0b. 10Hz-20Hz High-Frequency Telemetry & Discrete Event Broadcast to StrategyManager
+  if _broadcastTimer >= 0.05 then
+    local bDt = _broadcastTimer
+    _broadcastTimer = 0.0
+    DumbBroadcaster.stepTelemetry(bDt)
+  end
 
   -- 1. Periodic flush of rivalry incidents (every 5 seconds)
   if _flushTimer >= 5.0 then
@@ -124,12 +138,13 @@ function script.update(dt)
     rivalryMemory.flush()
   end
 
-  -- 2. Strategy & Pit Wall Coordinator Tick (1Hz / 1.0s interval)
+  -- 2. Strategy & Pit Wall Coordinator Tick (Heartbeat & Telemetry sync)
   if _strategyTimer >= 1.0 then
     local stratDt = _strategyTimer
     _strategyTimer = 0.0
     RaceContext.updateFromSim(sim)
-    StrategyCoordinator.stepStrategy(stratDt)
+    -- Strategic decision trees migrated to StrategyManager Python suite.
+    -- Lua retains lightweight heartbeat and event telemetry streaming.
     local rState = RaceContext.getRaceState()
     EventHub.tickHeartbeat(rState.sessionTime or 0.0, _activeAiCount + 1, rState.currentLap or 1, rState.totalLaps or 13)
   end
@@ -298,36 +313,28 @@ end
 
 function windowMain(dt)
   ensureInitialized()
-  local ok, err = pcall(DashboardUI.renderMain, _perfMs, _activeAiCount)
-  if not ok then
+  if DumbBroadcaster and DumbBroadcaster.renderMinimalUI then
+    DumbBroadcaster.renderMinimalUI()
+  else
     if ui and ui.text then
-      ui.text("Grand Prix Pro UI Render Error: " .. tostring(err))
+      ui.text("Ultimate AI Grand Prix Pro — Dumb Actuator & Broadcaster Online")
     end
   end
 end
 
 function windowSetup(dt)
   ensureInitialized()
-  local ok, err = pcall(DashboardUI.renderSetup)
-  if not ok and ui and ui.text then
-    ui.text("Setup UI Error: " .. tostring(err))
-  end
+  windowMain(dt)
 end
 
 function windowSettings(dt)
   ensureInitialized()
-  local ok, err = pcall(DashboardUI.renderGridSetupTab)
-  if not ok and ui and ui.text then
-    ui.text("Settings UI Error: " .. tostring(err))
-  end
+  windowMain(dt)
 end
 
 function windowStrategy(dt)
   ensureInitialized()
-  local ok, err = pcall(DashboardUI.renderStrategyWindow)
-  if not ok and ui and ui.text then
-    ui.text("Strategy UI Error: " .. tostring(err))
-  end
+  windowMain(dt)
 end
 
 script.windowMain = windowMain

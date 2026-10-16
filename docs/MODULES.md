@@ -48,9 +48,46 @@
   - `M.info(tag, msg, throttleSec)` / `M.warn(...)` / `M.error(...)`
   - `M.getRecentLogs()`: 供 UI 日志面板展示。
 
+### `dumb_actuator_broadcaster.lua` (Lua 瘦客户端核心硬件级执行器)
+- **职责**：作为 CSP 物理层与外部 Python `StrategyManager` 间的硬件执行与遥测中继。
+- **公共接口**：
+  - `M.init()`: 初始化本地双向非阻塞 UDP 套接字（发送 `127.0.0.1:30888`，接收 `127.0.0.1:30889`）。
+  - `M.setBroadcasting(enabled)` / `M.isBroadcasting()`: 运行时动态切换遥测广播主开关。
+  - `M.stepTelemetry(dt)`: 10Hz~20Hz 增量采集 36+ 赛车坐标、圈速、4轮磨损、胎温、燃油、ERS、DRS 及环境指标，以扁平紧凑位掩码 JSON 广播。
+  - `M.broadcastEvent(eventType, carIdx, details)`: 边沿触发离散事件广播（`LAP_COMPLETED` / `PIT_ENTRY` / `PIT_EXIT` / `POSITION_CHANGE` / `COLLISION`）。
+  - `M.stepCommands()`: 非阻塞轮询并执行来自 Python 的 `BOX`、`CANCEL_BOX`、`RADIO`、`PERSONA`、`SETUP`、`BROADCAST_TOGGLE` 控制指令，并回复确认回执 `ACK`。
+  - `M.renderMinimalUI()`: 极简轻量 ImGui 状态监控面板。
+
 ---
 
-## 2. 宏观车队策略层 (`lib/strategy/`)
+## 2. 外部 Python 策略中枢 (`StrategyManager/`)
+
+### `StrategyManager/core/`
+- **`protocol.py`**: 紧凑二进制/位掩码 Wire 编解码器，定义 `Car Flags`、`Env Flags`、生命周期状态（`LOBBY_OPEN`, `ROSTER_FROZEN`, `RACE_ACTIVE`）以及服务端“战争迷雾”脱敏算法（`apply_fog_of_war`）。
+- **`state_store.py`**: 线程安全中央数据仓储与 Qt Signal 事件分发总线。
+- **`ipc_gateway.py`**: UDP 通信网关，独占与 CSP Lua 通信，负责指令封装与异步调度。
+- **`admin_tcp_hub.py`**: FIA Admin 独占的局域网/本机 TCP Hub 服务端，负责用户连接鉴权、Parc Fermé 状态机同步、服务端战争迷雾数据过滤及客户端指令 ACL 强鉴权。
+- **`user_tcp_client.py`**: Team Principal 车队客户端网络栈，连入 Admin TCP，处理选秀申领/释放与车队指令下达。
+
+### `StrategyManager/rules_engine/`
+- **`rules_engine.py`**: FIA/SRO 赛事规程解析器，支持层级预设检索，严格执行 **Copy-on-Write**，用户沙盒修改独立写入 `presets/user_custom/`，绝对保护 `presets/defaults/` 只读模板。
+
+### `StrategyManager/strategy_ai/`
+- **`strategy_math.py`**: 非线性二次方轮胎退化曲线（含温度敏感度与断崖阈值）、燃油载重单圈质量惩罚模型、顺序/平行进站损耗时间解算、幽灵出站净空与交通落点预测器、Undercut / Overcut 动态威胁雷达。
+- **`persona_setup.py`**: 拟人化 7D 性格原型（激进、防守、失误抗性、保胎、雨天球商）与车辆机械设置管理器。
+
+### `StrategyManager/ui/`
+- **`styles.py`**: 专业工业级深碳黑 `#0F1115` 高对比遥测 QSS 样式表。
+- **`track_map_widget.py`**: QPainter 实时动态赛道地图 + 幽灵进站出站净空指示器。
+- **`timing_tower_widget.py`**: Pro 计时塔（支持对手赛车数据掩码展示 `---/---`）。
+- **`stint_planner_widget.py`**: 实时 Stint 横向甘特图与 Plan A / Plan B / Plan C 战术切换。
+- **`rule_override_widget.py`**: 交互式沙盒规则破坏者面板。
+- **`command_dispatch_widget.py`**: 车队一键无线电与进站指令控制台。
+- **`driver_draft_widget.py`**: 赛前车手选秀与车队名册绑定抽屉。
+
+---
+
+## 3. 宏观车队策略层 (`lib/strategy/`)
 
 ### `StrategyCoordinator.lua`
 - **职责**：统筹燃油模型、进站决策、换胎时机、车队无线电指令及物理注入。

@@ -1,0 +1,46 @@
+{
+  "series": "Formula 1",
+  "era": "2026 Active Aero & High Electrical",
+  "preset_id": "f1_2026",
+  "description": "FIA 2026 Technical & Sporting Regulations: 50% ICE / 50% Electrical power split, Manual Override Mode (MOM), Active Aerodynamics (Z-Mode Cornering / X-Mode Low Drag Straight), no mid-race refueling, mandatory 2 dry compounds.",
+  
+  "sporting_rules": {
+    "allow_refueling": false,
+    "refueling_flow_rate_kg_s": 0.0,
+    "mandatory_dry_compounds": 2,
+    "total_dry_compounds_available": 3,
+    "pit_window_mandatory": false,
+    "pit_window_start_min": 0,
+    "pit_window_end_min": 0,
+    "min_pit_lane_stationary_time_sec": 0.0,
+    "pit_work_mechanics": "simultaneous",
+    "tyre_change_limit": 4
+  },
+
+  "powertrain_and_aero": {
+    "regulations_era": "2026",
+    "active_aero_enabled": true,
+    "active_aero_straight_gain_kmh": 14.5,
+    "active_aero_corner_downforce_mult": 1.25,
+    "electrical_derate_start_speed_kmh": 290.0,
+    "manual_override_mode_bonus_kw": 350.0,
+    "ers_max_deployment_mj_lap": 8.5
+  },
+
+  "tyres": {
+    "compounds": [
+      { "code": "SOFT", "display_name": "Soft (C4/C5)", "color": "#E10600", "base_pace_delta_sec": 0.0, "degradation_rate": 0.11, "thermal_sensitivity": 1.2 },
+      { "code": "MED", "display_name": "Medium (C3)", "color": "#FFF200", "base_pace_delta_sec": 0.55, "degradation_rate": 0.065, "thermal_sensitivity": 1.0 },
+      { "code": "HARD", "display_name": "Hard (C1/C2)", "color": "#FFFFFF", "base_pace_delta_sec": 1.15, "degradation_rate": 0.038, "thermal_sensitivity": 0.8 },
+      { "code": "INTER", "display_name": "Intermediate", "color": "#39B54A", "base_pace_delta_sec": 4.20, "degradation_rate": 0.05, "thermal_sensitivity": 0.7 },
+      { "code": "WET", "display_name": "Full Wet", "color": "#00AEEF", "base_pace_delta_sec": 8.50, "degradation_rate": 0.04, "thermal_sensitivity": 0.5 }
+    ]
+  },
+
+  "physics_multipliers": {
+    "fuel_burn_mult": 1.0,
+    "tyre_wear_mult": 1.0,
+    "safety_car_probability": 0.35,
+    "pit_speed_limit_kmh": 80.0
+  }
+}

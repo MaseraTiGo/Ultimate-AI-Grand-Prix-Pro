@@ -1,1 +1,4 @@
-﻿powershell.cmd
+powershell.cmd
+.idea/
+__pycache__/
+*.pyc

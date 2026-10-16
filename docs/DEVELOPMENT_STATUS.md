@@ -1,6 +1,19 @@
-# 开发状态、迁移清单与后续演进建议 (DEVELOPMENT_STATUS.md)
+## 1. 架构演进与 Master-Slave / Thin-Client 解耦重大里程碑
+- **CSP Lua 瘦客户端（Dumb Actuator & Broadcaster）彻底下沉**：
+  - 从主入口 `Ultimate-AI-Grand-Prix-Pro.lua` 与渲染链路中彻底剥离繁杂的 5-Tab ImGui 车队指挥台与调车界面，收敛为极简通信状态监控、**广播主开关（Broadcast Master Toggle）**与调试日志开关；
+  - 彻底剥离宏观策略决策树与计算负荷（`StrategyCoordinator.stepStrategy` 计算逻辑已停用，由 Python 统管，Lua 仅保留事件遥测通道与心跳维持）；
+  - 引入核心执行器与广播器 `dumb_actuator_broadcaster.lua`，以 10Hz~20Hz 增量采集并广播全场 36+ 赛车 4 轮实时磨损%、胎温、精确燃油、ERS、DRS 及环境指标，并具备边沿触发事件检测（超车、进出站、冲撞）与硬件级非阻塞指令执行。
+- **独立 Python 策略中枢（`StrategyManager/`）完整交付**：
+  - **星型拓扑双端应用**：交付 `admin_main.py`（FIA Race Control / God Mode 主控端）与 `user_main.py`（Team Principal 车队墙客户端）；
+  - **Parc Fermé 锁定状态机**：完整支持 `LOBBY_OPEN` $\longrightarrow$ `ROSTER_FROZEN` $\longrightarrow$ `RACE_ACTIVE`，提供赛前车手选秀大厅（Driver Draft Lobby）与 Admin 一键锁定；
+  - **服务端“战争迷雾”脱敏**：Admin 服务端针对非己方对手赛车强制脱敏内部数据（磨损、胎温、精确油量显示为 `---/---`），己方赛车解锁 100% 深度工程遥测；
+  - **服务端 ACL 强鉴权**：锁定期间拒绝违规申领，任何策略指令（进站、战术巡航、换胎）强制校验赛车归属权，越权指令直接拦截；
+  - **Copy-on-Write 规程沙盒破坏者**：内置 `f1_2026.json`、`f1_2004_refuel.json` 与 `gt3_endurance.json`，支持玩家任意破坏真实规程（强启加油、自定义流速、顺序换胎），修改严格保存至 `presets/user_custom/`，只读默认模板零污染；
+  - **纯数学物理仿真模型**：非线性轮胎退化曲线（含温度与断崖）、燃油载重质量惩罚、顺序/平行停站损耗、Undercut/Overcut 威胁雷达与幽灵出站净空预测器。
 
-## 1. 源工程功能迁移状态审计
+---
+
+## 2. 源工程功能迁移状态审计
 
 ### 1.1 来自 `SmartAI` 的迁移
 - **已迁移与强化**：

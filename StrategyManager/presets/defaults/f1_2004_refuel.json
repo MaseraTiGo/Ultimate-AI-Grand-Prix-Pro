@@ -1,0 +1,44 @@
+{
+  "series": "Formula 1",
+  "era": "2004 V10 Screamer & Sprint Refueling",
+  "preset_id": "f1_2004_refuel",
+  "description": "FIA 2004 V10 Era: 3.0L naturally aspirated screamers (19,000+ RPM), ultra-fast mid-race refueling (12.1 kg/s), qualifying with race fuel, multiple sprint stints (Undercut king vs. heavy-fuel Overcut).",
+
+  "sporting_rules": {
+    "allow_refueling": true,
+    "refueling_flow_rate_kg_s": 12.1,
+    "mandatory_dry_compounds": 1,
+    "total_dry_compounds_available": 2,
+    "pit_window_mandatory": false,
+    "pit_window_start_min": 0,
+    "pit_window_end_min": 0,
+    "min_pit_lane_stationary_time_sec": 0.0,
+    "pit_work_mechanics": "parallel",
+    "tyre_change_limit": 4
+  },
+
+  "powertrain_and_aero": {
+    "regulations_era": "2004_V10",
+    "active_aero_enabled": false,
+    "active_aero_straight_gain_kmh": 0.0,
+    "active_aero_corner_downforce_mult": 1.0,
+    "electrical_derate_start_speed_kmh": 999.0,
+    "manual_override_mode_bonus_kw": 0.0,
+    "ers_max_deployment_mj_lap": 0.0
+  },
+
+  "tyres": {
+    "compounds": [
+      { "code": "PRIME", "display_name": "Bridgestone / Michelin Prime", "color": "#E10600", "base_pace_delta_sec": 0.0, "degradation_rate": 0.075, "thermal_sensitivity": 0.9 },
+      { "code": "OPTION", "display_name": "Bridgestone / Michelin Option", "color": "#FFF200", "base_pace_delta_sec": 0.60, "degradation_rate": 0.045, "thermal_sensitivity": 0.8 },
+      { "code": "WET", "display_name": "Monsoon Wet", "color": "#00AEEF", "base_pace_delta_sec": 7.00, "degradation_rate": 0.035, "thermal_sensitivity": 0.5 }
+    ]
+  },
+
+  "physics_multipliers": {
+    "fuel_burn_mult": 1.35,
+    "tyre_wear_mult": 0.85,
+    "safety_car_probability": 0.20,
+    "pit_speed_limit_kmh": 100.0
+  }
+}
