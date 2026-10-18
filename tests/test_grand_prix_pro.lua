@@ -3373,6 +3373,9 @@ do
     local c1 = RaceContext.getCarState(1)
     c1.lastMistakeType = "NONE"
     c1.tacticalState = "CRUISE"
+    c1.gapToAhead = 999.0
+    c1.stress = 0.0
+    c1.mti = 0.0
 
     -- Force initial cut to Car 1
     TVDirectorEngine.forceCut(1, TVDirectorEngine.CAMERA_MODE_TRACK, "TEST_INITIAL", TVDirectorEngine.PRIORITY_BATTLE, 8.0)
@@ -3442,8 +3445,229 @@ do
   runTest60()
 end
 
+do
+  print("\n[Test 61] Testing Contextual Tactical Camera Perspectives (Cockpit, Nose, Rear, Heli)...")
+  local function runTest61()
+    local TVDirectorEngine = require("lib/broadcast/TVDirectorEngine")
+    local RaceContext = require("lib/core/RaceContext")
+
+    TVDirectorEngine.reset()
+    TVDirectorEngine.setEnabled(true)
+    TVDirectorEngine.setMinDwellTime(2.0)
+    TVDirectorEngine.setMaxDwellTime(10.0)
+
+    local raceState = RaceContext.getRaceState()
+    raceState.carsCount = 4
+    raceState.currentLap = 5
+    raceState.totalLaps = 15
+    raceState.trackLengthM = 1000.0
+
+    local function mockGetCar(i)
+      local c = RaceContext.getCarState(i)
+      local sp = c.splinePosition or 0.0
+      return {
+        isConnected = c.isConnected,
+        splinePosition = sp,
+        position = { x = sp * 1000.0, y = 0.0, z = 0.0 },
+        velocity = { x = 30.0, y = 0.0, z = 0.0 }
+      }
+    end
+
+    -- 1. Attacking Move -> ATTACK_NOSE (Bumper Cam)
+    local c0 = RaceContext.getCarState(0)
+    c0.isConnected = true
+    c0.racePosition = 1
+    c0.gapToAhead = 999.0
+    c0.tacticalState = "CRUISE"
+    c0.lastMistakeType = "NONE"
+    c0.stress = 2.0
+    c0.mti = 0.5
+    c0.splinePosition = 0.200
+
+    local c1 = RaceContext.getCarState(1)
+    c1.isConnected = true
+    c1.racePosition = 2
+    c1.gapToAhead = 0.45
+    c1.gapAheadSec = 0.45
+    c1.tacticalState = "ATTACK"
+    c1.activeSkill = "POUNCE_PASS"
+    c1.lastMistakeType = "NONE"
+    c1.stress = 3.0
+    c1.mti = 0.8
+    c1.splinePosition = 0.190
+
+    local c2 = RaceContext.getCarState(2)
+    c2.isConnected = true
+    c2.racePosition = 3
+    c2.gapToAhead = 5.0
+    c2.tacticalState = "CRUISE"
+    c2.lastMistakeType = "NONE"
+    c2.stress = 0.0
+    c2.mti = 0.0
+    c2.splinePosition = 0.150
+
+    local c3 = RaceContext.getCarState(3)
+    c3.isConnected = true
+    c3.racePosition = 4
+    c3.gapToAhead = 10.0
+    c3.tacticalState = "CRUISE"
+    c3.lastMistakeType = "NONE"
+    c3.splinePosition = 0.100
+
+    RaceContext.updateTopology(4, mockGetCar)
+
+    TVDirectorEngine.step(0.1, nil)
+    assertEq(TVDirectorEngine.getFocusedCar(), 1, "Director focuses on Car 1 attacking move")
+    assertEq(TVDirectorEngine.getCurrentSituation(), TVDirectorEngine.SITUATION_ATTACK_NOSE, "Situation resolved to ATTACK_NOSE")
+    assertEq(TVDirectorEngine.getCurrentCameraMode(), TVDirectorEngine.CAMERA_MODE_DRIVABLE, "Camera mode is Drivable")
+    assertEq(TVDirectorEngine.getCurrentSubMode(), TVDirectorEngine.DRIVABLE_BUMPER, "SubMode is Bumper for low front nose view")
+
+    -- 2. Psychological Strain -> STRAIN_COCKPIT (Dash / Cockpit view)
+    c1.tacticalState = "CRUISE"
+    c1.activeSkill = "NONE"
+    c1.gapToAhead = 999.0
+
+    c2.stress = 8.0
+    c2.mti = 2.4
+    c2.gapBehindSec = 0.35
+    c2.tacticalState = "CRUISE"
+    c2.splinePosition = 0.180
+    c3.splinePosition = 0.170
+    RaceContext.updateTopology(4, mockGetCar)
+
+    TVDirectorEngine.step(3.0, nil)
+    assertEq(TVDirectorEngine.getFocusedCar(), 2, "Director focuses on Car 2 under extreme psychological strain")
+    assertEq(TVDirectorEngine.getCurrentSituation(), TVDirectorEngine.SITUATION_STRAIN_COCKPIT, "Situation resolved to STRAIN_COCKPIT")
+    assertEq(TVDirectorEngine.getCurrentCameraMode(), TVDirectorEngine.CAMERA_MODE_DRIVABLE, "Camera mode is Drivable")
+    assertEq(TVDirectorEngine.getCurrentSubMode(), TVDirectorEngine.DRIVABLE_DASH, "SubMode is Dash for steering wheel & cockpit strain view")
+
+    -- 3. Defending Move -> DEFEND_REAR (Chase / Mirror dual framing)
+    c2.stress = 1.0
+    c2.mti = 0.2
+    c2.tacticalState = "DEFEND"
+    c2.activeSkill = "DEFENSIVE_COVER"
+
+    TVDirectorEngine.step(3.0, nil)
+    assertEq(TVDirectorEngine.getFocusedCar(), 2, "Director tracks Car 2 defensive battle")
+    assertEq(TVDirectorEngine.getCurrentSituation(), TVDirectorEngine.SITUATION_DEFEND_REAR, "Situation evolved to DEFEND_REAR")
+    assertEq(TVDirectorEngine.getCurrentCameraMode(), TVDirectorEngine.CAMERA_MODE_DRIVABLE, "Camera mode is Drivable")
+    assertEq(TVDirectorEngine.getCurrentSubMode(), TVDirectorEngine.DRIVABLE_CHASE, "SubMode is Chase for rear mirror and chaser framing")
+
+    -- 4. Side-by-Side Corner Duel -> SIDE_HELICOPTER (Helicopter Aerial)
+    c2.tacticalState = "CRUISE"
+    c2.activeSkill = "NONE"
+
+    c0.splinePosition = 0.5000
+    c1.splinePosition = 0.5020 -- 2.0m lateral / longitudinal proximity
+    c0.speedKmh = 120.0
+    c1.speedKmh = 120.0
+    c0.tacticalState = "OVERTAKING"
+    c0.gapToAhead = 0.15
+    RaceContext.updateTopology(4, mockGetCar)
+
+    TVDirectorEngine.step(3.0, nil)
+    assertEq(TVDirectorEngine.getFocusedCar(), 0, "Director cuts to side-by-side corner duel on Car 0")
+    assertEq(TVDirectorEngine.getCurrentSituation(), TVDirectorEngine.SITUATION_SIDE_HELICOPTER, "Situation resolved to SIDE_HELICOPTER")
+    assertEq(TVDirectorEngine.getCurrentCameraMode(), TVDirectorEngine.CAMERA_MODE_HELICOPTER, "Camera mode is Helicopter for aerial perspective")
+
+    TVDirectorEngine.reset()
+    print("  -> Passed: Contextual Tactical Camera Perspectives verified.")
+  end
+  runTest61()
+end
+
+do
+  print("\n[Test 62] Testing Tactical Perspective Preferences, Storytelling Arc & Instant Audition...")
+  local function runTest62()
+    local TVDirectorEngine = require("lib/broadcast/TVDirectorEngine")
+    local RaceContext = require("lib/core/RaceContext")
+    local DashboardUI = require("lib/ui/DashboardUI")
+
+    TVDirectorEngine.reset()
+    TVDirectorEngine.setEnabled(true)
+
+    -- 1. Verify Default Preferences (All True)
+    assertEq(TVDirectorEngine.getPrefStrainCockpit(), true, "Default prefStrainCockpit is true")
+    assertEq(TVDirectorEngine.getPrefAttackNose(), true, "Default prefAttackNose is true")
+    assertEq(TVDirectorEngine.getPrefDefendRear(), true, "Default prefDefendRear is true")
+    assertEq(TVDirectorEngine.getPrefSideHelicopter(), true, "Default prefSideHelicopter is true")
+    assertEq(TVDirectorEngine.getPrefStorytelling(), true, "Default prefStorytelling is true")
+
+    -- 2. Toggle and Fallback Behavior
+    TVDirectorEngine.setPrefAttackNose(false)
+    assertEq(TVDirectorEngine.getPrefAttackNose(), false, "prefAttackNose set to false")
+
+    local function mockGetCar(i)
+      local c = RaceContext.getCarState(i)
+      local sp = c.splinePosition or 0.0
+      return {
+        isConnected = c.isConnected,
+        splinePosition = sp,
+        position = { x = sp * 1000.0, y = 0.0, z = 0.0 },
+        velocity = { x = 30.0, y = 0.0, z = 0.0 }
+      }
+    end
+
+    local c0 = RaceContext.getCarState(0)
+    c0.isConnected = true
+    c0.racePosition = 1
+    c0.gapToAhead = 999.0
+    c0.tacticalState = "CRUISE"
+    c0.lastMistakeType = "NONE"
+    c0.splinePosition = 0.200
+
+    local c1 = RaceContext.getCarState(1)
+    c1.isConnected = true
+    c1.racePosition = 2
+    c1.gapToAhead = 0.45
+    c1.gapAheadSec = 0.45
+    c1.tacticalState = "ATTACK"
+    c1.activeSkill = "POUNCE_PASS"
+    c1.lastMistakeType = "NONE"
+    c1.splinePosition = 0.188 -- 12m trailing distance (aheadDist = 12m > 4.2m)
+
+    RaceContext.updateTopology(4, mockGetCar)
+
+    TVDirectorEngine.step(0.1, nil)
+    -- With prefAttackNose disabled, attack falls back to World Feed / Track TV mode
+    assertEq(TVDirectorEngine.getCurrentSituation(), TVDirectorEngine.SITUATION_WORLD_FEED, "Disabled attack nose falls back to WORLD_FEED")
+    assertEq(TVDirectorEngine.getCurrentCameraMode(), TVDirectorEngine.CAMERA_MODE_TRACK, "Fallback uses Track camera")
+
+    -- Re-enable via toggle
+    TVDirectorEngine.togglePrefAttackNose()
+    assertEq(TVDirectorEngine.getPrefAttackNose(), true, "togglePrefAttackNose restored to true")
+
+    -- 3. Instant Perspective Audition via forceCut
+    TVDirectorEngine.forceCut(0, TVDirectorEngine.CAMERA_MODE_DRIVABLE, "AUD_NOSE", 1, 6.0, TVDirectorEngine.DRIVABLE_BUMPER, TVDirectorEngine.SITUATION_ATTACK_NOSE)
+    assertEq(TVDirectorEngine.getCurrentCameraMode(), TVDirectorEngine.CAMERA_MODE_DRIVABLE, "Audition camera mode set to Drivable")
+    assertEq(TVDirectorEngine.getCurrentSubMode(), TVDirectorEngine.DRIVABLE_BUMPER, "Audition subMode set to Bumper")
+    assertEq(TVDirectorEngine.getCurrentSituation(), TVDirectorEngine.SITUATION_ATTACK_NOSE, "Audition situation set to ATTACK_NOSE")
+
+    TVDirectorEngine.forceCut(0, TVDirectorEngine.CAMERA_MODE_DRIVABLE, "AUD_COCKPIT", 1, 6.0, TVDirectorEngine.DRIVABLE_DASH, TVDirectorEngine.SITUATION_STRAIN_COCKPIT)
+    assertEq(TVDirectorEngine.getCurrentSubMode(), TVDirectorEngine.DRIVABLE_DASH, "Audition subMode set to Dash")
+    assertEq(TVDirectorEngine.getCurrentSituation(), TVDirectorEngine.SITUATION_STRAIN_COCKPIT, "Audition situation set to STRAIN_COCKPIT")
+
+    TVDirectorEngine.forceCut(0, TVDirectorEngine.CAMERA_MODE_DRIVABLE, "AUD_CHASE", 1, 6.0, TVDirectorEngine.DRIVABLE_CHASE, TVDirectorEngine.SITUATION_DEFEND_REAR)
+    assertEq(TVDirectorEngine.getCurrentSubMode(), TVDirectorEngine.DRIVABLE_CHASE, "Audition subMode set to Chase")
+    assertEq(TVDirectorEngine.getCurrentSituation(), TVDirectorEngine.SITUATION_DEFEND_REAR, "Audition situation set to DEFEND_REAR")
+
+    TVDirectorEngine.forceCut(0, TVDirectorEngine.CAMERA_MODE_HELICOPTER, "AUD_HELI", 1, 6.0, 0, TVDirectorEngine.SITUATION_SIDE_HELICOPTER)
+    assertEq(TVDirectorEngine.getCurrentCameraMode(), TVDirectorEngine.CAMERA_MODE_HELICOPTER, "Audition camera mode set to Helicopter")
+    assertEq(TVDirectorEngine.getCurrentSituation(), TVDirectorEngine.SITUATION_SIDE_HELICOPTER, "Audition situation set to SIDE_HELICOPTER")
+
+    -- 4. DashboardUI Director Tab Verification with New Controls
+    local okUI = pcall(DashboardUI.renderDirectorTab)
+    assertTrue(okUI, "DashboardUI.renderDirectorTab renders cleanly with all tactical perspective controls and audition buttons")
+
+    TVDirectorEngine.reset()
+    print("  -> Passed: Tactical Perspective Preferences, Storytelling Arc & Instant Audition verified.")
+  end
+  runTest62()
+end
+
 print("==================================================================")
-print("  ALL 60 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
+print("  ALL 62 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
 print("==================================================================")
+
 
 

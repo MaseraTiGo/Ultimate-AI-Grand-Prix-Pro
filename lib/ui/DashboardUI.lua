@@ -1347,7 +1347,41 @@ function M.renderDirectorTab()
     local targetLabel = EventHub.formatDriverLabel(focusedCar, fullTargetName)
 
     local curMode = TVDirectorEngine.getCurrentCameraMode()
-    local modeName = (curMode == TVDirectorEngine.CAMERA_MODE_CAR) and "Car T-Cam (车载特写)" or ((curMode == TVDirectorEngine.CAMERA_MODE_HELICOPTER) and "Helicopter (直升机鸟瞰)" or "Track TV (赛道电视机位)")
+    local curSubMode = TVDirectorEngine.getCurrentSubMode()
+    local curSituation = TVDirectorEngine.getCurrentSituation()
+    local duelRival = TVDirectorEngine.getCurrentDuelRival()
+
+    local modeName = "Track TV (赛道电视机位)"
+    if curMode == TVDirectorEngine.CAMERA_MODE_CAR then
+      modeName = "Car T-Cam (车载特写)"
+    elseif curMode == TVDirectorEngine.CAMERA_MODE_HELICOPTER then
+      modeName = "Helicopter (直升机鸟瞰)"
+    elseif curMode == TVDirectorEngine.CAMERA_MODE_DRIVABLE then
+      if curSubMode == TVDirectorEngine.DRIVABLE_BUMPER then
+        modeName = "贴地车鼻第一视角 (Bumper Cam)"
+      elseif curSubMode == TVDirectorEngine.DRIVABLE_DASH then
+        modeName = "座舱副驾/仪表视角 (Dash / Cockpit)"
+      elseif curSubMode == TVDirectorEngine.DRIVABLE_CHASE then
+        modeName = "防守尾追双车同框 (Chase / Rear Mirror)"
+      else
+        modeName = "驾驶舱/外部机位 (Drivable Cam)"
+      end
+    end
+
+    local sitName = "正赛大局巡航"
+    if curSituation == TVDirectorEngine.SITUATION_STRAIN_COCKPIT then
+      sitName = "心理高压防守 (STRAIN_COCKPIT)"
+    elseif curSituation == TVDirectorEngine.SITUATION_ATTACK_NOSE then
+      sitName = "极速咬尾进攻 (ATTACK_NOSE)"
+    elseif curSituation == TVDirectorEngine.SITUATION_DEFEND_REAR then
+      sitName = "后视镜防守封线 (DEFEND_REAR)"
+    elseif curSituation == TVDirectorEngine.SITUATION_SIDE_HELICOPTER then
+      sitName = "弯道并排贴身缠斗 (SIDE_HELICOPTER)"
+    elseif curSituation == TVDirectorEngine.SITUATION_MISTAKE_ACTION then
+      sitName = "突发失误救援追踪 (MISTAKE_ACTION)"
+    elseif curSituation == TVDirectorEngine.SITUATION_PIT_UNDERCUT then
+      sitName = "进出站翻越博弈 (PIT_UNDERCUT)"
+    end
 
     local reason = TVDirectorEngine.getCurrentReason()
     local prio = TVDirectorEngine.getCurrentPriority()
@@ -1364,11 +1398,16 @@ function M.renderDirectorTab()
     if ui and ui.sameLine then ui.sameLine() end
     drawInlineColored(prioCol, string.format("[%s : %s]", prioName, reason))
 
-    if ui and ui.text then ui.text(string.format("镜头停留: %.1fs / %.1fs (剩余 %.1fs) | 导播风格: [%s]", dwellElapsed, dwellTarget, dwellRemain, TVDirectorEngine.getStyle())) end
+    if ui and ui.text then ui.text(string.format("战况情景: [%s] | 镜头停留: %.1fs / %.1fs (剩余 %.1fs) | 导播风格: [%s]", sitName, dwellElapsed, dwellTarget, dwellRemain, TVDirectorEngine.getStyle())) end
+
+    if duelRival >= 0 then
+      local _, rivalName = getDriverNameDisplay(duelRival, 14)
+      local rivalLabel = EventHub.formatDriverLabel(duelRival, rivalName)
+      if ui and ui.text then ui.text(string.format("  ⚔️ 缠斗博弈对手: %s (双车叙事追踪模式生效中)", rivalLabel)) end
+    end
 
     if TVDirectorEngine.isManualOverrideActive() then
       local quietRem = TVDirectorEngine.getQuietTimer()
-      if ui and ui.sameLine then ui.sameLine() end
       drawInlineColored(COLOR_GOLD, string.format("[⚠️ 玩家接管中: 静默让渡剩余 %.1fs]", quietRem))
     end
 
@@ -1454,7 +1493,87 @@ function M.renderDirectorTab()
 
   if ui and ui.separator then ui.separator() end
 
-  -- 5. Combat Hotspot Radar Top 3
+  -- 5. Contextual Perspectives & Narrative Storytelling
+  drawTextColored(COLOR_CYAN, "=== 拟人战术情景视角偏好与叙事连贯 (Tactical Perspectives & Storytelling) ===")
+
+  local prefCockpit = TVDirectorEngine.getPrefStrainCockpit()
+  local btnCockpit = prefCockpit and "[✔] 高压心理座舱视角 (Stress Dash)##pref_cockpit" or "[  ] 高压心理座舱视角 (Stress Dash)##pref_cockpit"
+  if ui and ui.button and ui.button(btnCockpit) then
+    TVDirectorEngine.togglePrefStrainCockpit()
+  end
+  setTooltip("当被追击车辆承受极限心理压迫 (Stress >= 6.5 或 MTI >= 1.6) 时，切换至副驾/仪表座舱视角，展现方向盘救车与后视镜紧逼。")
+
+  if ui and ui.sameLine then ui.sameLine() end
+  local prefNose = TVDirectorEngine.getPrefAttackNose()
+  local btnNose = prefNose and "[✔] 进攻前鼻贴地机位 (Attacker Nose)##pref_nose" or "[  ] 进攻前鼻贴地机位 (Attacker Nose)##pref_nose"
+  if ui and ui.button and ui.button(btnNose) then
+    TVDirectorEngine.togglePrefAttackNose()
+  end
+  setTooltip("当车手发起猎手扑杀 (POUNCE_PASS)、晚刹内线突刺或尾流蓄力时，切换至进攻方贴地前车鼻视角，感受贴地推背感与弯心争夺。")
+
+  if ui and ui.sameLine then ui.sameLine() end
+  local prefRear = TVDirectorEngine.getPrefDefendRear()
+  local btnRear = prefRear and "[✔] 防守尾追双车同框 (Defender Chase)##pref_rear" or "[  ] 防守尾追双车同框 (Defender Chase)##pref_rear"
+  if ui and ui.button and ui.button(btnRear) then
+    TVDirectorEngine.togglePrefDefendRear()
+  end
+  setTooltip("当车手执行防守卡线、封堵外线或交叉内切防守时，切换至防守方尾追机位，将后方进攻车与防守车同框收入画面。")
+
+  local prefHeli = TVDirectorEngine.getPrefSideHelicopter()
+  local btnHeli = prefHeli and "[✔] 弯道并排直升机鸟瞰 (Side Duel Heli)##pref_heli" or "[  ] 弯道并排直升机鸟瞰 (Side Duel Heli)##pref_heli"
+  if ui and ui.button and ui.button(btnHeli) then
+    TVDirectorEngine.togglePrefSideHelicopter()
+  end
+  setTooltip("当两车在弯道出入弯处于横向并排搏杀状态时，调用低空直升机机位俯瞰两车争抢弯心几何空间。")
+
+  if ui and ui.sameLine then ui.sameLine() end
+  local prefStory = TVDirectorEngine.getPrefStorytelling()
+  local btnStory = prefStory and "[✔] 叙事连续性锁焦 (Storytelling Arc)##pref_story" or "[  ] 叙事连续性锁焦 (Storytelling Arc)##pref_story"
+  if ui and ui.button and ui.button(btnStory) then
+    TVDirectorEngine.togglePrefStorytelling()
+  end
+  setTooltip("缠斗持续期间给予叙事留存加成，避免在精彩搏杀未决出胜负时强行切走镜头；同一缠斗内视角平滑过渡（如尾追->贴地->直升机）。")
+
+  if ui and ui.separator then ui.separator() end
+
+  -- 6. Instant Perspective Audition
+  drawTextColored(COLOR_CYAN, "=== 快速试镜体验 (Instant Perspective Audition) ===")
+  local focusTarget = TVDirectorEngine.getFocusedCar()
+  if ui and ui.text then ui.text(string.format("针对当前聚焦车辆 (#%02d) 即时体验各特色机位:", focusTarget + 1)) end
+  if ui and ui.sameLine then ui.sameLine() end
+
+  if ui and ui.button and ui.button("贴地进攻鼻翼##aud_nose") then
+    TVDirectorEngine.forceCut(focusTarget, TVDirectorEngine.CAMERA_MODE_DRIVABLE, "AUDITION_ATTACK_NOSE", 1, 6.0, TVDirectorEngine.DRIVABLE_BUMPER, TVDirectorEngine.SITUATION_ATTACK_NOSE)
+  end
+  setTooltip("立即体验贴地车鼻极致极速推背视角")
+
+  if ui and ui.sameLine then ui.sameLine() end
+  if ui and ui.button and ui.button("座舱副驾仪表##aud_cockpit") then
+    TVDirectorEngine.forceCut(focusTarget, TVDirectorEngine.CAMERA_MODE_DRIVABLE, "AUDITION_STRAIN_COCKPIT", 1, 6.0, TVDirectorEngine.DRIVABLE_DASH, TVDirectorEngine.SITUATION_STRAIN_COCKPIT)
+  end
+  setTooltip("立即体验座舱/副驾高压修正视角")
+
+  if ui and ui.sameLine then ui.sameLine() end
+  if ui and ui.button and ui.button("防守尾追双车##aud_chase") then
+    TVDirectorEngine.forceCut(focusTarget, TVDirectorEngine.CAMERA_MODE_DRIVABLE, "AUDITION_DEFEND_REAR", 1, 6.0, TVDirectorEngine.DRIVABLE_CHASE, TVDirectorEngine.SITUATION_DEFEND_REAR)
+  end
+  setTooltip("立即体验防守尾追双车同框视角")
+
+  if ui and ui.sameLine then ui.sameLine() end
+  if ui and ui.button and ui.button("直升机俯瞰##aud_heli") then
+    TVDirectorEngine.forceCut(focusTarget, TVDirectorEngine.CAMERA_MODE_HELICOPTER, "AUDITION_HELICOPTER", 1, 6.0, 0, TVDirectorEngine.SITUATION_SIDE_HELICOPTER)
+  end
+  setTooltip("立即体验低空直升机追击鸟瞰视角")
+
+  if ui and ui.sameLine then ui.sameLine() end
+  if ui and ui.button and ui.button("赛道经典转播##aud_track") then
+    TVDirectorEngine.forceCut(focusTarget, TVDirectorEngine.CAMERA_MODE_TRACK, "AUDITION_TRACK", 1, 8.0, 0, TVDirectorEngine.SITUATION_WORLD_FEED)
+  end
+  setTooltip("立即切回赛道经典转播大机位")
+
+  if ui and ui.separator then ui.separator() end
+
+  -- 7. Combat Hotspot Radar Top 3
   drawTextColored(COLOR_CYAN, "=== 全场战斗精彩度雷达 (Top Combat Hotspots) ===")
   local topHotspots = TVDirectorEngine.getTopHotspots(3)
   for idx = 1, 3 do
@@ -1463,12 +1582,13 @@ function M.renderDirectorTab()
       local _, hName = getDriverNameDisplay(h.carIndex, 16)
       local hLabel = EventHub.formatDriverLabel(h.carIndex, hName)
       local hCol = (h.priority <= 1) and COLOR_RED or ((h.priority <= 2) and COLOR_GOLD or COLOR_GREEN)
-      if ui and ui.text then ui.text(string.format("热点 #%d: %s | 精彩度: %.1f | ", idx, hLabel, h.score)) end
+      local hSit = (h.situation == TVDirectorEngine.SITUATION_ATTACK_NOSE) and "进攻前鼻" or ((h.situation == TVDirectorEngine.SITUATION_DEFEND_REAR) and "防守尾追" or ((h.situation == TVDirectorEngine.SITUATION_STRAIN_COCKPIT) and "座舱高压" or ((h.situation == TVDirectorEngine.SITUATION_SIDE_HELICOPTER) and "直升机" or "转播机位")))
+      if ui and ui.text then ui.text(string.format("热点 #%d: %s | 精彩度: %.1f | 推荐机位: [%s] | ", idx, hLabel, h.score, hSit)) end
       if ui and ui.sameLine then ui.sameLine() end
       drawInlineColored(hCol, string.format("[%s]", h.reason))
       if ui and ui.sameLine then ui.sameLine() end
       if ui and ui.button and ui.button(string.format("直切镜头##force_cut_%d", idx)) then
-        TVDirectorEngine.forceCut(h.carIndex, nil, "MANUAL_UI_CUT", 1, 8.0)
+        TVDirectorEngine.forceCut(h.carIndex, h.cameraMode, "MANUAL_UI_CUT", 1, 8.0, h.subMode, h.situation, h.duelRival)
       end
       setTooltip("立即将 TV 转播镜头直接切换至此处战况焦点")
     end

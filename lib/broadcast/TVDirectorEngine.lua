@@ -35,6 +35,15 @@ M.PRIORITY_TACTICS = 2
 M.PRIORITY_BATTLE = 3
 M.PRIORITY_ATMOSPHERE = 4
 
+-- Tactical Situation Codes (Contextual Perspective Mappings)
+M.SITUATION_WORLD_FEED = "WORLD_FEED"
+M.SITUATION_STRAIN_COCKPIT = "STRAIN_COCKPIT"
+M.SITUATION_ATTACK_NOSE = "ATTACK_NOSE"
+M.SITUATION_DEFEND_REAR = "DEFEND_REAR"
+M.SITUATION_SIDE_HELICOPTER = "SIDE_HELICOPTER"
+M.SITUATION_MISTAKE_ACTION = "MISTAKE_ACTION"
+M.SITUATION_PIT_UNDERCUT = "PIT_UNDERCUT"
+
 -- Director Style Presets
 M.STYLE_WORLD_FEED = "WORLD_FEED"
 M.STYLE_ACTION = "ACTION"
@@ -50,6 +59,13 @@ M.CAMERA_MODE_HELICOPTER = (ac and ac.CameraMode and ac.CameraMode.Helicopter) o
 M.CAMERA_MODE_ONBOARDFREE = (ac and ac.CameraMode and ac.CameraMode.OnBoardFree) or 5
 M.CAMERA_MODE_FREE = (ac and ac.CameraMode and ac.CameraMode.Free) or 6
 
+-- CSP Drivable Sub-Camera Constants
+M.DRIVABLE_CHASE = (ac and ac.DrivableCamera and ac.DrivableCamera.Chase) or 0
+M.DRIVABLE_CHASE2 = (ac and ac.DrivableCamera and ac.DrivableCamera.Chase2) or 1
+M.DRIVABLE_BONNET = (ac and ac.DrivableCamera and ac.DrivableCamera.Bonnet) or 2
+M.DRIVABLE_BUMPER = (ac and ac.DrivableCamera and ac.DrivableCamera.Bumper) or 3
+M.DRIVABLE_DASH = (ac and ac.DrivableCamera and ac.DrivableCamera.Dash) or 4
+
 -- Master Configuration (Configurable, defaults to disabled per user requirement)
 local _enabled = false
 
@@ -60,9 +76,19 @@ local _quietWindow = 15.0
 local _style = M.STYLE_WORLD_FEED
 local _starCarIndex = 0
 
+-- Contextual Perspective Preferences (Defaults to true for full cinematic immersion)
+local _prefStrainCockpit = true
+local _prefAttackNose = true
+local _prefDefendRear = true
+local _prefSideHelicopter = true
+local _prefStorytelling = true
+
 -- Director State Registers
 local _focusedCar = 0
 local _currentCameraMode = M.CAMERA_MODE_TRACK
+local _currentSubMode = 0
+local _currentSituation = M.SITUATION_WORLD_FEED
+local _currentDuelRival = -1
 local _currentTrackGroup = 0
 local _dwellTimer = 0.0
 local _targetDwellTime = 8.0
@@ -90,7 +116,12 @@ for i = 0, MAX_SLOTS - 1 do
     priority = M.PRIORITY_ATMOSPHERE,
     reason = "CRUISE",
     gap = 999.0,
-    position = 99
+    position = 99,
+    situation = M.SITUATION_WORLD_FEED,
+    cameraMode = M.CAMERA_MODE_TRACK,
+    subMode = 0,
+    duelRival = -1,
+    targetDuration = 8.0
   }
 end
 
@@ -100,7 +131,11 @@ for i = 1, MAX_SLOTS do
     carIndex = -1,
     score = 0.0,
     priority = 4,
-    reason = "NONE"
+    reason = "NONE",
+    situation = "WORLD_FEED",
+    cameraMode = 3,
+    subMode = 0,
+    duelRival = -1
   }
 end
 
@@ -120,8 +155,17 @@ function M.init()
   _style = M.STYLE_WORLD_FEED
   _starCarIndex = 0
 
+  _prefStrainCockpit = true
+  _prefAttackNose = true
+  _prefDefendRear = true
+  _prefSideHelicopter = true
+  _prefStorytelling = true
+
   _focusedCar = 0
   _currentCameraMode = M.CAMERA_MODE_TRACK
+  _currentSubMode = 0
+  _currentSituation = M.SITUATION_WORLD_FEED
+  _currentDuelRival = -1
   _currentTrackGroup = 0
   _dwellTimer = 0.0
   _targetDwellTime = 8.0
@@ -145,6 +189,11 @@ function M.reset()
     _hotspots[i].reason = "CRUISE"
     _hotspots[i].gap = 999.0
     _hotspots[i].position = 99
+    _hotspots[i].situation = M.SITUATION_WORLD_FEED
+    _hotspots[i].cameraMode = M.CAMERA_MODE_TRACK
+    _hotspots[i].subMode = 0
+    _hotspots[i].duelRival = -1
+    _hotspots[i].targetDuration = 8.0
   end
 end
 
@@ -248,6 +297,45 @@ function M.getCurrentCameraMode()
   return _currentCameraMode
 end
 
+--- Get Current Sub-Camera Mode
+---@return integer subMode
+function M.getCurrentSubMode()
+  return _currentSubMode
+end
+
+--- Get Current Situation Code
+---@return string situation
+function M.getCurrentSituation()
+  return _currentSituation
+end
+
+--- Get Current Duel Rival Index (-1 if not in active duel)
+---@return integer rivalIdx
+function M.getCurrentDuelRival()
+  return _currentDuelRival
+end
+
+--- Contextual Perspective Preferences Getters & Setters
+function M.getPrefStrainCockpit() return _prefStrainCockpit end
+function M.setPrefStrainCockpit(val) _prefStrainCockpit = (val == true) end
+function M.togglePrefStrainCockpit() _prefStrainCockpit = not _prefStrainCockpit return _prefStrainCockpit end
+
+function M.getPrefAttackNose() return _prefAttackNose end
+function M.setPrefAttackNose(val) _prefAttackNose = (val == true) end
+function M.togglePrefAttackNose() _prefAttackNose = not _prefAttackNose return _prefAttackNose end
+
+function M.getPrefDefendRear() return _prefDefendRear end
+function M.setPrefDefendRear(val) _prefDefendRear = (val == true) end
+function M.togglePrefDefendRear() _prefDefendRear = not _prefDefendRear return _prefDefendRear end
+
+function M.getPrefSideHelicopter() return _prefSideHelicopter end
+function M.setPrefSideHelicopter(val) _prefSideHelicopter = (val == true) end
+function M.togglePrefSideHelicopter() _prefSideHelicopter = not _prefSideHelicopter return _prefSideHelicopter end
+
+function M.getPrefStorytelling() return _prefStorytelling end
+function M.setPrefStorytelling(val) _prefStorytelling = (val == true) end
+function M.togglePrefStorytelling() _prefStorytelling = not _prefStorytelling return _prefStorytelling end
+
 --- Get Current Shot Reason
 ---@return string reason
 function M.getCurrentReason()
@@ -293,9 +381,10 @@ end
 
 --- Execute CSP Camera Switch Safely
 ---@param carIndex integer
----@param mode integer
+---@param mode integer?
+---@param subMode integer?
 ---@param trackGroup integer?
-local function applyCspCamera(carIndex, mode, trackGroup)
+local function applyCspCamera(carIndex, mode, subMode, trackGroup)
   if not carIndex or carIndex < 0 then carIndex = 0 end
   mode = mode or M.CAMERA_MODE_TRACK
 
@@ -309,8 +398,12 @@ local function applyCspCamera(carIndex, mode, trackGroup)
     pcall(ac.focusCar, carIndex)
   end
 
-  -- 3. Set track camera group THIRD
-  if trackGroup and mode == M.CAMERA_MODE_TRACK and ac and ac.setCurrentTrackCamera then
+  -- 3. Set sub-camera mode or track camera group THIRD
+  if mode == M.CAMERA_MODE_DRIVABLE and subMode and ac and ac.setCurrentDrivableCamera then
+    pcall(ac.setCurrentDrivableCamera, subMode)
+  elseif mode == M.CAMERA_MODE_CAR and subMode and ac and ac.setCurrentCarCamera then
+    pcall(ac.setCurrentCarCamera, subMode)
+  elseif mode == M.CAMERA_MODE_TRACK and trackGroup and ac and ac.setCurrentTrackCamera then
     pcall(ac.setCurrentTrackCamera, trackGroup)
   end
 
@@ -325,16 +418,22 @@ end
 ---@param reason string?
 ---@param priority integer?
 ---@param duration number?
-function M.forceCut(carIndex, mode, reason, priority, duration)
+---@param subMode integer?
+---@param situation string?
+---@param duelRival integer?
+function M.forceCut(carIndex, mode, reason, priority, duration, subMode, situation, duelRival)
   _focusedCar = carIndex or 0
   _currentCameraMode = mode or M.CAMERA_MODE_TRACK
+  _currentSubMode = subMode or 0
+  _currentSituation = situation or M.SITUATION_WORLD_FEED
+  _currentDuelRival = duelRival or -1
   _currentReason = reason or "MANUAL_DIRECTOR_CUT"
   _currentPriority = priority or M.PRIORITY_ACTION
   _targetDwellTime = duration or _minDwellTime
   _dwellTimer = 0.0
   _quietTimer = 0.0 -- Explicit director cut clears quiet window
 
-  applyCspCamera(_focusedCar, _currentCameraMode, _currentTrackGroup)
+  applyCspCamera(_focusedCar, _currentCameraMode, _currentSubMode, _currentTrackGroup)
 end
 
 --- Compute Combat Hotspot Index (CHI) for all cars
@@ -355,6 +454,11 @@ local function computeHotspots(raceState, recentEvents)
     slot.score = 0.0
     slot.priority = M.PRIORITY_ATMOSPHERE
     slot.reason = "CRUISE"
+    slot.situation = M.SITUATION_WORLD_FEED
+    slot.cameraMode = M.CAMERA_MODE_TRACK
+    slot.subMode = 0
+    slot.duelRival = -1
+    slot.targetDuration = 8.0
 
     local cState = RaceContext.getCarState(i)
     if not cState or not cState.isConnected or cState.isRetired then
@@ -364,6 +468,8 @@ local function computeHotspots(raceState, recentEvents)
     else
       local pos = cState.racePosition or (i + 1)
       slot.position = pos
+
+      local aheadIdx, aheadDist, behindIdx, behindDist = RaceContext.getNeighbors(i)
 
       -- 1. Position weight
       local wPos = 0.85
@@ -375,7 +481,9 @@ local function computeHotspots(raceState, recentEvents)
 
       -- 2. Battle Proximity Gap Score
       local gap = cState.gapToAhead or 999.0
+      local gapBehind = cState.gapBehindSec or 999.0
       slot.gap = gap
+
       local sGap = 0.0
       if gap > 0.0 and gap <= 1.5 then
         local norm = 1.0 - (gap / 1.5)
@@ -402,44 +510,113 @@ local function computeHotspots(raceState, recentEvents)
       local baseScore = (sGap * wPos * wPsych * wStakes) + (10.0 / (pos + 1.0))
       local prio = M.PRIORITY_ATMOSPHERE
       local reason = "CRUISE"
+      local sit = M.SITUATION_WORLD_FEED
+      local camMode = (_style == M.STYLE_ONBOARD) and M.CAMERA_MODE_CAR or M.CAMERA_MODE_TRACK
+      local subMode = 0
+      local rivalIdx = -1
+      local dur = 8.0
 
-      if sGap > 2.0 then
-        prio = M.PRIORITY_BATTLE
-        reason = string.format("BATTLE_P%d (Gap %.2fs)", pos, gap)
-      end
-
-      -- 5. Tactical State Overrides
       local tact = cState.tacticalState
-      if tact == "POUNCE_PASS" then
-        baseScore = baseScore + 35.0
-        prio = M.PRIORITY_ACTION
-        reason = "POUNCE_OVERTAKE"
-      elseif tact == "ATTACK" or tact == "SWITCHBACK" then
-        baseScore = baseScore + 18.0
-        prio = M.PRIORITY_BATTLE
-        reason = "AGGRESSIVE_ATTACK"
-      elseif tact == "DEFEND" or tact == "WEAVE" or tact == "FEINT" then
-        baseScore = baseScore + 12.0
-        prio = M.PRIORITY_BATTLE
-        reason = "DEFENSIVE_BLOCK"
-      end
-
-      -- 6. Mistake & Pit Stop Boosts
+      local skill = cState.activeSkill
       local lastMistake = cState.lastMistakeType
-      if lastMistake == "SPIN" or lastMistake == "OFFTRACK" then
-        baseScore = baseScore + 50.0
+
+      -- 5. Contextual Perspective & Tactical Situation Resolution
+      if lastMistake == "SPIN" or lastMistake == "OFFTRACK" or tact == "MISTAKE" then
+        sit = M.SITUATION_MISTAKE_ACTION
         prio = M.PRIORITY_EMERGENCY
         reason = "SPIN_INCIDENT"
-      elseif lastMistake == "LOCKUP" or lastMistake == "OVERSLOW" then
-        baseScore = baseScore + 25.0
-        prio = M.PRIORITY_TACTICS
+        camMode = M.CAMERA_MODE_TRACK
+        subMode = 0
+        dur = 5.0
+        baseScore = baseScore + 60.0
+      elseif lastMistake == "LOCKUP" or lastMistake == "MISSED_APEX" or lastMistake == "TRAIL_UNDERSTEER" then
+        sit = M.SITUATION_MISTAKE_ACTION
+        prio = M.PRIORITY_ACTION
         reason = "LOCKUP_MISTAKE"
-      end
-
-      if cState.isInPitlane or cState.pitStage == "STOP" then
-        baseScore = baseScore + 22.0
+        camMode = M.CAMERA_MODE_TRACK
+        subMode = 0
+        dur = 5.5
+        baseScore = baseScore + 30.0
+      elseif _prefSideHelicopter and ((aheadDist > 0.1 and aheadDist < 4.2) or (behindDist > 0.1 and behindDist < 4.2)) and (cState.speedKmh or 0) > 35.0 and (tact == "OVERTAKING" or tact == "ATTACK" or skill == "POUNCE_PASS" or gap < 0.25 or gapBehind < 0.25) then
+        -- Dual Side-by-Side Corner Apex Battle (Helicopter Aerial View)
+        sit = M.SITUATION_SIDE_HELICOPTER
+        prio = M.PRIORITY_ACTION
+        reason = "SIDE_BY_SIDE_DUEL"
+        camMode = M.CAMERA_MODE_HELICOPTER
+        subMode = 0
+        rivalIdx = (aheadDist < behindDist) and aheadIdx or behindIdx
+        dur = 6.0
+        baseScore = baseScore + 42.0
+      elseif _prefAttackNose and (skill == "POUNCE_PASS" or skill == "DIVEBOMB" or tact == "POUNCE_PASS" or (tact == "ATTACK" and aheadDist < 16.0 and (cState.gapAheadSec or 999.0) < 0.75)) then
+        -- Attacker Front Bumper / Nose Cam Charging into Apex
+        sit = M.SITUATION_ATTACK_NOSE
+        prio = M.PRIORITY_ACTION
+        reason = "ATTACK_NOSE_CAM"
+        camMode = M.CAMERA_MODE_DRIVABLE
+        subMode = M.DRIVABLE_BUMPER
+        rivalIdx = aheadIdx
+        dur = 5.5
+        baseScore = baseScore + 38.0
+      elseif _prefStrainCockpit and (stress >= 6.5 or mti >= 1.6) and (behindDist < 20.0 or gapBehind < 1.0) then
+        -- High Psychological Strain Cockpit / Dash Micro-correction View
+        sit = M.SITUATION_STRAIN_COCKPIT
+        prio = M.PRIORITY_BATTLE
+        reason = "PSYCHOLOGICAL_STRAIN"
+        camMode = M.CAMERA_MODE_DRIVABLE
+        subMode = M.DRIVABLE_DASH
+        rivalIdx = behindIdx
+        dur = 5.5
+        baseScore = baseScore + 32.0
+      elseif _prefDefendRear and (skill == "DEFENSIVE_COVER" or skill == "WEAVING_DEFENSE" or tact == "DEFEND" or (tact == "DEFENDING" and behindDist < 16.0)) then
+        -- Defender Rear Mirror / Chase Dual-Car Framing View
+        sit = M.SITUATION_DEFEND_REAR
+        prio = M.PRIORITY_BATTLE
+        reason = "DEFENSIVE_REAR_MIRROR"
+        camMode = M.CAMERA_MODE_DRIVABLE
+        subMode = M.DRIVABLE_CHASE
+        rivalIdx = behindIdx
+        dur = 6.0
+        baseScore = baseScore + 26.0
+      elseif cState.pitState == "RELEASED" or (cState.isInPitlane and (cState.speedKmh or 0) > 55.0) then
+        sit = M.SITUATION_PIT_UNDERCUT
+        prio = M.PRIORITY_TACTICS
+        reason = "PIT_EXIT_UNDERCUT"
+        camMode = M.CAMERA_MODE_TRACK
+        subMode = 0
+        dur = 6.5
+        baseScore = baseScore + 24.0
+      elseif cState.isInPitlane or cState.pitStage == "STOP" then
+        sit = M.SITUATION_WORLD_FEED
         prio = M.PRIORITY_TACTICS
         reason = "PIT_STOP_BOX"
+        camMode = M.CAMERA_MODE_TRACK
+        subMode = 0
+        dur = 7.0
+        baseScore = baseScore + 22.0
+      else
+        sit = M.SITUATION_WORLD_FEED
+        if sGap > 2.0 then
+          prio = M.PRIORITY_BATTLE
+          reason = string.format("BATTLE_P%d (Gap %.2fs)", pos, gap)
+          camMode = (_style == M.STYLE_ONBOARD) and M.CAMERA_MODE_CAR or M.CAMERA_MODE_TRACK
+          subMode = 0
+          rivalIdx = aheadIdx
+          dur = 8.0
+        else
+          prio = M.PRIORITY_ATMOSPHERE
+          reason = "CRUISE"
+          camMode = (_style == M.STYLE_ONBOARD) and M.CAMERA_MODE_CAR or M.CAMERA_MODE_TRACK
+          subMode = 0
+          dur = 9.0
+        end
+      end
+
+      -- 6. Narrative Coherence Bonus (Storytelling Arc)
+      if _prefStorytelling and _currentDuelRival >= 0 then
+        if (i == _focusedCar and rivalIdx == _currentDuelRival) or (i == _currentDuelRival and rivalIdx == _focusedCar) then
+          -- Give ongoing battle a storyline retention bonus so director doesn't jump away mid-fight
+          baseScore = baseScore + 18.0
+        end
       end
 
       -- 7. Star Cam Boost
@@ -450,6 +627,11 @@ local function computeHotspots(raceState, recentEvents)
       slot.score = baseScore
       slot.priority = prio
       slot.reason = reason
+      slot.situation = sit
+      slot.cameraMode = camMode
+      slot.subMode = subMode
+      slot.duelRival = rivalIdx
+      slot.targetDuration = dur
     end
   end
 
@@ -471,39 +653,13 @@ end
 ---@param priority integer
 ---@param reason string
 ---@param raceState table
----@return integer cameraMode
+---@return integer cameraMode, integer subMode
 local function selectCameraMode(carIndex, priority, reason, raceState)
-  local lap = raceState and raceState.currentLap or 1
-  local cState = RaceContext.getCarState(carIndex)
-  local speed = (cState and cState.speedKmh) or 100.0
-
-  -- 1. Start of race pack tracking
-  if lap == 0 or (lap == 1 and speed < 85.0) then
-    return M.CAMERA_MODE_HELICOPTER
+  local slot = _hotspots[carIndex]
+  if slot and slot.cameraMode then
+    return slot.cameraMode, (slot.subMode or 0)
   end
-
-  -- 2. Emergency Incident: Track Camera offers best overview
-  if priority == M.PRIORITY_EMERGENCY then
-    return M.CAMERA_MODE_TRACK
-  end
-
-  -- 3. Onboard Style Preference
-  if _style == M.STYLE_ONBOARD then
-    return M.CAMERA_MODE_CAR
-  end
-
-  -- 4. Pounce Pass / Overtake
-  if priority == M.PRIORITY_ACTION then
-    -- Action style alternates between Car (T-Cam) and Track TV
-    if _style == M.STYLE_ACTION then
-      return M.CAMERA_MODE_CAR
-    else
-      return M.CAMERA_MODE_TRACK
-    end
-  end
-
-  -- 5. Standard Battle and Tactics
-  return M.CAMERA_MODE_TRACK
+  return M.CAMERA_MODE_TRACK, 0
 end
 
 --- Get Top N Hotspots for UI telemetry display
@@ -521,11 +677,19 @@ function M.getTopHotspots(count)
       _topHotspotSummary[i].score = h.score
       _topHotspotSummary[i].priority = h.priority
       _topHotspotSummary[i].reason = h.reason
+      _topHotspotSummary[i].situation = h.situation or M.SITUATION_WORLD_FEED
+      _topHotspotSummary[i].cameraMode = h.cameraMode or M.CAMERA_MODE_TRACK
+      _topHotspotSummary[i].subMode = h.subMode or 0
+      _topHotspotSummary[i].duelRival = h.duelRival or -1
     else
       _topHotspotSummary[i].carIndex = -1
       _topHotspotSummary[i].score = 0.0
       _topHotspotSummary[i].priority = 4
       _topHotspotSummary[i].reason = "NONE"
+      _topHotspotSummary[i].situation = "NONE"
+      _topHotspotSummary[i].cameraMode = M.CAMERA_MODE_TRACK
+      _topHotspotSummary[i].subMode = 0
+      _topHotspotSummary[i].duelRival = -1
     end
   end
   return _topHotspotSummary
@@ -611,7 +775,7 @@ function M.step(dt, sim)
   if not bestHotspot or bestHotspot.score <= -900.0 then return end
 
   local shouldCut = false
-  local targetDuration = 8.0
+  local targetDuration = bestHotspot.targetDuration or 8.0
 
   -- 3. Preemption Check: Higher priority event preempts immediately!
   if bestHotspot.priority < _currentPriority then
@@ -620,19 +784,24 @@ function M.step(dt, sim)
     if bestHotspot.priority == M.PRIORITY_EMERGENCY then
       targetDuration = 5.0
     elseif bestHotspot.priority == M.PRIORITY_ACTION then
-      targetDuration = 6.5
+      targetDuration = 6.0
     else
       targetDuration = _minDwellTime
     end
   elseif _dwellTimer >= _minDwellTime then
-    -- Min dwell time satisfied: Can switch if significantly better score or max dwell exceeded
-    if bestCarIdx ~= _focusedCar and bestHotspot.score > (_hotspots[_focusedCar].score + 4.0) then
+    -- Min dwell time satisfied:
+    -- Check if this is a perspective escalation inside an ongoing duel or on focused car
+    local isOngoingDuel = (_currentDuelRival >= 0 and (bestHotspot.duelRival == _focusedCar or bestCarIdx == _currentDuelRival or (bestCarIdx == _focusedCar and bestHotspot.duelRival == _currentDuelRival)))
+    local isSituationEvolved = (bestHotspot.situation ~= _currentSituation) and (isOngoingDuel or bestCarIdx == _focusedCar)
+
+    if isSituationEvolved then
+      -- Situation inside ongoing duel or focused car escalated (e.g. Approach -> Attack Nose or Side Helicopter)!
       shouldCut = true
-      targetDuration = 8.0
+    elseif bestCarIdx ~= _focusedCar and bestHotspot.score > (_hotspots[_focusedCar].score + 4.0) then
+      shouldCut = true
     elseif _dwellTimer >= _maxDwellTime then
       -- Max dwell exceeded: Must switch or rotate camera angle to maintain dynamic feel
       shouldCut = true
-      targetDuration = 8.0
     end
   end
 
@@ -641,18 +810,21 @@ function M.step(dt, sim)
     _focusedCar = bestCarIdx
     _currentPriority = bestHotspot.priority
     _currentReason = bestHotspot.reason
+    _currentSituation = bestHotspot.situation
+    _currentCameraMode = bestHotspot.cameraMode
+    _currentSubMode = bestHotspot.subMode or 0
+    _currentDuelRival = bestHotspot.duelRival or -1
     _dwellTimer = 0.0
     _targetDwellTime = targetDuration
 
-    -- Alternate track camera group if staying on same car
-    if bestCarIdx == _focusedCar then
+    -- Alternate track camera group if staying on same car in track mode
+    if bestCarIdx == _focusedCar and _currentCameraMode == M.CAMERA_MODE_TRACK then
       _currentTrackGroup = (_currentTrackGroup + 1) % 3
     else
       _currentTrackGroup = 0
     end
 
-    _currentCameraMode = selectCameraMode(bestCarIdx, bestHotspot.priority, bestHotspot.reason, raceState)
-    applyCspCamera(_focusedCar, _currentCameraMode, _currentTrackGroup)
+    applyCspCamera(_focusedCar, _currentCameraMode, _currentSubMode, _currentTrackGroup)
   end
 end
 
