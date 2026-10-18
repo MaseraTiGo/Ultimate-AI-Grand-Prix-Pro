@@ -25,6 +25,7 @@ local StrategyCoordinator = require("lib/strategy/StrategyCoordinator")
 local TelemetryBridge = require("lib/bridge/TelemetryBridge")
 local EventHub = require("lib/core/EventHub")
 local ControlTelemetry = require("lib/core/ControlTelemetry")
+local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
 local DashboardUI = require("lib/ui/DashboardUI")
 
 local _initialized = false
@@ -81,6 +82,8 @@ function script.init()
   TelemetryBridge.reset()
   EventHub.init()
   ControlTelemetry.init()
+  RadioVoiceEngine.init()
+  RadioVoiceEngine.reset()
 
   local sim = nil
   if ac and ac.getSim then
@@ -130,6 +133,7 @@ function script.update(dt)
   if not sim or RaceContext.safeSimGet(sim, "isReplayActive") then return end
 
   _inUpdate = true
+  RadioVoiceEngine.step(safeDt)
   _tacticalTimer = _tacticalTimer + safeDt
   _strategyTimer = _strategyTimer + safeDt
   _flushTimer = _flushTimer + safeDt

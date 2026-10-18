@@ -21,6 +21,7 @@ local TelemetryBridge = require("lib/bridge/TelemetryBridge")
 local strategyCalc = require("lib/strategy/strategy_calculator")
 local EventHub = require("lib/core/EventHub")
 local ControlTelemetry = require("lib/core/ControlTelemetry")
+local WeatherStrategyModel = require("lib/strategy/WeatherStrategyModel")
 
 local M = {}
 
@@ -376,6 +377,32 @@ function M.renderMain(perfMs, activeAiCount)
 
   local displayTotalCars = (race.carsCount and race.carsCount > 0) and race.carsCount or math.max(1, _activeAiCount + 1)
   ui.text(string.format("总车辆: %d 辆 (AI 车手: %d 位)", displayTotalCars, _activeAiCount))
+  ui.sameLine()
+  ui.text("|")
+  ui.sameLine()
+
+  local wWetness = WeatherStrategyModel.getTrackWetness()
+  local wRain = WeatherStrategyModel.getRainIntensity()
+  local wBand = WeatherStrategyModel.getActiveBandName()
+  local wOpt = WeatherStrategyModel.getOptimalTyreCompound()
+  local wCol = COLOR_GREEN
+  local wText = "[天气: 干燥]"
+  if wBand == "WET" then
+    wCol = COLOR_WET_BLUE
+    wText = string.format("[天气: 大雨积水 %.0f%% | %s]", wWetness * 100, wOpt)
+  elseif wBand == "INTERMEDIATE" then
+    wCol = COLOR_CYAN
+    wText = string.format("[天气: 湿地雨势 %.0f%% | %s]", wWetness * 100, wOpt)
+  else
+    if wRain > 0.05 then
+      wCol = COLOR_GOLD
+      wText = string.format("[天气: 降水开始 %.0f%% | %s]", wWetness * 100, wOpt)
+    else
+      wCol = COLOR_GREEN
+      wText = "[天气: 干燥路面 (干胎)]"
+    end
+  end
+  drawInlineColored(wCol, wText)
 
   ui.separator()
 
@@ -544,6 +571,14 @@ end
 --------------------------------------------------------------------------------
 function M.renderPitWallTab()
   drawTextColored(COLOR_CYAN, "【车队无线电指挥台与进站调度】")
+
+  local wWetness = WeatherStrategyModel.getTrackWetness()
+  local wRain = WeatherStrategyModel.getRainIntensity()
+  local wBand = WeatherStrategyModel.getActiveBandName()
+  local wOpt = WeatherStrategyModel.getOptimalTyreCompound()
+  local radarCol = (wBand == "WET") and COLOR_WET_BLUE or ((wBand == "INTERMEDIATE") and COLOR_CYAN or COLOR_GREEN)
+  drawInlineColored(radarCol, string.format("[天气雷达] 赛道湿地率: %.1f%% | 降水强度: %.2f | 路面分区: %s | 策略推荐配方: %s",
+    wWetness * 100.0, wRain, wBand, wOpt))
 
   local carStates = RaceContext.getAllCarStates()
 
@@ -1136,6 +1171,34 @@ function M.renderLogsTab()
     Logger.reset()
   end
   setTooltip("清空常规诊断与策略服务日志")
+
+  if ui and ui.separator then ui.separator() end
+
+  -- Team Radio Voice Settings Toolbar
+  local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
+  local isRadioActive = RadioVoiceEngine.isEnabled()
+  if ui and ui.checkbox then
+    if ui.checkbox("车队无线电语音 (Team Radio Voice)##radio_voice_toggle", isRadioActive) then
+      RadioVoiceEngine.setEnabled(not isRadioActive)
+    end
+  end
+  setTooltip("开启或关闭车队无线电真实 F1 语音播报（进站、推圈、省油、超车模式、安全车）")
+
+  if isRadioActive then
+    if ui and ui.sameLine then ui.sameLine() end
+    local curLang = RadioVoiceEngine.getLanguage()
+    local langBtnText = (curLang == "zh") and "[语音: 中文 ZH (点击切英文)]##radio_lang_btn" or "[语音: 英文 EN (点击切中文)]##radio_lang_btn"
+    if ui and ui.button and ui.button(langBtnText) then
+      RadioVoiceEngine.setLanguage(curLang == "zh" and "en" or "zh")
+    end
+    setTooltip("双语实时切换：英文围场原声 (EN) / 中文专业指令 (ZH)")
+
+    if ui and ui.sameLine then ui.sameLine() end
+    if ui and ui.button and ui.button("试听电台##radio_test_play") then
+      RadioVoiceEngine.playRadio("cmd_push", RadioVoiceEngine.PRIORITY_COMMAND)
+    end
+    setTooltip("播放测试指令语音，验证开闭蜂鸣与电台播报")
+  end
 
   if ui and ui.separator then ui.separator() end
 

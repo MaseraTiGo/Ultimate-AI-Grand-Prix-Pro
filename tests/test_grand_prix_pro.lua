@@ -2682,8 +2682,208 @@ do
   runTest52()
 end
 
+-- ==============================================================================
+-- [Test 53] Team Radio Voice Engine (State Machine, Preemption, Bilingual & Orders)
+-- ==============================================================================
+do
+  local function runTest53()
+    print("[Test 53] Testing Team Radio Voice Engine...")
+    local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
+    RadioVoiceEngine.reset()
+    RadioVoiceEngine.init()
+
+    -- 1. Configuration & Bilingual Switching
+    assertEq(RadioVoiceEngine.getLanguage(), "en", "Default radio language is English")
+    RadioVoiceEngine.setLanguage("zh")
+    assertEq(RadioVoiceEngine.getLanguage(), "zh", "Switched radio language to Chinese")
+    RadioVoiceEngine.setLanguage("en")
+    assertEq(RadioVoiceEngine.getLanguage(), "en", "Switched radio language back to English")
+
+    RadioVoiceEngine.setVolume(0.75)
+    assertTrue(math.abs(RadioVoiceEngine.getVolume() - 0.75) < 0.01, "Volume configured to 0.75")
+    assertTrue(RadioVoiceEngine.isEnabled(), "Radio engine is enabled by default")
+
+    -- 2. State Machine: Trigger play and step transitions
+    local okPlay = RadioVoiceEngine.playRadio("cmd_push", RadioVoiceEngine.PRIORITY_COMMAND)
+    assertTrue(okPlay, "Radio message cmd_push queued/played successfully")
+    assertEq(RadioVoiceEngine.getState(), RadioVoiceEngine.STATE_BEEP_OPEN, "Engine enters STATE_BEEP_OPEN on trigger")
+    assertEq(RadioVoiceEngine.getLastPlayedKey(), "cmd_push", "Last played key is cmd_push")
+
+    -- Step past open beep (0.12s)
+    RadioVoiceEngine.step(0.15)
+    assertEq(RadioVoiceEngine.getState(), RadioVoiceEngine.STATE_PLAYING_VOICE, "Engine transitions to STATE_PLAYING_VOICE")
+
+    -- Step past speech clip (1.6s)
+    RadioVoiceEngine.step(1.70)
+    assertEq(RadioVoiceEngine.getState(), RadioVoiceEngine.STATE_BEEP_CLOSE, "Engine transitions to STATE_BEEP_CLOSE")
+
+    -- Step past close beep (0.09s)
+    RadioVoiceEngine.step(0.12)
+    assertEq(RadioVoiceEngine.getState(), RadioVoiceEngine.STATE_COOLDOWN, "Engine transitions to STATE_COOLDOWN")
+
+    -- Step past cooldown (0.25s)
+    RadioVoiceEngine.step(0.30)
+    assertEq(RadioVoiceEngine.getState(), RadioVoiceEngine.STATE_IDLE, "Engine returns to STATE_IDLE")
+
+    -- 3. Anti-Spam Debounce: Repeating same key immediately is rejected
+    local okSpam = RadioVoiceEngine.playRadio("cmd_push", RadioVoiceEngine.PRIORITY_COMMAND)
+    assertEq(okSpam, false, "Duplicate command rejected by 12s debounce guard")
+
+    -- 4. Preemption: Emergency priority (3) interrupts lower priority (1) during playback
+    local okLow = RadioVoiceEngine.playRadio("info_blue_flag", RadioVoiceEngine.PRIORITY_INFO)
+    assertTrue(okLow, "Low priority info message accepted")
+    RadioVoiceEngine.step(0.15)
+    assertEq(RadioVoiceEngine.getState(), RadioVoiceEngine.STATE_PLAYING_VOICE, "Low priority message playing")
+
+    -- Emergency interrupts:
+    local okEmergency = RadioVoiceEngine.playRadio("info_safety_car", RadioVoiceEngine.PRIORITY_EMERGENCY)
+    assertTrue(okEmergency, "Emergency Safety Car message accepted during low-priority playback")
+    assertEq(RadioVoiceEngine.getLastPlayedKey(), "info_safety_car", "Emergency immediately preempts current playback")
+    assertEq(RadioVoiceEngine.getState(), RadioVoiceEngine.STATE_BEEP_OPEN, "Preemption resets state machine to BEEP_OPEN for emergency")
+
+    -- 5. Command Integration via StrategyCoordinator
+    RadioVoiceEngine.reset()
+    local StrategyCoordinator = require("lib/strategy/StrategyCoordinator")
+    StrategyCoordinator.issueRadioOrder(0, "BOX_THIS_LAP")
+    assertEq(RadioVoiceEngine.getLastPlayedKey(), "cmd_box", "issueRadioOrder(BOX_THIS_LAP) triggers cmd_box radio voice")
+
+    RadioVoiceEngine.reset()
+    StrategyCoordinator.issueRadioOrder(0, "ATTACK")
+    assertEq(RadioVoiceEngine.getLastPlayedKey(), "cmd_attack", "issueRadioOrder(ATTACK) triggers cmd_attack radio voice")
+
+    print("  -> Passed: Team Radio Voice Engine verified.")
+  end
+  runTest53()
+end
+
+-- ==============================================================================
+-- [Test 54] Dynamic Weather, Track Wetness Accumulation/Drainage & Rain Pit Crossover
+-- ==============================================================================
+do
+  local function runTest54()
+    print("[Test 54] Testing Dynamic Weather Perception, Tyre Crossover & Actuator Adaptation...")
+    local WeatherStrategyModel = require("lib/strategy/WeatherStrategyModel")
+    local BehaviorActuator = require("lib/driver/BehaviorActuator")
+    local StrategyCoordinator = require("lib/strategy/StrategyCoordinator")
+    local RaceContext = require("lib/core/RaceContext")
+    local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
+    local ControlTelemetry = require("lib/core/ControlTelemetry")
+
+    WeatherStrategyModel.reset()
+    assertEq(WeatherStrategyModel.getTrackWetness(), 0.0, "Initial wetness is 0.0")
+    assertEq(WeatherStrategyModel.getActiveBand(), WeatherStrategyModel.BAND_DRY, "Initial band is DRY")
+    assertEq(WeatherStrategyModel.getOptimalTyreCompound(), "Soft", "Optimal compound for dry is Soft")
+
+    -- 1. Weather Perception & Differential Accumulation / Drainage
+    local mockSim = { rainIntensity = 0.8, roadGrip = 0.95 }
+    -- Step 10 seconds of 0.8 rain -> wetness += 0.8 * 0.05 * 10 = 0.40
+    for _ = 1, 10 do
+      WeatherStrategyModel.updateConditions(mockSim, 1.0)
+    end
+    local w = WeatherStrategyModel.getTrackWetness()
+    assertTrue(w >= 0.39 and w <= 0.41, "Accumulated wetness ~0.40 under heavy rain")
+    assertEq(WeatherStrategyModel.getActiveBand(), WeatherStrategyModel.BAND_INTER, "0.40 wetness classifies as BAND_INTER")
+    assertEq(WeatherStrategyModel.getActiveBandName(), "INTERMEDIATE", "Semantic band name is INTERMEDIATE")
+    assertEq(WeatherStrategyModel.getOptimalTyreCompound(), "Intermediate", "Optimal compound is Intermediate")
+
+    -- Rain stops, test drainage: rainIntensity = 0.0
+    mockSim.rainIntensity = 0.0
+    -- Step 20 seconds of drainage -> wetness -= 0.015 * 20 = 0.30 -> wetness ~0.10 (< 0.20)
+    for _ = 1, 20 do
+      WeatherStrategyModel.updateConditions(mockSim, 1.0)
+    end
+    assertTrue(WeatherStrategyModel.getTrackWetness() <= 0.12, "Track drained below 0.12")
+    assertEq(WeatherStrategyModel.getActiveBand(), WeatherStrategyModel.BAND_DRY, "Drained surface returns to BAND_DRY")
+
+    -- 2. Tyre Pace Deficit & Weather Crossover Evaluation
+    -- Set wetness to 0.75 (BAND_WET)
+    WeatherStrategyModel.setTrackWetness(0.75)
+    assertEq(WeatherStrategyModel.getActiveBand(), WeatherStrategyModel.BAND_WET, "0.75 wetness is BAND_WET")
+    assertEq(WeatherStrategyModel.getOptimalTyreCompound(), "Wet", "0.75 wetness recommends Full Wet tyres")
+
+    -- Slick tyre pace penalty on 0.75 wet track
+    local slickPenalty = WeatherStrategyModel.getTyrePacePenalty("Soft", 0.75)
+    assertTrue(slickPenalty > 20.0, "Slick tyres suffer > 20s/lap penalty in heavy wet")
+
+    -- Wet tyre penalty on 0.75 wet track
+    local wetPenalty = WeatherStrategyModel.getTyrePacePenalty("Wet", 0.75)
+    assertEq(wetPenalty, 0.0, "Full Wet tyres have 0.0 penalty in optimal wet condition")
+
+    -- Evaluate weather pit: On lap 3 of 15-lap race, car on Soft slicks should box for Wet tyres
+    local shouldBox, targetComp, netBenefit = WeatherStrategyModel.evaluateWeatherPit("Soft", 3, 15)
+    assertTrue(shouldBox, "Weather crossover triggers urgent pit stop for car on slicks")
+    assertEq(targetComp, "Wet", "Target compound is Wet")
+    assertTrue(netBenefit > 50.0, "Net benefit of switching to Wet tyres exceeds pit delta loss")
+
+    -- If already on Wet tyres in wet condition, shouldBox should be false
+    local shouldBoxWet, _, _ = WeatherStrategyModel.evaluateWeatherPit("Wet", 3, 15)
+    assertEq(shouldBoxWet, false, "Car already on Wet tyres does not trigger weather box")
+
+    -- 3. BehaviorActuator Rain Adjustments (Caution & Corridor Clamp)
+    local cautionMult = WeatherStrategyModel.getWeatherCautionMultiplier()
+    -- At wetness 0.75: 1.0 + 0.75 * 0.65 = 1.4875
+    assertTrue(cautionMult > 1.40 and cautionMult < 1.55, "Caution multiplier ~1.49 at 0.75 wetness")
+
+    local corridorClamp = WeatherStrategyModel.getWeatherCorridorClamp()
+    -- At wetness 0.75: 0.55 - 0.75 * 0.33 = 0.3025
+    assertTrue(corridorClamp < 0.35 and corridorClamp >= 0.22, "Corridor clamped to ~0.30 at 0.75 wetness")
+
+    -- Actuator physical actuation under rain:
+    BehaviorActuator.reset()
+    local car = {
+      index = 2,
+      driverName = "Norris",
+      speedKmh = 160.0,
+      lapCount = 4,
+      splinePosition = 0.5,
+    }
+    local aiState = {
+      currentSplineOffset = 0.0,
+      targetSplineOffset = 0.50, -- requests +0.50 lateral offset
+      currentCaution = 1.0,
+      targetCaution = 1.0,
+      currentAggression = 0.7,
+      targetAggression = 0.7,
+    }
+    BehaviorActuator.applyActuator(car, aiState, 1.0)
+    -- Target offset 0.50 should be clamped by corridorClamp (~0.30)
+    assertTrue(aiState.appliedSplineOffset <= corridorClamp + 0.02, "Applied spline offset clamped by rain corridor clamp")
+
+    -- 4. End-to-End StrategyCoordinator Autonomous Weather Box Decision
+    RadioVoiceEngine.reset()
+    local cState = RaceContext.getCarState(2)
+    cState.isConnected = true
+    cState.isAIControlled = true
+    cState.isRetired = false
+    cState.compoundName = "Soft"
+    cState.tyreWear = 0.10 -- tyres are fresh, not worn out!
+    cState.fuelInTank = 40.0 -- fuel is plenty!
+    cState.lapCount = 3
+    cState.pitState = "NONE"
+    cState.radioOrderActive = false
+
+    local plan = StrategyCoordinator.getCarPlan(2)
+    plan.targetLap = 12
+    plan.openLap = 10
+    plan.escalateLap = 13
+    plan.pitInHandled = false
+
+    -- Track is soaked at 0.75 wetness, triggering StrategyCoordinator.stepStrategy
+    StrategyCoordinator.stepStrategy(1.0)
+
+    assertEq(plan.activeRecommendation, "BOX_THIS_LAP", "StrategyCoordinator recommends BOX_THIS_LAP on rain crossover")
+    assertEq(plan.reasonCode, "WEATHER_CROSSOVER", "Reason code is WEATHER_CROSSOVER")
+    assertEq(cState.workOrder.targetCompoundName, "Wet", "Work order automatically configured to Wet compound")
+    assertEq(RadioVoiceEngine.getLastPlayedKey(), "cmd_box", "Weather crossover triggers cmd_box radio voice")
+
+    WeatherStrategyModel.reset()
+    print("  -> Passed: Dynamic Weather, Track Wetness & Rain Pit Crossover verified.")
+  end
+  runTest54()
+end
+
 print("==================================================================")
-print("  ALL 52 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
+print("  ALL 54 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
 print("==================================================================")
 
 

@@ -18,6 +18,7 @@
 local ControlTelemetry = require("lib/core/ControlTelemetry")
 local EventHub = require("lib/core/EventHub")
 local watchdog = require("lib/driver/watchdog")
+local WeatherStrategyModel = require("lib/strategy/WeatherStrategyModel")
 
 local M = {}
 
@@ -260,16 +261,22 @@ function M.applyActuator(car, aiState, dt)
     -- Safe dynamic lateral corridor bounded by track margins reserving 1.8m safety buffer
     local maxLeft = 0.55
     local maxRight = 0.55
+    local wClamp = WeatherStrategyModel.getWeatherCorridorClamp()
+    if maxLeft > wClamp then maxLeft = wClamp end
+    if maxRight > wClamp then maxRight = wClamp end
+
     if ac and ac.getTrackAISplineSides and car.splinePosition then
       local okS, l, r = pcall(ac.getTrackAISplineSides, car.splinePosition)
       if okS and type(l) == "number" and type(r) == "number" then
         if l > 2.0 then
-          maxLeft = math.min(0.55, math.max(0.15, (l - 1.8) / l))
+          local lLim = math.min(0.55, math.max(0.15, (l - 1.8) / l))
+          if maxLeft > lLim then maxLeft = lLim end
         else
           maxLeft = 0.15
         end
         if r > 2.0 then
-          maxRight = math.min(0.55, math.max(0.15, (r - 1.8) / r))
+          local rLim = math.min(0.55, math.max(0.15, (r - 1.8) / r))
+          if maxRight > rLim then maxRight = rLim end
         else
           maxRight = 0.15
         end
@@ -316,8 +323,10 @@ function M.applyActuator(car, aiState, dt)
     end
 
     local cVal = aiState.currentCaution
+    local wMult = WeatherStrategyModel.getWeatherCautionMultiplier()
+    cVal = cVal * wMult
     if cVal < 0.20 then cVal = 0.20 end
-    if cVal > 1.40 then cVal = 1.40 end
+    if cVal > 2.00 then cVal = 2.00 end
 
     local aVal = aiState.currentAggression
     if aVal < 0.30 then aVal = 0.30 end

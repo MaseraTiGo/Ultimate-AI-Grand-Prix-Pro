@@ -22,6 +22,7 @@ local SafetyCar = require("lib/strategy/safety_car")
 local StrategyAuthority = require("lib/strategy/strategy_authority")
 local EventHub = require("lib/core/EventHub")
 local ControlTelemetry = require("lib/core/ControlTelemetry")
+local WeatherStrategyModel = require("lib/strategy/WeatherStrategyModel")
 
 local M = {}
 
@@ -186,6 +187,13 @@ function M.issueRadioOrder(carIndex, command)
   local cState = RaceContext.getCarState(carIndex)
   local dLabel = EventHub.formatDriverLabel(carIndex, cState.driverName)
   local cmd = command or "NONE"
+
+  -- Trigger Team Radio Audio Chatter
+  local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
+  local clipKey = RadioVoiceEngine.mapRadioCommandToClip(cmd)
+  if clipKey then
+    RadioVoiceEngine.playRadio(clipKey, RadioVoiceEngine.PRIORITY_COMMAND)
+  end
   -- Immediately close the loop in Driver / Strategy state machine
   if cmd == "BOX_THIS_LAP" then
     -- Idempotency protection & deduplication
@@ -211,7 +219,7 @@ function M.issueRadioOrder(carIndex, command)
     -- physics.setAIPitStopRequest(carIndex, true) directs native AC AI to pit on current lap.
     -- Replaces and obsoletes artificial fuel starvation hacks.
     local wo = cState.workOrder or cState.pendingWorkOrder
-    local targetComp = (wo and wo.targetCompoundName) or "Hard"
+    local targetComp = (wo and wo.targetCompoundName) or WeatherStrategyModel.getOptimalTyreCompound()
     local targetFuel = (wo and (wo.refuelLiters or wo.addFuelLiters)) or 42
     ControlTelemetry.dispatchPitStopRequest(carIndex, true, targetComp, targetFuel, nil, cState.driverName)
     EventHub.pushCommandEvent("RADIO", string.format("[CMD ACCEPTED] %s 确认指令 -> 执行 [BOX_THIS_LAP] (CSP原生进站请求激活)", dLabel), "SUCCESS")
@@ -283,6 +291,14 @@ function M.stepStrategy(dt)
   local race = RaceContext.getRaceState()
   if race.isReplay then return end
 
+  -- Dynamic Weather & Rain Perception update (1Hz / step)
+  local okSim, sim = pcall(ac.getSim)
+  if okSim and sim then
+    WeatherStrategyModel.updateConditions(sim, dt)
+  else
+    WeatherStrategyModel.updateConditions(nil, dt)
+  end
+
   local carsCount = race.carsCount or 0
   local curLap = race.currentLap or 1
   local totalLaps = race.totalLaps or 13
@@ -332,12 +348,13 @@ function M.stepStrategy(dt)
       local carOwnLap = (cState.lapCount and cState.lapCount > 0) and (cState.lapCount + 1) or curLap
       local inNominalWindow = (carOwnLap >= plan.openLap and carOwnLap <= plan.escalateLap)
       local isTyreCliff = (cState.tyreWear >= 0.58)
+      local isWeatherBox, targetRainComp, netBenefitSec = WeatherStrategyModel.evaluateWeatherPit(cState.compoundName, carOwnLap, totalLaps)
 
-      -- 3. Dynamic Pit Window & Undercut/Overcut Evaluation
-      -- Triggers if in scheduled window OR if emergency occurs (fuel depletion or tyre cliff)
+      -- 3. Dynamic Pit Window & Undercut/Overcut/Weather Evaluation
+      -- Triggers if in scheduled window OR if emergency occurs (fuel depletion, tyre cliff, or weather crossover)
       local shouldEvaluatePit = not (cState.isInPitlane or cState.isInPit)
         and (cState.pitState == "NONE" or not cState.pitState)
-        and (inNominalWindow or isFuelEmergency or isTyreCliff)
+        and (inNominalWindow or isFuelEmergency or isTyreCliff or isWeatherBox)
 
       if shouldEvaluatePit then
 
@@ -375,12 +392,16 @@ function M.stepStrategy(dt)
           local isTyreCliff = (cState.tyreWear >= 0.58)
           local isSafetyCarCheapStop = (race.scActive == true)
           local isRealUndercut = (decision.bestOption.action == "PIT_NOW") and (carOwnLap >= plan.targetLap - 1) and (gapAheadSec < 1.6) and ((persona.undercut_preference or 0.5) >= 0.65)
+          local isWeatherCrossover = isWeatherBox
 
-          local shouldBox = isTargetLapReached or isFuelEmergency or isTyreCliff or isSafetyCarCheapStop or isRealUndercut
+          local shouldBox = isTargetLapReached or isFuelEmergency or isTyreCliff or isSafetyCarCheapStop or isRealUndercut or isWeatherCrossover
 
           local reasonCode = "STINT_WINDOW"
           local reasonDesc = "Nominal Stint Window"
-          if isRealUndercut then
+          if isWeatherCrossover then
+            reasonCode = "WEATHER_CROSSOVER"
+            reasonDesc = string.format("Weather crossover: Surface wetness %.0f%% requires %s tyres (Net gain: +%.1fs)", WeatherStrategyModel.getTrackWetness() * 100, targetRainComp, netBenefitSec)
+          elseif isRealUndercut then
             reasonCode = "UNDERCUT_OPPORTUNITY"
             reasonDesc = string.format("Undercut candidate: Gap ahead %.1fs < 1.6s under heavy tyre degradation", gapAheadSec)
           elseif isSafetyCarCheapStop then
@@ -403,6 +424,22 @@ function M.stepStrategy(dt)
 
           if shouldBox then
             plan.activeRecommendation = "BOX_THIS_LAP"
+            if isWeatherCrossover then
+              local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
+              RadioVoiceEngine.playRadio("cmd_box", RadioVoiceEngine.PRIORITY_EMERGENCY)
+              if not cState.workOrder then cState.workOrder = {} end
+              cState.workOrder.targetCompoundName = targetRainComp
+              if physics and physics.setAIRainTyres then
+                local isRain = (targetRainComp == "Intermediate" or targetRainComp == "Wet")
+                physics.setAIRainTyres(i, isRain)
+              end
+            elseif isRealUndercut then
+              local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
+              RadioVoiceEngine.playRadio("info_undercut", RadioVoiceEngine.PRIORITY_COMMAND)
+            elseif isSafetyCarCheapStop then
+              local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
+              RadioVoiceEngine.playRadio("info_safety_car", RadioVoiceEngine.PRIORITY_EMERGENCY)
+            end
             -- Autonomous AI Strategic Pit Decision:
             -- Pure recommendation NEVER mutates cState.radioCommand (which is reserved for Human / Pit Wall orders).
             -- Autonomous AI triggers internal pit request ONLY when no manual radio command is active:
@@ -412,7 +449,7 @@ function M.stepStrategy(dt)
                 cState.tacticalState = "BOXING"
                 cState.pitState = "REQUESTED"
                 local wo = cState.workOrder
-                local targetComp = (wo and wo.targetCompoundName) or "Optimal"
+                local targetComp = (wo and wo.targetCompoundName) or WeatherStrategyModel.getOptimalTyreCompound()
                 local targetFuel = (wo and wo.addFuelLiters) or 35
                 ControlTelemetry.dispatchPitStopRequest(i, true, targetComp, targetFuel, nil, cState.driverName)
               end
@@ -464,6 +501,12 @@ function M.stepStrategy(dt)
           cState.tyreWarmupProgress = 0.0
           cState.tyreWear = 0.0 -- fresh tyres fitted
           cState.tyreLapsAge = 0
+          local fittedComp = (cState.workOrder and cState.workOrder.targetCompoundName) or WeatherStrategyModel.getOptimalTyreCompound()
+          cState.compoundName = fittedComp
+          if physics and physics.setAIRainTyres then
+            local isRain = WeatherStrategyModel.isRainTyre(fittedComp)
+            physics.setAIRainTyres(i, isRain)
+          end
 
           -- Refill fuel for next stint (respecting work order if configured, otherwise calculate stint requirement)
           local alreadyServiced = cState.pendingWorkOrder and cState.pendingWorkOrder.serviced
