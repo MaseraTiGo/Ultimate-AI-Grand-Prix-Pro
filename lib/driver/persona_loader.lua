@@ -293,10 +293,12 @@ function M.init(configPath)
 end
 
 local _manualOverrides = {} -- carIndex -> personaKey
+local _proceduralCache = {}  -- carIndex -> { driverName = string, persona = table }
 
 --- Manually override persona for a car index (for Grid setup UI)
 function M.setManualOverride(carIndex, personaKey)
   if not carIndex then return end
+  _proceduralCache[carIndex] = nil
   if personaKey and personaKey ~= "" then
     _manualOverrides[carIndex] = personaKey
   else
@@ -306,6 +308,11 @@ end
 
 function M.getManualOverride(carIndex)
   return _manualOverrides[carIndex]
+end
+
+function M.reset()
+  _manualOverrides = {}
+  _proceduralCache = {}
 end
 
 --- Get the active persona key for a car (either manual override or mapped persona from personas.json)
@@ -398,8 +405,17 @@ function M.getPersonaForCar(carIndex, driverName)
     end
   end
 
-  -- Generate unique procedural DNA spectrum for driver based on name seed
-  return generateProceduralDNA(driverName or "", carIndex or 0)
+  -- Generate unique procedural DNA spectrum for driver based on name seed (with per-car caching)
+  local dName = driverName or ""
+  local idx = carIndex or 0
+  local cached = _proceduralCache[idx]
+  if cached and cached.driverName == dName then
+    return cached.persona
+  end
+
+  local generated = generateProceduralDNA(dName, idx)
+  _proceduralCache[idx] = { driverName = dName, persona = generated }
+  return generated
 end
 
 function M.getAllPersonas()

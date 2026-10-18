@@ -89,9 +89,23 @@ function M.updateTiers(playerPos, carsCount, getCarPos)
 end
 
 local _deepSleepEnabled = false
+local _baselineHeartbeatInterval = 0 -- 0: pure deep sleep (0Hz); >0: ticks every N frames (~0.4Hz at 25 ticks)
 
 function M.setDeepSleepEnabled(enabled)
   _deepSleepEnabled = (enabled ~= false)
+end
+
+--- Configure low-frequency baseline heartbeat interval (in ticks) for Tier 3 cars in Deep Sleep
+--- E.g., interval = 25 (~0.4Hz at 10Hz base clock) ensures distant cars tick periodically for pit/tyre updates
+---@param interval integer Number of ticks between heartbeats (0 disables heartbeat)
+function M.setBaselineHeartbeat(interval)
+  _baselineHeartbeatInterval = (interval and interval > 0) and math.floor(interval) or 0
+end
+
+--- Get configured baseline heartbeat interval
+---@return integer interval
+function M.getBaselineHeartbeat()
+  return _baselineHeartbeatInterval
 end
 
 --- Check if specific car should execute tactical decision tick this frame
@@ -100,6 +114,7 @@ end
 ---   Tier 2 (Midfield): Runs every 3rd tick (3.33Hz), staggered by (carIndex % 3)
 ---   Tier 3 (Ambient > 250m): DEEP SLEEP (0Hz) when enabled - skips routine ticks unless
 ---          awakened by event interrupt (collision/yellow flag/approach), then runs @ 1Hz.
+---          If baseline heartbeat is configured (>0), ticks periodically at 0.4Hz.
 ---          If deep sleep is disabled, runs at normal 1Hz (1/10 ticks).
 ---@param carIndex integer
 ---@return boolean shouldTick, integer tier
@@ -122,6 +137,13 @@ function M.shouldTickCar(carIndex)
         local phase = carIndex % 10
         if (_tickCounter % 10) == phase then
           _eventWakeCounter[carIndex] = wakeTicks - 1
+          return true, M.TIER_AMBIENT
+        end
+      end
+      -- Baseline heartbeat fallback for strategy & tyre progression (e.g. ~0.4Hz at 25 ticks)
+      if _baselineHeartbeatInterval > 0 then
+        local phase = carIndex % _baselineHeartbeatInterval
+        if (_tickCounter % _baselineHeartbeatInterval) == phase then
           return true, M.TIER_AMBIENT
         end
       end
@@ -160,6 +182,7 @@ end
 --- Reset counter
 function M.reset()
   _tickCounter = 0
+  _baselineHeartbeatInterval = 0
   for i = 0, MAX_CARS - 1 do
     _carTiers[i] = M.TIER_FOCUS
     _carDistSq[i] = 0.0

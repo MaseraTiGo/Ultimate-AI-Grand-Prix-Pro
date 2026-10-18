@@ -55,15 +55,28 @@ local _aiStopCounters = {}
 local _aiBrakeMistakes = {}
 local _aiTractionMistakes = {}
 local _preventRetireCalls = {}
+local _actuatorAudit = {
+  splineOffsetCalls = {},
+  splineOffsetValues = {},
+  cautionCalls = {},
+  aggressionCalls = {},
+}
 
 physics = {
   allowed = function() return true end,
   setAICarPosition = function() end,
   setAIStopCounter = function(idx, val) _aiStopCounters[idx] = val end,
   setAIPitStopRequest = function(idx, val) _aiPitRequests[idx] = val end,
-  setAISplineOffset = function() end,
-  setAICaution = function() end,
-  setAIAggression = function() end,
+  setAISplineOffset = function(idx, off, isOverride)
+    _actuatorAudit.splineOffsetCalls[idx] = (_actuatorAudit.splineOffsetCalls[idx] or 0) + 1
+    _actuatorAudit.splineOffsetValues[idx] = off
+  end,
+  setAICaution = function(idx, caut)
+    _actuatorAudit.cautionCalls[idx] = (_actuatorAudit.cautionCalls[idx] or 0) + 1
+  end,
+  setAIAggression = function(idx, aggr)
+    _actuatorAudit.aggressionCalls[idx] = (_actuatorAudit.aggressionCalls[idx] or 0) + 1
+  end,
   setExtraAIGrip = function() end,
   setAIBrakeMistake = function(idx, dur) _aiBrakeMistakes[idx] = dur end,
   setAITractionMistake = function(idx, dur, sev) _aiTractionMistakes[idx] = { dur = dur, sev = sev } end,
@@ -2204,7 +2217,473 @@ local function runTest45()
 end
 runTest45()
 
+-- [Test 46] Testing Watchdog stuck recovery, releaseTakeover safe reset & subsequent takeover
+do
+  local function runTest46()
+    print("[Test 46] Testing Watchdog Stuck Recovery & Safe Takeover Lifecycle...")
+    local watchdog = require("lib/driver/watchdog")
+    watchdog.reset()
+
+    local dummyCar = {
+      index = 3,
+      isAIControlled = true,
+      isRetired = false,
+      isInPitlane = false,
+      isInPit = false,
+      speedKmh = 0.5,
+      lapCount = 2,
+      position = vec3(10, 0, 100),
+    }
+
+    -- Trigger stuck recovery check over 5 seconds
+    for _ = 1, 60 do
+      watchdog.checkStuckCars(dummyCar, 0.1, 50.0)
+    end
+
+    -- Verify releaseTakeover does not error or dereference nil
+    local okRelease = pcall(watchdog.releaseTakeover, 3)
+    assertTrue(okRelease, "watchdog.releaseTakeover executes safely without nil dereference")
+
+    -- Verify subsequent takeover request succeeds cleanly (table was not nilled out)
+    local cbCalled = false
+    local okTakeover = watchdog.requestTakeover(3, 0.3, function(ctrl, car, dt)
+      cbCalled = true
+    end)
+    assertTrue(okTakeover, "watchdog.requestTakeover succeeds after stuck recovery without table corruption")
+
+    print("  -> Passed: Watchdog Stuck Recovery & Safe Takeover Lifecycle verified.")
+  end
+  runTest46()
+end
+
+-- [Test 47] Testing Deterministic X-Skills Registry Initialization & Idempotency
+do
+  local function runTest47()
+    print("[Test 47] Testing Deterministic X-Skills Registry Initialization...")
+    local SkillRegistry = require("lib/skills/SkillRegistry")
+    local TacticalTicker = require("lib/driver/TacticalTicker")
+
+    -- Reset registry to simulate pre-init state
+    SkillRegistry.reset()
+    local listBefore, countBefore = SkillRegistry.getAllSkills()
+    assertEq(countBefore, 0, "SkillRegistry reset cleanly to 0 skills")
+
+    -- Call TacticalTicker.init() as executed in script.init()
+    TacticalTicker.init()
+    local listAfter, countAfter = SkillRegistry.getAllSkills()
+    assertTrue(countAfter >= 5, "TacticalTicker.init registers all built-in X-Skills (count >= 5)")
+
+    -- Call init again to verify idempotency (does not duplicate or crash)
+    TacticalTicker.init()
+    local listSecond, countSecond = SkillRegistry.getAllSkills()
+    assertEq(countSecond, countAfter, "TacticalTicker.init is idempotent (count unchanged)")
+
+    print("  -> Passed: Deterministic X-Skills Registry Initialization verified.")
+  end
+  runTest47()
+end
+
+-- [Test 48] Testing Zero-Allocation Procedural Persona Caching & Invalidation
+do
+  local function runTest48()
+    print("[Test 48] Testing Zero-Allocation Procedural Persona Caching...")
+    local personaLoader = require("lib/driver/persona_loader")
+    personaLoader.reset()
+
+    -- Warm up cache with an unmapped rookie driver
+    local pFirst = personaLoader.getPersonaForCar(11, "Rookie Testdriver")
+    assertTrue(pFirst ~= nil and pFirst.is_procedural == true, "Procedural DNA generated for unmapped driver")
+
+    -- Measure memory allocations over 500 consecutive lookups
+    if jit then jit.off(); jit.flush() end
+    collectgarbage("collect")
+    local memBefore = collectgarbage("count")
+
+    for _ = 1, 500 do
+      local pLoop = personaLoader.getPersonaForCar(11, "Rookie Testdriver")
+      if pLoop.base_aggression < 0 then error("invalid") end
+    end
+
+    local memAfter = collectgarbage("count")
+    local deltaKB = memAfter - memBefore
+    assertTrue(deltaKB <= 0.05, string.format("Procedural persona lookup in 10Hz loop is zero-alloc (Delta: %.3f KB)", deltaKB))
+
+    -- Verify cache invalidation when manual override is set
+    personaLoader.setManualOverride(11, "f1_verstappen")
+    local pOverridden = personaLoader.getPersonaForCar(11, "Rookie Testdriver")
+    assertEq(pOverridden.name, "Max Verstappen", "Manual override takes precedence over procedural cache")
+
+    -- Reset clears overrides and caches
+    personaLoader.reset()
+    local pPostReset = personaLoader.getPersonaForCar(11, "Rookie Testdriver")
+    assertTrue(pPostReset.is_procedural == true, "Reset restores procedural generation cleanly")
+
+    print("  -> Passed: Zero-Allocation Procedural Persona Caching verified.")
+  end
+  runTest48()
+end
+
+-- [Test 49] Testing Actuator Contract, Native Neutral Recovery & Deduplication
+do
+  local function runTest49()
+    print("[Test 49] Testing Actuator Contract, Native Neutral Recovery & Deduplication...")
+    local BehaviorActuator = require("lib/driver/BehaviorActuator")
+    local watchdog = require("lib/driver/watchdog")
+    BehaviorActuator.reset()
+
+    local car10 = {
+      index = 10,
+      isConnected = true,
+      isAIControlled = true,
+      speedKmh = 140.0,
+      lapCount = 3
+    }
+
+    -- 1. Step with non-zero tactical offset (e.g. 0.12)
+    local stateActive = {
+      state = "ATTACK",
+      targetSplineOffset = 0.12,
+      currentSplineOffset = 0.12,
+      targetCaution = 0.85,
+      currentCaution = 0.85,
+      targetAggression = 0.80,
+      currentAggression = 0.80,
+      radioCommand = "NONE",
+      behindDist = 50.0
+    }
+
+    _actuatorAudit.splineOffsetCalls[10] = 0
+    _throttleLimits[10] = nil
+    BehaviorActuator.applyActuator(car10, stateActive, 0.1)
+
+    assertEq(_actuatorAudit.splineOffsetCalls[10], 1, "Tactical non-zero offset dispatched to physics.setAISplineOffset")
+    assertTrue(math.abs(_actuatorAudit.splineOffsetValues[10] - 0.12) < 0.001, "Dispatched offset matches tactical target 0.12")
+    assertTrue(BehaviorActuator.isOffsetActive(10), "Offset tracking register marked active")
+
+    -- 2. Deduplication: run 5 consecutive frames with identical target state
+    local callsBefore = _actuatorAudit.splineOffsetCalls[10]
+    for _ = 1, 5 do
+      BehaviorActuator.applyActuator(car10, stateActive, 0.1)
+    end
+    assertEq(_actuatorAudit.splineOffsetCalls[10], callsBefore, "Repeated frames with unchanged offset are deduplicated (0 redundant calls)")
+
+    -- 3. Neutral state recovery: skill finishes / target returns to 0.0
+    local stateNeutral = {
+      state = "CRUISE",
+      targetSplineOffset = 0.0,
+      currentSplineOffset = 0.0,
+      targetCaution = 1.0,
+      currentCaution = 1.0,
+      targetAggression = 0.70,
+      currentAggression = 0.70,
+      radioCommand = "NONE",
+      behindDist = 50.0
+    }
+
+    BehaviorActuator.applyActuator(car10, stateNeutral, 0.1)
+    assertEq(_actuatorAudit.splineOffsetCalls[10], callsBefore + 1, "Explicit neutral recovery dispatched exactly once")
+    assertEq(_actuatorAudit.splineOffsetValues[10], 0.0, "Dispatched offset explicitly restored to 0.0")
+    assertEq(BehaviorActuator.isOffsetActive(10), false, "Offset active register cleared to false")
+
+    -- 4. Deduplication in neutral: 5 more frames in neutral should not call setAISplineOffset again
+    local callsAfterNeutral = _actuatorAudit.splineOffsetCalls[10]
+    for _ = 1, 5 do
+      BehaviorActuator.applyActuator(car10, stateNeutral, 0.1)
+    end
+    assertEq(_actuatorAudit.splineOffsetCalls[10], callsAfterNeutral, "Neutral state is not spammed to native physics (0 redundant calls)")
+
+    -- 5. Exclusive Authority: Pit Lane overrides tactical offsets
+    local pitCar = {
+      index = 10,
+      isConnected = true,
+      isAIControlled = true,
+      isInPitlane = true,
+      speedKmh = 60.0,
+      lapCount = 3
+    }
+    local pitState = {
+      state = "PIT_BAY",
+      targetSplineOffset = 0.14,
+      currentSplineOffset = 0.14,
+      behindDist = 50.0
+    }
+    BehaviorActuator.applyActuator(pitCar, pitState, 0.1)
+    assertEq(pitState.currentSplineOffset, 0.0, "Pit lane enforces 0.0 offset")
+    assertEq(BehaviorActuator.getAppliedThrottleLimit(10), 1.0, "Pit lane restores 1.0 full throttle")
+
+    -- 6. Exclusive Authority: Watchdog takeover yields BehaviorActuator
+    watchdog.init()
+    local okT = watchdog.requestTakeover(10, 1.0, function() end)
+    assertTrue(okT, "watchdog takeover requested successfully")
+    assertTrue(watchdog.isOverridden(10), "watchdog.isOverridden reports active")
+    local preTakeoverCalls = _actuatorAudit.splineOffsetCalls[10]
+    BehaviorActuator.applyActuator(car10, stateActive, 0.1)
+    assertEq(_actuatorAudit.splineOffsetCalls[10], preTakeoverCalls, "BehaviorActuator yields during watchdog takeover")
+    watchdog.releaseTakeover(10)
+
+    -- 7. Reset path clean restoration
+    BehaviorActuator.applyActuator(car10, stateActive, 0.1)
+    assertTrue(BehaviorActuator.isOffsetActive(10), "Offset active prior to reset")
+    BehaviorActuator.reset()
+    assertEq(BehaviorActuator.isOffsetActive(10), false, "Reset clears offset active")
+    assertEq(BehaviorActuator.getAppliedOffset(10), 0.0, "Reset restores applied offset to 0.0")
+
+    print("  -> Passed: Actuator Contract, Native Neutral Recovery & Deduplication verified.")
+  end
+  runTest49()
+end
+
+-- [Test 50] Testing Geometry-Aware Safety, Turn-Directional Maneuvers & Hairpin Filtering
+do
+  local function runTest50()
+    print("[Test 50] Testing Geometry-Aware Safety, Turn-Directional Maneuvers & Hairpin Filtering...")
+    local LateBrakeDive = require("lib/skills/LateBrakeDiveSkill")
+    local Switchback = require("lib/skills/SwitchbackSkill")
+
+    -- 1. Test Turn-Directional Inside Line Selection in LateBrakeDive
+    local mockCar = { index = 1, splinePosition = 0.30, speedKmh = 180.0 }
+    local mockRival = { index = 2, splinePosition = 0.302, position = vec3(0, 0, 10) }
+    local skillCtx = { phaseTimer = 0.0, currentPhase = 1, targetOffset = 0.0, targetCaution = 1.0, targetAggression = 0.7 }
+
+    -- Right Turn (angle > 0): inside line must be on the right (+offset)
+    local geoRight = {
+      upcomingTurnAngle = 0.45, -- Right-hand turn
+      trackLeftM = 6.0,
+      trackRightM = 6.0,
+      aheadRelX = 0.0,
+      aheadDist = 8.0,
+    }
+    LateBrakeDive.stepExecution(skillCtx, mockCar, mockRival, nil, 0.1, geoRight)
+    assertTrue(skillCtx.targetOffset > 0.35, "Late brake dive into right turn takes inside right line (+offset)")
+
+    -- Left Turn (angle < 0): inside line must be on the left (-offset)
+    local geoLeft = {
+      upcomingTurnAngle = -0.45, -- Left-hand turn
+      trackLeftM = 6.0,
+      trackRightM = 6.0,
+      aheadRelX = 0.0,
+      aheadDist = 8.0,
+    }
+    LateBrakeDive.stepExecution(skillCtx, mockCar, mockRival, nil, 0.1, geoLeft)
+    assertTrue(skillCtx.targetOffset < -0.35, "Late brake dive into left turn takes inside left line (-offset)")
+
+    -- Narrow track envelope constraint: right track boundary is cramped (2.2m)
+    local geoNarrowRight = {
+      upcomingTurnAngle = 0.45,
+      trackLeftM = 6.0,
+      trackRightM = 2.2, -- narrow barrier
+      aheadRelX = 0.0,
+      aheadDist = 8.0,
+    }
+    LateBrakeDive.stepExecution(skillCtx, mockCar, mockRival, nil, 0.1, geoNarrowRight)
+    assertTrue(skillCtx.targetOffset <= 0.25, "Narrow track boundary clamps dive offset safely (avoiding wall)")
+
+    -- 2. Test Geometry-Aware Directional Maneuvers in Switchback
+    local sbCtx = { phaseTimer = 0.0, currentPhase = 1, targetOffset = 0.0, targetCaution = 1.0, targetAggression = 0.7 }
+    -- Right Turn Switchback: Phase 1 stays wide outside left (<0), Phase 2 cuts back inside right (>0)
+    Switchback.stepExecution(sbCtx, mockCar, mockRival, nil, 0.1, geoRight)
+    assertTrue(sbCtx.targetOffset < 0, "Right-turn switchback Phase 1 prepares wide on outside left (-offset)")
+    sbCtx.phaseTimer = 0.6 -- advance past 0.5s phase threshold
+    Switchback.stepExecution(sbCtx, mockCar, mockRival, nil, 0.1, geoRight)
+    assertEq(sbCtx.currentPhase, 2, "Switchback advanced to Phase 2 (Cutback)")
+    Switchback.stepExecution(sbCtx, mockCar, mockRival, nil, 0.1, geoRight)
+    assertTrue(sbCtx.targetOffset > 0, "Right-turn switchback Phase 2 cuts back inside right (+offset)")
+
+    -- 3. Test Hairpin & Parallel Track Ghost Filtering in Topology
+    local hairpinCars = {
+      [0] = {
+        index = 0,
+        isConnected = true,
+        position = vec3(10, 0, 50),
+        splinePosition = 0.45,
+        look = vec3(0, 0, 1), -- Traveling North
+      },
+      [1] = {
+        index = 1,
+        isConnected = true,
+        position = vec3(12, 0, 65), -- Only 15m Euclidean distance away!
+        splinePosition = 0.47,
+        look = vec3(0, 0, -1), -- Traveling South (Opposite side of hairpin!)
+      },
+      [2] = {
+        index = 2,
+        isConnected = true,
+        position = vec3(10, 0, 75), -- 25m Euclidean distance away
+        splinePosition = 0.85, -- Parallel track section 2000m away on circuit!
+        look = vec3(0, 0, 1),
+      },
+    }
+    local function getHairpinCar(i) return hairpinCars[i] end
+    RaceContext.updateTopology(3, getHairpinCar)
+    local aheadHairpin, distAheadHairpin = RaceContext.getNeighbors(0)
+    assertEq(aheadHairpin, -1, "Opposite-facing hairpin neighbor and distant parallel track car both filtered as ghosts")
+
+    print("  -> Passed: Geometry-Aware Safety, Turn-Directional Maneuvers & Hairpin Filtering verified.")
+  end
+  runTest50()
+end
+
+-- ==============================================================================
+-- [Test 51] Actuator Dynamic Authority, Maneuver Slew Rate & Pace Bounds
+-- ==============================================================================
+do
+  local function runTest51()
+    print("[Test 51] Testing Actuator Dynamic Authority, Maneuver Slew Rate & Pace Bounds...")
+    local BehaviorActuator = require("lib/driver/BehaviorActuator")
+    local TacticalTicker = require("lib/driver/TacticalTicker")
+    BehaviorActuator.reset()
+    TacticalTicker.reset()
+
+    local carManeuver = {
+      index = 11,
+      isConnected = true,
+      isAIControlled = true,
+      speedKmh = 160.0,
+      lapCount = 2,
+      splinePosition = 0.35,
+    }
+
+    -- 1. Slew rate comparison: Maneuvering (0.85/s) vs Cruising (0.35/s)
+    local stateCruise = {
+      state = "CRUISE",
+      targetSplineOffset = 0.50,
+      currentSplineOffset = 0.0,
+      behindDist = 40.0
+    }
+    BehaviorActuator.applyActuator(carManeuver, stateCruise, 0.1)
+    local cruiseOffset = stateCruise.currentSplineOffset
+    assertTrue(cruiseOffset > 0.030 and cruiseOffset < 0.040, string.format("Cruising lateral slew is ~0.035/0.1s (got %.4f)", cruiseOffset))
+
+    local stateAttack = {
+      state = "ATTACK",
+      targetSplineOffset = 0.50,
+      currentSplineOffset = 0.0,
+      behindDist = 40.0
+    }
+    BehaviorActuator.applyActuator(carManeuver, stateAttack, 0.1)
+    local attackOffset = stateAttack.currentSplineOffset
+    assertTrue(attackOffset > 0.080 and attackOffset < 0.090, string.format("Maneuvering lateral slew is ~0.085/0.1s (got %.4f)", attackOffset))
+    assertTrue(attackOffset > cruiseOffset * 2.0, "Maneuvering slew rate is > 2x faster than cruising")
+
+    -- 2. Wide Dynamic Corridor vs Narrow Wall Clamping
+    local origGetSides = ac.getTrackAISplineSides
+    -- Scenario A: Wide track (left 7m, right 7m) -> allows safe offset up to 0.55
+    ac.getTrackAISplineSides = function(s) return 7.0, 7.0 end
+    local stateWide = {
+      state = "ATTACK",
+      targetSplineOffset = 0.50,
+      currentSplineOffset = 0.50,
+      behindDist = 40.0
+    }
+    BehaviorActuator.applyActuator(carManeuver, stateWide, 0.1)
+    assertEq(stateWide.appliedSplineOffset, 0.50, "Wide track corridor permits full 0.50 tactical dive offset")
+
+    -- Scenario B: Narrow right track margin (2.0m) -> reserves 1.8m margin, clamps right offset to 0.15
+    ac.getTrackAISplineSides = function(s) return 7.0, 2.0 end
+    BehaviorActuator.applyActuator(carManeuver, stateWide, 0.1)
+    assertTrue(stateWide.appliedSplineOffset <= 0.20, string.format("Narrow track margin clamps offset to safe zone (got %.2f)", stateWide.appliedSplineOffset))
+    ac.getTrackAISplineSides = origGetSides
+
+    -- 3. High-Authority Pace (Caution down to 0.20, Aggression up to 0.98)
+    local stateAggressive = {
+      state = "ATTACK",
+      targetCaution = 0.20,
+      currentCaution = 0.20,
+      targetAggression = 0.98,
+      currentAggression = 0.98,
+      targetSplineOffset = 0.0,
+      currentSplineOffset = 0.0,
+      behindDist = 40.0
+    }
+    BehaviorActuator.applyActuator(carManeuver, stateAggressive, 0.1)
+    local appliedA, appliedC = BehaviorActuator.getAppliedPace(11)
+    assertTrue(math.abs(appliedC - 0.20) < 0.01, string.format("Caution allowed to reach 0.20 (got %.2f, old clamped at 0.75)", appliedC))
+    assertTrue(math.abs(appliedA - 0.98) < 0.01, string.format("Aggression allowed to reach 0.98 (got %.2f, old clamped at 0.85)", appliedA))
+
+    print("  -> Passed: Actuator Dynamic Authority, Maneuver Slew Rate & Pace Bounds verified.")
+  end
+  runTest51()
+end
+
+-- ==============================================================================
+-- [Test 52] Spatial LOD Baseline Heartbeat & Standing-Start Launch Throttle Modulation
+-- ==============================================================================
+do
+  local function runTest52()
+    print("[Test 52] Testing Spatial LOD Baseline Heartbeat & Standing-Start Launch...")
+    local LODScheduler = require("lib/driver/LODScheduler")
+    local MistakeEngine = require("lib/driver/MistakeEngine")
+    local BehaviorActuator = require("lib/driver/BehaviorActuator")
+
+    -- 1. Baseline Heartbeat for Deep Sleep Tier 3 Cars
+    LODScheduler.reset()
+    LODScheduler.setDeepSleepEnabled(true)
+    LODScheduler.setBaselineHeartbeat(25) -- ~0.4Hz at 10Hz base clock
+    local mockPlayerPos = { x = 0, y = 0, z = 0 }
+    local mockPosFunc = function(i)
+      if i == 10 then return 0, 0, 350 end -- Tier 3 Ambient (> 250m)
+      return 0, 0, 50
+    end
+    LODScheduler.updateTiers(mockPlayerPos, 12, mockPosFunc)
+    assertEq(LODScheduler.getCarTier(10), LODScheduler.TIER_AMBIENT, "Car 10 is Tier 3 Ambient")
+
+    local hbTicks = 0
+    for t = 1, 50 do
+      LODScheduler.updateTiers(mockPlayerPos, 12, mockPosFunc)
+      if LODScheduler.shouldTickCar(10) then hbTicks = hbTicks + 1 end
+    end
+    assertEq(hbTicks, 2, "Baseline heartbeat ticks exactly twice in 50 frames (0.4Hz, 1 tick every 25 frames)")
+    LODScheduler.reset()
+    assertEq(LODScheduler.getBaselineHeartbeat(), 0, "Reset clears baseline heartbeat interval to 0")
+
+    -- 2. Standing-Start Launch Delay & Throttle Modulation
+    MistakeEngine.reset()
+    BehaviorActuator.reset()
+
+    local startCar = {
+      index = 7,
+      isConnected = true,
+      isAIControlled = true,
+      speedKmh = 0.0,
+      lapCount = 0,
+      splinePosition = 0.01,
+    }
+    local startPersona = { base_aggression = 0.80 }
+    local delay, blunder = MistakeEngine.evaluateStandingStart(7, startPersona, 0.5)
+    assertTrue(delay >= 0.18 and delay <= 0.65, string.format("Standing start reaction delay generated (%.2fs)", delay))
+    assertTrue(MistakeEngine.isLaunchDelayed(7), "MistakeEngine.isLaunchDelayed is true during start")
+
+    local startState = {
+      state = "CRUISE",
+      isLaunchDelayed = true,
+      targetSplineOffset = 0.0,
+      currentSplineOffset = 0.0,
+      behindDist = 40.0
+    }
+    BehaviorActuator.applyActuator(startCar, startState, 0.05)
+    assertEq(BehaviorActuator.getAppliedThrottleLimit(7), 0.0, "Throttle limit is modulated to 0.0 during standing start reaction delay")
+
+    -- Step time to elapse the delay
+    MistakeEngine.stepStandingStart(7, delay + 0.1)
+    assertEq(MistakeEngine.isLaunchDelayed(7), false, "Launch delay cleared once reaction time has elapsed")
+
+    startState.isLaunchDelayed = false
+    BehaviorActuator.applyActuator(startCar, startState, 0.05)
+    assertEq(BehaviorActuator.getAppliedThrottleLimit(7), 1.0, "Full 1.0 throttle restored once launch reaction delay expires")
+
+    -- Collision safety override: if car behind is within 14m, throttle must be 1.0 even if launch delay active
+    startState.isLaunchDelayed = true
+    startState.behindDist = 8.0
+    BehaviorActuator.applyActuator(startCar, startState, 0.05)
+    assertEq(BehaviorActuator.getAppliedThrottleLimit(7), 1.0, "Rear follower safety override forces 1.0 throttle despite launch delay")
+
+    print("  -> Passed: Spatial LOD Baseline Heartbeat & Standing-Start Launch verified.")
+  end
+  runTest52()
+end
+
 print("==================================================================")
-print("  ALL 45 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
+print("  ALL 52 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
 print("==================================================================")
+
 

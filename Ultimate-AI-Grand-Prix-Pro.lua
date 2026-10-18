@@ -76,7 +76,7 @@ function script.init()
   LODScheduler.setDeepSleepEnabled(true)
   MistakeEngine.reset()
   BehaviorActuator.reset()
-  TacticalTicker.reset()
+  TacticalTicker.init()
   StrategyCoordinator.init()
   TelemetryBridge.reset()
   EventHub.init()
@@ -99,16 +99,32 @@ function script.init()
   Logger.info("LIFECYCLE", "[Ultimate AI Grand Prix Pro] Successfully initialized. Physics Allowed: " .. tostring(watchdog.isPhysicsAllowed()))
 end
 
+local function ensureInitialized()
+  if _initialized then return true end
+  if _initAttempted then return false end
+  _initAttempted = true
+
+  if script.init then
+    local ok, err = pcall(script.init)
+    if not ok then
+      _initialized = true -- Prevent recursive crash looping
+      Logger.error("LIFECYCLE", "Initialization error: " .. tostring(err))
+      return false
+    end
+  end
+  return _initialized
+end
+
 --- High-Frequency Physics Loop (simUpdate @ 60Hz)
 --- STRICT PERFORMANCE BUDGET: < 0.1 ms per physics step.
 function script.simUpdate(dt)
-  if not _initialized then return end
+  if not ensureInitialized() then return end
   watchdog.stepPhysics(dt)
 end
 
 --- Frame Update & Decoupled Tactical / Strategy Pipeline
 function script.update(dt)
-  if not _initialized or _inUpdate then return end
+  if not ensureInitialized() or _inUpdate then return end
   local safeDt = math.max(0.0, math.min(0.1, (type(dt) == "number" and dt > 0) and dt or 0.016))
   local sim = ac and ac.getSim and ac.getSim()
   if not sim or RaceContext.safeSimGet(sim, "isReplayActive") then return end
@@ -278,22 +294,6 @@ function script.update(dt)
     _perfMs = (os.clock() - t0) * 1000.0
   end
   _inUpdate = false
-end
-
-local function ensureInitialized()
-  if _initialized then return true end
-  if _initAttempted then return false end
-  _initAttempted = true
-
-  if script.init then
-    local ok, err = pcall(script.init)
-    if not ok then
-      _initialized = true -- Prevent recursive crash looping
-      Logger.error("LIFECYCLE", "Initialization error: " .. tostring(err))
-      return false
-    end
-  end
-  return _initialized
 end
 
 function windowMain(dt)

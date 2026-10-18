@@ -520,6 +520,7 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
 
   local behindDist, behindSpeedDelta, ttcBehind = processPerceptionBuffer(s, instantDist, instantDeltaV, instantTTC, latencyFrames)
   s.behindDist = behindDist
+  s.isLaunchDelayed = MistakeEngine.isLaunchDelayed(idx)
 
   -- 3. Calculate Dynamic Stress Level
   s.stress = computeStress(s, behindDist, behindSpeedDelta, persona, raceContext, dt)
@@ -851,19 +852,29 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
     s.committedState = M.STATE_ATTACK
     s.commitTimer = 0.7
     s.targetAggression = math.min(0.98, (persona.base_aggression or 0.8) + 0.15)
-    s.targetCaution = math.max(0.75, (persona.base_caution or 0.8) * 0.85)
+    s.targetCaution = math.max(0.35, (persona.base_caution or 0.8) * 0.55)
 
     local aggr = persona and persona.base_aggression or 0.75
     -- Two-Phase Feint / Dummy Move: High aggression drivers (> 0.80) feint outside then dive inside
     if aggr > 0.80 and aheadDist < 12.0 and isStraight then
       s.feintTimer = (s.feintTimer or 0.0) + dt
+
+      -- Determine inside apex direction for corner approach
+      local insideSign = -1.0
+      if ac and ac.getTrackUpcomingTurn and car.splinePosition then
+        local okT, d, a = pcall(ac.getTrackUpcomingTurn, car.splinePosition)
+        if okT and type(a) == "number" and math.abs(a) > 0.04 then
+          insideSign = (a > 0) and 1.0 or -1.0
+        end
+      end
+
       if s.feintTimer < 0.40 then
-        -- Phase 1 (0.0~0.4s): Feint outside (+0.45 offset) to lure defender
-        s.targetSplineOffset = 0.45
+        -- Phase 1 (0.0~0.4s): Feint outside opposite to inside apex
+        s.targetSplineOffset = -insideSign * 0.45
         s.isFeinting = true
       elseif s.feintTimer < 1.10 then
-        -- Phase 2 (0.4~1.1s): Rapid dive inside (-0.50 offset) for the overtake line
-        s.targetSplineOffset = -0.50
+        -- Phase 2 (0.4~1.1s): Rapid dive inside for the overtake line
+        s.targetSplineOffset = insideSign * 0.50
         s.isFeinting = true
       else
         -- Cooldown
@@ -877,8 +888,27 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
       s.feintTimer = 0.0
       s.decoyTimer = s.decoyTimer - dt
       if s.decoyTimer <= 0.0 then
+        -- Geometry and rival-relative positioning (no coin-flip randomization)
+        local peekSide = -1.0
+        if ac and ac.getTrackUpcomingTurn and car.splinePosition then
+          local okT, d, a = pcall(ac.getTrackUpcomingTurn, car.splinePosition)
+          if okT and type(a) == "number" and math.abs(a) > 0.04 then
+            peekSide = (a > 0) and 1.0 or -1.0
+          end
+        end
+        if aheadCar and aheadCar.position and car.position and car.side then
+          local bx = aheadCar.position.x - car.position.x
+          local bz = aheadCar.position.z - car.position.z
+          local aheadRelX = bx * (car.side.x or 1.0) + bz * (car.side.z or 0.0)
+          if aheadRelX > 0.15 then
+            peekSide = -1.0 -- Rival is to our right, peek left
+          elseif aheadRelX < -0.15 then
+            peekSide = 1.0 -- Rival is to our left, peek right
+          end
+        end
+
         if math.random() < (persona.decoy_tendency or 0.4) then
-          s.decoyOffset = (math.random() > 0.5 and 0.45 or -0.45)
+          s.decoyOffset = peekSide * 0.45
           s.decoyTimer = 2.0
         else
           s.decoyOffset = 0.0
@@ -928,6 +958,7 @@ end
 
 function M.reset()
   SkillArbitrator.reset()
+  BehaviorActuator.reset()
   for i = 0, MAX_CARS - 1 do
     local s = _aiStates[i]
     s.state = M.STATE_CRUISE

@@ -58,13 +58,43 @@ function M.evaluateUtility(car, aheadCar, behindCar, persona, geoState, memState
 end
 
 --- Step execution state machine for Switchback (Prep -> Apex Cut -> Exit Traction)
-function M.stepExecution(skillCtx, car, aheadCar, behindCar, dt)
+function M.stepExecution(skillCtx, car, aheadCar, behindCar, dt, geoState)
   skillCtx.phaseTimer = skillCtx.phaseTimer + dt
-  local aheadRelX = aheadCar and aheadCar.position and car.worldToLocal and (car.worldToLocal:transformPoint(aheadCar.position).x) or 0.0
+
+  -- Resolve ahead rival relative lateral position safely
+  local aheadRelX = (geoState and geoState.aheadRelX) or 0.0
+  if math.abs(aheadRelX) < 0.05 and aheadCar and aheadCar.position and car.position then
+    local dx = aheadCar.position.x - car.position.x
+    local dz = aheadCar.position.z - car.position.z
+    if car.side then
+      aheadRelX = dx * (car.side.x or 1.0) + dz * (car.side.z or 0.0)
+    elseif car.look then
+      aheadRelX = dx * (car.look.z or 1.0) - dz * (car.look.x or 0.0)
+    end
+  end
+
+  -- Determine corner inside direction:
+  -- If upcoming corner is right turn (angle > 0), inside line is + (right), outside prep is - (left).
+  -- If upcoming corner is left turn (angle < 0), inside line is - (left), outside prep is + (right).
+  local insideSign = 1.0
+  if geoState and geoState.upcomingTurnAngle and math.abs(geoState.upcomingTurnAngle) > 0.04 then
+    insideSign = (geoState.upcomingTurnAngle > 0) and 1.0 or -1.0
+  else
+    -- Fallback: if rival is on right (aheadRelX > 0), they are guarding inside right -> cutback inside is right (+1)
+    insideSign = (aheadRelX >= 0) and 1.0 or -1.0
+  end
+
+  local cutMag = 0.45
+  if geoState then
+    local sideM = (insideSign > 0) and (geoState.trackRightM or 5.0) or (geoState.trackLeftM or 5.0)
+    if sideM < 3.2 then
+      cutMag = math.max(0.15, 0.45 * (sideM / 3.2))
+    end
+  end
 
   if skillCtx.currentPhase == 1 then
-    -- Phase 1: Entry Prep (Stay wide opposite to rival)
-    skillCtx.targetOffset = (aheadRelX < 0) and 0.45 or -0.45
+    -- Phase 1: Entry Prep (Stay wide opposite to inside apex)
+    skillCtx.targetOffset = -insideSign * cutMag
     skillCtx.targetCaution = 1.10
     skillCtx.targetAggression = 0.75
     if skillCtx.phaseTimer >= 0.50 then
@@ -72,8 +102,8 @@ function M.stepExecution(skillCtx, car, aheadCar, behindCar, dt)
       skillCtx.phaseTimer = 0.0
     end
   elseif skillCtx.currentPhase == 2 then
-    -- Phase 2: Square off apex & dive inside
-    skillCtx.targetOffset = (aheadRelX < 0) and -0.45 or 0.45
+    -- Phase 2: Square off apex & dive inside underneath
+    skillCtx.targetOffset = insideSign * cutMag
     skillCtx.targetCaution = 0.25
     skillCtx.targetAggression = 0.95
     if skillCtx.phaseTimer >= 1.20 then

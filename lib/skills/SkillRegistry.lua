@@ -105,8 +105,8 @@ function M.init()
   end
 
   -- Auto-discover optional third-party skills from skills_manifest.txt if present
-  local f = io.open("config/skills_manifest.txt", "r")
-  if f then
+  local okOpen, f = pcall(io.open, "config/skills_manifest.txt", "r")
+  if okOpen and f then
     for line in f:lines() do
       local trimmed = line:match("^%s*(.-)%s*$")
       if trimmed and trimmed ~= "" and not trimmed:match("^#") then
@@ -117,7 +117,7 @@ function M.init()
         end
       end
     end
-    f:close()
+    pcall(function() f:close() end)
   end
 
   _initialized = true

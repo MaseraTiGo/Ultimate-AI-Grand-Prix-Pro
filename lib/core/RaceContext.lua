@@ -905,17 +905,37 @@ function M.updateTopology(carsCount, acGetCar)
               if sDiff < -0.5 then sDiff = sDiff + 1.0
               elseif sDiff > 0.5 then sDiff = sDiff - 1.0 end
 
-              if sDiff > 0.0 then
-                -- carJ is ahead of carI
-                if dist < minAheadDist then
-                  minAheadDist = dist
-                  bestAheadIdx = j
+              local trackLen = _raceState.trackLengthM or 4000.0
+              local splineDistM = math.abs(sDiff) * trackLen
+
+              -- Hairpin and adjacent track section filtering:
+              -- 1. If cars are separated by > 10% of track or > 400m along the track spline,
+              --    they are physically on distant track sections (e.g. parallel straights or multi-loop layouts).
+              -- 2. If cars are close in 3D Euclidean space (< 50m) but traveling in opposing directions (heading dot < -0.2),
+              --    they are navigating opposite sides of a hairpin, NOT in tactical convoy.
+              local isHairpinGhost = false
+              if math.abs(sDiff) > 0.10 or splineDistM > 400.0 then
+                isHairpinGhost = true
+              elseif dist < 50.0 and carI.look and carJ.look then
+                local dotHeading = (carI.look.x or 0.0) * (carJ.look.x or 0.0) + (carI.look.z or 0.0) * (carJ.look.z or 0.0)
+                if dotHeading < -0.2 then
+                  isHairpinGhost = true
                 end
-              elseif sDiff < 0.0 then
-                -- carJ is behind carI
-                if dist < minBehindDist then
-                  minBehindDist = dist
-                  bestBehindIdx = j
+              end
+
+              if not isHairpinGhost then
+                if sDiff > 0.0 then
+                  -- carJ is ahead of carI
+                  if dist < minAheadDist then
+                    minAheadDist = dist
+                    bestAheadIdx = j
+                  end
+                elseif sDiff < 0.0 then
+                  -- carJ is behind carI
+                  if dist < minBehindDist then
+                    minBehindDist = dist
+                    bestBehindIdx = j
+                  end
                 end
               end
             end

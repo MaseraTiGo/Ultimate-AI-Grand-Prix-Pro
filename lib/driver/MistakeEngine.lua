@@ -108,6 +108,21 @@ function M.stepStandingStart(carIndex, dt)
   return false
 end
 
+--- Check if car is currently under standing start launch reaction delay
+---@param carIndex integer
+---@return boolean isDelayed
+function M.isLaunchDelayed(carIndex)
+  local t = _startDelayTimer[carIndex]
+  return (t and t > 0.0) or false
+end
+
+--- Get remaining standing start launch delay
+---@param carIndex integer
+---@return number delaySec
+function M.getStartDelay(carIndex)
+  return _startDelayTimer[carIndex] or 0.0
+end
+
 --- Tick per-car mistake cooldown
 ---@param carIndex integer
 ---@param dt number

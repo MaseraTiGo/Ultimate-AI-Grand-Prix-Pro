@@ -59,6 +59,11 @@ local _geoState = {
   overlapRatio = 0.0,
   tyreGrip = 1.0,
   stress = 0.0,
+  upcomingTurnDist = 999.0,
+  upcomingTurnAngle = 0.0,
+  trackLeftM = 5.0,
+  trackRightM = 5.0,
+  usableWidthM = 10.0,
 }
 
 local _memState = {
@@ -71,7 +76,6 @@ local _memState = {
 local _initialized = false
 
 function M.init()
-  if _initialized then return end
   SkillRegistry.init()
   M.reset()
   _initialized = true
@@ -166,6 +170,33 @@ local function populateGeoState(car, aheadCar, behindCar, sState, raceCtx)
   _geoState.tyreGrip = math.max(0.4, grip)
   _geoState.stress = sState and sState.stress or 0.0
 
+  -- Upcoming Turn Geometry (CSP API with safe pcall fallback)
+  local turnDist = 999.0
+  local turnAngle = 0.0
+  if ac and ac.getTrackUpcomingTurn and car.splinePosition then
+    local okT, d, a = pcall(ac.getTrackUpcomingTurn, car.splinePosition)
+    if okT and type(d) == "number" and type(a) == "number" then
+      turnDist = d
+      turnAngle = a
+    end
+  end
+  _geoState.upcomingTurnDist = turnDist
+  _geoState.upcomingTurnAngle = turnAngle
+
+  -- Track Width Boundaries (CSP API with safe pcall fallback)
+  local leftM = 5.0
+  local rightM = 5.0
+  if ac and ac.getTrackAISplineSides and car.splinePosition then
+    local okS, l, r = pcall(ac.getTrackAISplineSides, car.splinePosition)
+    if okS and type(l) == "number" and type(r) == "number" then
+      leftM = l
+      rightM = r
+    end
+  end
+  _geoState.trackLeftM = leftM
+  _geoState.trackRightM = rightM
+  _geoState.usableWidthM = leftM + rightM
+
   -- Psychological / Memory State
   _memState.grievance = 0.0 -- set by caller
   _memState.momentum = sState and sState.momentum or 0.0
@@ -233,7 +264,7 @@ function M.stepCarSkill(car, aheadCar, behindCar, persona, rivalryScore, raceCtx
     end
 
     -- Advance execution
-    local off, caut, aggr, grip = skill.stepExecution(ctx, car, aheadCar, behindCar, dt)
+    local off, caut, aggr, grip = skill.stepExecution(ctx, car, aheadCar, behindCar, dt, _geoState)
     ctx.targetOffset = off or 0.0
     ctx.targetCaution = caut or 1.0
     ctx.targetAggression = aggr or 0.7
@@ -289,7 +320,7 @@ function M.stepCarSkill(car, aheadCar, behindCar, persona, rivalryScore, raceCtx
     ctx.commitTimer = MIN_COMMIT_HOLD
     ctx.utilityScore = bestScore
 
-    local off, caut, aggr, grip = bestSkill.stepExecution(ctx, car, aheadCar, behindCar, dt)
+    local off, caut, aggr, grip = bestSkill.stepExecution(ctx, car, aheadCar, behindCar, dt, _geoState)
     ctx.targetOffset = off or 0.0
     ctx.targetCaution = caut or 1.0
     ctx.targetAggression = aggr or 0.7
@@ -300,7 +331,29 @@ function M.stepCarSkill(car, aheadCar, behindCar, persona, rivalryScore, raceCtx
   return false, 0.0, 1.0, 0.7, 0.0
 end
 
+function M.getGeoState()
+  return _geoState
+end
+
 function M.reset()
+  _initialized = false
+  _geoState.aheadDist = 999.0
+  _geoState.behindDist = 999.0
+  _geoState.aheadRelX = 0.0
+  _geoState.behindRelX = 0.0
+  _geoState.closingSpeedAhead = 0.0
+  _geoState.ttcBehind = 999.0
+  _geoState.isStraight = true
+  _geoState.isCurvatureSafe = true
+  _geoState.overlapRatio = 0.0
+  _geoState.tyreGrip = 1.0
+  _geoState.stress = 0.0
+  _geoState.upcomingTurnDist = 999.0
+  _geoState.upcomingTurnAngle = 0.0
+  _geoState.trackLeftM = 5.0
+  _geoState.trackRightM = 5.0
+  _geoState.usableWidthM = 10.0
+
   for i = 0, MAX_CARS - 1 do
     local ctx = _contexts[i]
     ctx.activeSkillId = 0

@@ -44,12 +44,47 @@ function M.evaluateUtility(car, aheadCar, behindCar, persona, geoState, memState
   return math.max(0.0, math.min(1.0, utility))
 end
 
-function M.stepExecution(skillCtx, car, aheadCar, behindCar, dt)
+function M.stepExecution(skillCtx, car, aheadCar, behindCar, dt, geoState)
   skillCtx.phaseTimer = skillCtx.phaseTimer + dt
 
+  -- Dynamic turn direction and track width safety envelope:
+  local insideSign = -1.0
+  local diveMag = 0.50
+
+  if geoState and geoState.upcomingTurnAngle and math.abs(geoState.upcomingTurnAngle) > 0.04 then
+    if geoState.upcomingTurnAngle > 0 then
+      -- Right-hand corner: inside line is on the right (+)
+      insideSign = 1.0
+    else
+      -- Left-hand corner: inside line is on the left (-)
+      insideSign = -1.0
+    end
+  else
+    -- Fallback when corner direction is unavailable: bias opposite to rival or toward wider track side
+    local aheadRelX = (geoState and geoState.aheadRelX) or 0.0
+    if aheadRelX > 0.15 then
+      insideSign = -1.0
+    elseif aheadRelX < -0.15 then
+      insideSign = 1.0
+    else
+      local leftM = (geoState and geoState.trackLeftM) or 5.0
+      local rightM = (geoState and geoState.trackRightM) or 5.0
+      insideSign = (rightM >= leftM) and 1.0 or -1.0
+    end
+  end
+
+  -- Scale dive magnitude to respect track boundary envelope (avoid clipping walls on narrow tracks)
+  if geoState then
+    local sideM = (insideSign > 0) and (geoState.trackRightM or 5.0) or (geoState.trackLeftM or 5.0)
+    if sideM < 3.5 then
+      local scale = math.max(0.15, (sideM - 1.5) / 2.0)
+      diveMag = math.min(diveMag, 0.50 * scale)
+    end
+  end
+
   -- Squeeze inside line and drop caution to delay brake application
-  skillCtx.targetOffset = -0.55
-  skillCtx.targetCaution = 0.15
+  skillCtx.targetOffset = insideSign * diveMag
+  skillCtx.targetCaution = 0.20
   skillCtx.targetAggression = 0.98
 
   return skillCtx.targetOffset, skillCtx.targetCaution, skillCtx.targetAggression, 0.0

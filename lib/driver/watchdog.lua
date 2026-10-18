@@ -68,9 +68,24 @@ end
 --- Force release any active micro-control takeover immediately
 function M.releaseTakeover(carIndex)
   if carIndex >= 0 and carIndex < MAX_CARS then
-    _activeOverrides[carIndex].active = false
-    _activeOverrides[carIndex].callback = nil
+    local item = _activeOverrides[carIndex]
+    if item then
+      item.active = false
+      item.callback = nil
+      item.elapsed = 0.0
+    end
   end
+end
+
+--- Check whether micro-control takeover is actively controlling car
+---@param carIndex integer
+---@return boolean
+function M.isOverridden(carIndex)
+  if carIndex >= 0 and carIndex < MAX_CARS then
+    local item = _activeOverrides[carIndex]
+    return (item and item.active == true)
+  end
+  return false
 end
 
 --- High frequency physics watchdog step (Run in simUpdate @ 60Hz)
@@ -225,7 +240,12 @@ function M.checkStuckCars(car, dt, sessionTime)
 
        -- AI stuck for > 5s outside pits: Trigger unfreeze
        w.timer = 0
-       _activeOverrides[idx] = nil -- Release overrides
+       local item = _activeOverrides[idx]
+       if item then
+         item.active = false
+         item.callback = nil
+         item.elapsed = 0.0
+       end
 
        -- If car is stopped or facing backwards, clear stop counter to prompt native AC AI restart
        if physics.setAIStopCounter then
