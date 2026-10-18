@@ -36,8 +36,13 @@ M.TYPE_MISSED_APEX = "MISSED_APEX"
 M.TYPE_START_WHEELSPIN = "START_WHEELSPIN"
 M.TYPE_START_BOGDOWN = "START_BOGDOWN"
 
+M.TIER_NONE = 0
+M.TIER_1_OVERSLOW = 1
+M.TIER_2_TECHNICAL = 2
+M.TIER_3_SEVERE = 3
+
 local MAX_CARS = 24
-local PHYSICAL_COOLDOWN_SEC = 25.0
+local PHYSICAL_COOLDOWN_SEC = 20.0
 
 local _startHandled = {}     -- [carIdx] = true/false
 local _startDelayTimer = {}   -- [carIdx] = delay remaining
@@ -167,14 +172,14 @@ function M.rollMistake(carIndex, stress, persona, rivalryScore, hotspotDanger, d
     local speed = car.speedKmh or 0.0
     local lapCount = car.lapCount or 0
     if lapCount == 0 or speed < 75.0 then
-      return M.TYPE_NONE, 0, 0, 1.0, 0.0, nil, 0, 0
+      return M.TYPE_NONE, 0, 0, 1.0, 0.0, nil, 0, 0, M.TIER_NONE
     end
     if car.isInPitlane or car.isInPit then
-      return M.TYPE_NONE, 0, 0, 1.0, 0.0, nil, 0, 0
+      return M.TYPE_NONE, 0, 0, 1.0, 0.0, nil, 0, 0, M.TIER_NONE
     end
   end
   if raceContext and (raceContext.isInPitlane or raceContext.isInPit) then
-    return M.TYPE_NONE, 0, 0, 1.0, 0.0, nil, 0, 0
+    return M.TYPE_NONE, 0, 0, 1.0, 0.0, nil, 0, 0, M.TIER_NONE
   end
 
   local p = persona or {}
@@ -205,7 +210,7 @@ function M.rollMistake(carIndex, stress, persona, rivalryScore, hotspotDanger, d
   local stressThreshold = 3.5 + (pHandling * 3.5) -- 3.5 to 7.0 threshold
   local curStress = stress or 0.0
   if curStress <= stressThreshold then
-    return M.TYPE_NONE, 0, 0, 1.0, 0.0, nil, 0, 0
+    return M.TYPE_NONE, 0, 0, 1.0, 0.0, nil, 0, 0, M.TIER_NONE
   end
 
   local excessStress = curStress - stressThreshold
@@ -238,10 +243,10 @@ function M.rollMistake(carIndex, stress, persona, rivalryScore, hotspotDanger, d
 
   local roll = math.random()
   if roll >= triggerProb then
-    return M.TYPE_NONE, 0, 0, 1.0, 0.0, nil, 0, 0
+    return M.TYPE_NONE, 0, 0, 1.0, 0.0, nil, 0, 0, M.TIER_NONE
   end
 
-  -- 4. Physical Telemetry Gating: Detect Brake Lock-up vs Traction Snap vs Micro-Mistakes
+  -- 4. Three-Tier Progressive Physical & Tactical Mistake Mapping:
   local cIdx = carIndex or 0
   local cd = _mistakeCooldown[cIdx] or 0.0
   local canPhysical = (cd <= 0.0)
@@ -269,40 +274,54 @@ function M.rollMistake(carIndex, stress, persona, rivalryScore, hotspotDanger, d
 
   local mRoll = math.random()
 
-  -- If in heavy braking zone and physical cooldown ready -> high probability of BRAKE_LOCKUP
-  if isHeavyBraking and canPhysical and mRoll < 0.75 then
-    _mistakeCooldown[cIdx] = PHYSICAL_COOLDOWN_SEC
-    local dur = 0.25 + math.random() * 0.20 -- 0.25 ~ 0.45s
-    return M.TYPE_BRAKE_LOCKUP, 1.4, 0.0, 1.8, -0.15, "BRAKE", dur, 0.0
-  elseif isCornerExitThrottle and canPhysical and mRoll < 0.75 then
-    _mistakeCooldown[cIdx] = PHYSICAL_COOLDOWN_SEC
-    local dur = 0.25 + math.random() * 0.20 -- 0.25 ~ 0.45s
-    local sev = 1.20 + math.random() * 0.15 -- 1.20 ~ 1.35
-    return M.TYPE_TRACTION_SLIDE, 1.6, 0.0, 1.6, -0.10, "TRACTION", dur, sev
+  -- Tier 1: Micro-Hesitation & Overslow (Stress < 7.8) - zero physical damage, stays on line
+  if curStress < 7.8 then
+    return M.TYPE_OVERSLOW, 1.5, 0.0, 2.2, 0.0, nil, 0, 0, M.TIER_1_OVERSLOW
   end
 
-  -- Spectrum of micro/macro mistakes if not in specific physical zone or physical on cooldown:
-  if mRoll < 0.30 then
-    -- OVERSLOW: Hesitation into corner, early brake
-    return M.TYPE_OVERSLOW, 1.8, 0.0, 2.8, 0.0, nil, 0, 0
-  elseif mRoll < 0.60 then
-    -- TRAIL_UNDERSTEER: Trail brake released too late, pushes wide
-    return M.TYPE_TRAIL_UNDERSTEER, 2.2, 0.40, 0.5, -0.08, nil, 0, 0
-  elseif mRoll < 0.80 then
-    -- MISSED_APEX: Spline overshoot
-    return M.TYPE_MISSED_APEX, 2.5, 0.65, 0.2, 0.0, nil, 0, 0
-  elseif canPhysical and mRoll < 0.90 then
-    -- BRAKE_LOCKUP fallback
+  -- If in heavy braking zone and physical cooldown ready -> BRAKE_LOCKUP
+  if isHeavyBraking and canPhysical then
     _mistakeCooldown[cIdx] = PHYSICAL_COOLDOWN_SEC
-    return M.TYPE_BRAKE_LOCKUP, 1.2, 0.0, 1.8, -0.15, "BRAKE", 0.30, 0.0
-  elseif canPhysical then
-    -- TRACTION_SLIDE fallback
+    local dur = 0.25 + math.random() * 0.20
+    local tier = (curStress >= 9.2) and M.TIER_3_SEVERE or M.TIER_2_TECHNICAL
+    return M.TYPE_BRAKE_LOCKUP, 1.6, 0.55, 1.6, -0.15, "BRAKE", dur, 0.0, tier
+  -- If in corner exit throttle zone and physical cooldown ready -> TRACTION_SLIDE
+  elseif isCornerExitThrottle and canPhysical then
     _mistakeCooldown[cIdx] = PHYSICAL_COOLDOWN_SEC
-    return M.TYPE_TRACTION_SLIDE, 1.6, 0.0, 1.6, -0.10, "TRACTION", 0.35, 1.25
-  else
-    -- Fallback to OVERSLOW if physical on cooldown
-    return M.TYPE_OVERSLOW, 1.8, 0.0, 2.5, 0.0, nil, 0, 0
+    local dur = 0.25 + math.random() * 0.20
+    local sev = (curStress >= 9.2) and (1.25 + math.random() * 0.15) or (1.15 + math.random() * 0.15)
+    local tier = (curStress >= 9.2) and M.TIER_3_SEVERE or M.TIER_2_TECHNICAL
+    return M.TYPE_TRACTION_SLIDE, 1.8, 0.0, 1.8, -0.20, "TRACTION", dur, sev, tier
   end
+
+  -- Spectrum of micro/macro mistakes by Stress Tier if not in specific telemetry zone or physical on cooldown:
+  -- Tier 3: Severe Panic Breakdown (Stress >= 9.2)
+  if curStress >= 9.2 then
+    if canPhysical then
+      _mistakeCooldown[cIdx] = PHYSICAL_COOLDOWN_SEC
+      local dur = 0.35 + math.random() * 0.20
+      local sev = 1.25 + math.random() * 0.15
+      return M.TYPE_TRACTION_SLIDE, 2.0, 0.0, 1.8, -0.25, "TRACTION", dur, sev, M.TIER_3_SEVERE
+    else
+      return M.TYPE_MISSED_APEX, 2.5, 0.65, 0.2, -0.10, nil, 0, 0, M.TIER_3_SEVERE
+    end
+  end
+
+  -- Tier 2: Technical Blunder - Lockup / Missed Apex (Stress >= 7.8)
+  if curStress >= 7.8 then
+    if canPhysical and mRoll < 0.50 then
+      _mistakeCooldown[cIdx] = PHYSICAL_COOLDOWN_SEC
+      local dur = 0.25 + math.random() * 0.20
+      return M.TYPE_BRAKE_LOCKUP, 1.6, 0.55, 1.6, -0.15, "BRAKE", dur, 0.0, M.TIER_2_TECHNICAL
+    elseif mRoll < 0.75 then
+      return M.TYPE_MISSED_APEX, 2.2, 0.55, 0.4, -0.08, nil, 0, 0, M.TIER_2_TECHNICAL
+    else
+      return M.TYPE_TRAIL_UNDERSTEER, 2.0, 0.45, 0.6, -0.08, nil, 0, 0, M.TIER_2_TECHNICAL
+    end
+  end
+
+  -- Tier 1: Micro-Hesitation & Overslow (Stress >= 6.0 or default triggered)
+  return M.TYPE_OVERSLOW, 1.5, 0.0, 2.2, 0.0, nil, 0, 0, M.TIER_1_OVERSLOW
 end
 
 function M.reset()

@@ -2882,8 +2882,388 @@ do
   runTest54()
 end
 
+-- ==============================================================================
+-- [Test 55] Mirror Threat Index (MTI) & Continuous Psychological Dynamics
+-- ==============================================================================
+do
+  local function runTest55()
+    print("[Test 55] Testing Mirror Threat Index (MTI) & Continuous Psychological Dynamics...")
+    local TacticalTicker = require("lib/driver/TacticalTicker")
+
+    -- 1. MTI Range and Distance Degradation
+    local mtiOut = TacticalTicker.calculateMTI(35.0, nil, nil, nil, nil)
+    assertEq(mtiOut, 0.0, "Car outside 28m yields 0.0 MTI")
+
+    local mtiMid = TacticalTicker.calculateMTI(14.0, nil, nil, nil, nil)
+    assertTrue(math.abs(mtiMid - 0.50) < 0.01, "Car at 14m yields 0.50 base MTI")
+
+    -- 2. Threat Multipliers: Hunting Headlights & Weaving
+    local huntingState = { bodyLangAction = "HUNTING" }
+    local mtiHunt = TacticalTicker.calculateMTI(14.0, nil, huntingState, nil, nil)
+    -- 0.50 * (1 + 0.45) = 0.725
+    assertTrue(math.abs(mtiHunt - 0.725) < 0.01, "Hunting headlight strobe multiplies threat by 1.45x")
+
+    local weavingState = { isFeinting = true }
+    local mtiWeave = TacticalTicker.calculateMTI(14.0, nil, weavingState, nil, nil)
+    -- 0.50 * (1 + 0.40) = 0.70
+    assertTrue(math.abs(mtiWeave - 0.70) < 0.01, "Feinting / weaving multiplies threat by 1.40x")
+
+    -- 3. Rival Reputation & High Stakes Race Context
+    local champCar = { driverName = "Max Verstappen" }
+    local mtiChamp = TacticalTicker.calculateMTI(14.0, champCar, nil, nil, nil)
+    -- 0.50 * (1 + 0.35) = 0.675
+    assertTrue(math.abs(mtiChamp - 0.675) < 0.01, "Champion reputation multiplies threat by 1.35x")
+
+    local raceStakes = { racePosition = 1, isLastLap = true, tyreWear = 0.70 }
+    local mtiStakes = TacticalTicker.calculateMTI(14.0, nil, nil, nil, raceStakes)
+    -- kStakes = 0.30 + 0.35 + 0.25 = 0.90 -> 0.50 * (1 + 0.90) = 0.95
+    assertTrue(math.abs(mtiStakes - 0.95) < 0.01, "High stakes context (P1, Last Lap, Worn Tyres) adds 0.90 threat factor")
+
+    -- 4. Dynamic Stress Differential Accumulation & Exponential Decay
+    local carLead = { index = 3, speedKmh = 140.0, lapCount = 5, position = { x = 100, y = 0, z = 0 } }
+    local carBehind = { index = 4, speedKmh = 145.0, lapCount = 5, position = { x = 90, y = 0, z = 0 }, driverName = "Max Verstappen" }
+    local pVerstappen = { mistake_resistance = 0.95, pressure_resist = 0.95 }
+    local pColapinto = { mistake_resistance = 0.60, pressure_resist = 0.60 }
+
+    TacticalTicker.reset()
+    -- Step 20 ticks (2.0s) with Max Verstappen chasing Colapinto (car 3)
+    local sColapinto = nil
+    for _ = 1, 20 do
+      sColapinto = TacticalTicker.stepCar(carLead, nil, carBehind, pColapinto, 0.0, nil, 0.1)
+    end
+    assertTrue(sColapinto.stress > 0.5, "Colapinto accumulates significant stress under Verstappen pursuit")
+    assertTrue(sColapinto.mti > 0.5, "Colapinto perceives elevated MTI")
+    local colapintoStress = sColapinto.stress
+
+    -- Test Decay when pursuer pulls away (distance = 50m, 5.0s / 50 ticks of clean air)
+    carBehind.position.x = 50
+    for _ = 1, 50 do
+      sColapinto = TacticalTicker.stepCar(carLead, nil, carBehind, pColapinto, 0.0, nil, 0.1)
+    end
+    assertTrue(sColapinto.stress < colapintoStress * 0.40, "Stress decays exponentially when pursuer falls back beyond threat zone")
+
+    -- Now compare with top veteran Verstappen under identical pursuit (reset pursuer to 10m behind)
+    TacticalTicker.reset()
+    carBehind.position.x = 90
+    local sMax = nil
+    for _ = 1, 20 do
+      sMax = TacticalTicker.stepCar(carLead, nil, carBehind, pVerstappen, 0.0, nil, 0.1)
+    end
+    assertTrue(sMax.stress < colapintoStress * 0.30, "Verstappen absorbs pressure with over 3x lower stress accumulation")
+
+    print("  -> Passed: Mirror Threat Index (MTI) & Continuous Psychological Dynamics verified.")
+  end
+  runTest55()
+end
+
+-- ==============================================================================
+-- [Test 56] Three-Tier Progressive Mistake Dynamics & Safety Invariants
+-- ==============================================================================
+do
+  local function runTest56()
+    print("[Test 56] Testing Three-Tier Progressive Mistake Dynamics & Safety Invariants...")
+    local MistakeEngine = require("lib/driver/MistakeEngine")
+    local BehaviorActuator = require("lib/driver/BehaviorActuator")
+    local ControlTelemetry = require("lib/core/ControlTelemetry")
+
+    MistakeEngine.reset()
+    local car = {
+      index = 5,
+      speedKmh = 160.0,
+      lapCount = 4,
+      brake = 0.85,
+      acceleration = { z = -7.5, x = 0.0 },
+      isInPitlane = false,
+      isInPit = false,
+    }
+    local persona = { mistake_resistance = 0.60, pressure_handling = 0.60, error_probability = 0.15 }
+
+    -- 1. Safety Gates: Lap 0 / crawl speed suppresses mistakes
+    local carLap0 = { speedKmh = 60.0, lapCount = 0, isInPitlane = false, isInPit = false }
+    local mType, _, _, _, _, _, _, _, tier = MistakeEngine.rollMistake(5, 9.8, persona, 0.0, 0.0, 0.1, carLap0, nil)
+    assertEq(mType, MistakeEngine.TYPE_NONE, "Lap 0 strictly suppresses mistakes")
+    assertEq(tier, MistakeEngine.TIER_NONE, "Tier is TIER_NONE on lap 0")
+
+    -- 2. Tier 1: Micro-Hesitation / Overslow (Stress in 6.0 ~ 7.5 range)
+    local t1Type, t1Dur, t1Off, t1Caut, t1Tier
+    for _ = 1, 20 do
+      local mt, md, mo, mc, _, _, _, _, tr = MistakeEngine.rollMistake(5, 6.8, persona, 0.0, 0.0, 1.0, car, nil)
+      if mt ~= MistakeEngine.TYPE_NONE then
+        t1Type, t1Dur, t1Off, t1Caut, t1Tier = mt, md, mo, mc, tr
+        break
+      end
+    end
+    assertEq(t1Type, MistakeEngine.TYPE_OVERSLOW, "Stress 6.8 triggers Tier 1 OVERSLOW")
+    assertEq(t1Tier, MistakeEngine.TIER_1_OVERSLOW, "Tier is TIER_1_OVERSLOW")
+    assertEq(t1Off, 0.0, "Tier 1 does not deviate off racing line (offset 0.0)")
+    assertTrue(t1Caut >= 2.0, "Tier 1 elevates caution for hesitant early braking")
+
+    -- 3. Tier 2: Technical Blunder - Lockup & Missed Apex (Stress in 7.8 ~ 9.0 range)
+    local t2Type, t2Dur, t2Off, t2Caut, pType, pDur, t2Tier
+    for _ = 1, 20 do
+      local mt, md, mo, mc, _, pt, pd, _, tr = MistakeEngine.rollMistake(5, 8.4, persona, 0.0, 0.0, 1.0, car, nil)
+      if mt ~= MistakeEngine.TYPE_NONE then
+        t2Type, t2Dur, t2Off, t2Caut, pType, pDur, t2Tier = mt, md, mo, mc, pt, pd, tr
+        break
+      end
+    end
+    assertEq(t2Tier, MistakeEngine.TIER_2_TECHNICAL, "Stress 8.4 triggers Tier 2 TECHNICAL blunder")
+    assertTrue(t2Type == MistakeEngine.TYPE_BRAKE_LOCKUP or t2Type == MistakeEngine.TYPE_MISSED_APEX or t2Type == MistakeEngine.TYPE_TRAIL_UNDERSTEER, "Tier 2 produces lockup, missed apex or trail understeer")
+    assertTrue(t2Off >= 0.45, "Tier 2 washes wide (offset >= 0.45) opening inside passing lane")
+    if pType then
+      assertEq(pType, "BRAKE", "Physical mistake dispatched as BRAKE lockup")
+    end
+
+    -- 4. Cooldown Enforcement: 20.0s cooldown prevents rapid successive physical mistakes
+    assertTrue(MistakeEngine.getMistakeCooldown(5) > 18.0, "Physical cooldown set to ~20.0s")
+    -- Next immediate roll should NOT dispatch physical mistake
+    local _, _, _, _, _, pType2 = MistakeEngine.rollMistake(5, 8.5, persona, 0.0, 0.0, 1.0, car, nil)
+    assertEq(pType2, nil, "Physical mistake suppressed while on cooldown")
+
+    -- 5. Tier 3: Severe Panic Breakdown (Stress >= 9.2)
+    MistakeEngine.setMistakeCooldown(5, 0.0)
+    car.speedKmh = 90.0
+    car.acceleration.z = 3.0
+    car.acceleration.x = 2.5
+    car.gas = 0.90
+    car.brake = 0.0
+    local t3Type, pType3, pSev3, t3Tier
+    for _ = 1, 20 do
+      local mt, _, _, _, _, pt, _, ps, tr = MistakeEngine.rollMistake(5, 9.6, persona, 0.0, 0.0, 1.0, car, nil)
+      if mt ~= MistakeEngine.TYPE_NONE then
+        t3Type, pType3, pSev3, t3Tier = mt, pt, ps, tr
+        break
+      end
+    end
+    assertEq(t3Tier, MistakeEngine.TIER_3_SEVERE, "Stress 9.6 triggers Tier 3 SEVERE panic breakdown")
+    assertEq(t3Type, MistakeEngine.TYPE_TRACTION_SLIDE, "Corner exit oversteer snap triggered")
+    assertEq(pType3, "TRACTION", "Dispatches physical TRACTION mistake")
+    assertTrue(pSev3 >= 1.20, "Physical traction severity >= 1.20")
+
+    -- 6. BehaviorActuator Throttle Modulation for Tier 1 Overslow
+    BehaviorActuator.reset()
+    local aiStateOverslow = {
+      state = "MISTAKE",
+      lastMistakeType = "OVERSLOW",
+      currentSplineOffset = 0.0,
+      targetSplineOffset = 0.0,
+      currentCaution = 2.0,
+      targetCaution = 2.0,
+      currentAggression = 0.5,
+      targetAggression = 0.5,
+    }
+    ControlTelemetry.clear()
+    ControlTelemetry.setEnabled(true)
+    BehaviorActuator.applyActuator(car, aiStateOverslow, 0.1)
+    local recentTelems = ControlTelemetry.getRecentEntries(10)
+    local foundThrottleLimit = false
+    for _, a in ipairs(recentTelems) do
+      if a.category == "Throttle Management" and a.description:find("70%%") then
+        foundThrottleLimit = true
+        break
+      end
+    end
+    assertTrue(foundThrottleLimit, "BehaviorActuator modulated throttle to 70% for Tier 1 Overslow")
+    ControlTelemetry.setEnabled(false)
+
+    MistakeEngine.reset()
+    print("  -> Passed: Three-Tier Progressive Mistake Dynamics & Safety Invariants verified.")
+  end
+  runTest56()
+end
+
+-- ==============================================================================
+-- [Test 57] Hunter's Pounce (POUNCE_PASS) Opportunistic Overtake
+-- ==============================================================================
+do
+  local function runTest57()
+    print("[Test 57] Testing Hunter's Pounce (POUNCE_PASS) Opportunistic Overtake...")
+    local TacticalTicker = require("lib/driver/TacticalTicker")
+    local EventHub = require("lib/core/EventHub")
+    local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
+    local BehaviorActuator = require("lib/driver/BehaviorActuator")
+
+    TacticalTicker.reset()
+    RadioVoiceEngine.reset()
+    EventHub.clearAll()
+
+    local carLead = {
+      index = 1,
+      driverName = "Sainz",
+      speedKmh = 120.0,
+      lapCount = 6,
+      position = { x = 100, y = 0, z = 0 },
+    }
+    local carChaser = {
+      index = 2,
+      driverName = "Leclerc",
+      speedKmh = 128.0,
+      lapCount = 6,
+      position = { x = 93, y = 0, z = 0 }, -- 7.0m behind
+    }
+
+    local pChaser = {
+      base_aggression = 0.85,
+      base_caution = 0.8,
+      pressure_resist = 0.85,
+    }
+
+    -- 1. Setup Lead car making Tier 2 mistake and washing wide
+    local leadState = TacticalTicker.getAiState(1)
+    leadState.state = "MISTAKE"
+    leadState.lastMistakeType = "MISSED_APEX"
+    leadState.currentSplineOffset = 0.55
+    leadState.targetSplineOffset = 0.55
+
+    -- 2. Step Chaser AI
+    local chaserState = TacticalTicker.stepCar(carChaser, carLead, nil, pChaser, 0.0, nil, 0.1)
+
+    -- Chaser should immediately sense the error and launch Hunter's Pounce
+    assertEq(chaserState.state, "POUNCE_PASS", "Chaser transitions to POUNCE_PASS on lead car error")
+    assertEq(chaserState.activeSkill, "POUNCE_PASS", "Active skill is POUNCE_PASS")
+    assertEq(chaserState.targetSplineOffset, -0.40, "Chaser dives to opposite inside lane (-0.40)")
+    assertEq(chaserState.targetCaution, 0.25, "Chaser drops caution to 0.25 for bold opportunistic pass")
+    assertEq(chaserState.targetAggression, 0.98, "Chaser maximizes aggression to 0.98")
+    assertTrue(chaserState.pounceActive, "pounceActive flag is true")
+
+    -- 3. Verify Broadcast and Voice Engine Trigger
+    local events = EventHub.getRecentAiEvents(5)
+    local foundPounceEvent = false
+    for _, ev in ipairs(events) do
+      if ev.msg:find("绝杀突袭") and ev.msg:find("切弯反超") then
+        foundPounceEvent = true
+        break
+      end
+    end
+    assertTrue(foundPounceEvent, "EventHub broadcast recorded Hunter's Pounce attack event")
+    assertEq(RadioVoiceEngine.getLastPlayedKey(), "info_overtake", "Radio voice triggered info_overtake")
+
+    -- 4. Verify BehaviorActuator handles POUNCE_PASS with high transition rate
+    BehaviorActuator.reset()
+    chaserState.currentSplineOffset = 0.0
+    BehaviorActuator.applyActuator(carChaser, chaserState, 0.1)
+    assertTrue(chaserState.currentSplineOffset < -0.05, "BehaviorActuator uses fast 0.85 maneuver slew rate for POUNCE_PASS")
+
+    TacticalTicker.reset()
+    print("  -> Passed: Hunter's Pounce (POUNCE_PASS) Opportunistic Overtake verified.")
+  end
+  runTest57()
+end
+
+do
+  print("\n[Test 58] Testing Radio Voice Preview & CSP DriverName Function Guard...")
+  local function runTest58()
+    local TacticalTicker = require("lib/driver/TacticalTicker")
+    local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
+    local RaceContext = require("lib/core/RaceContext")
+
+    -- 1. Radio Voice Preview & Debounce Bypass Verification
+    RadioVoiceEngine.reset()
+    RadioVoiceEngine.playRadio("cmd_push", RadioVoiceEngine.PRIORITY_COMMAND)
+    assertEq(RadioVoiceEngine.getLastPlayedKey(), "cmd_push", "Initial playRadio cmd_push accepted")
+
+    -- Calling playRadio again within 12s is rejected
+    local rejected = RadioVoiceEngine.playRadio("cmd_push", RadioVoiceEngine.PRIORITY_COMMAND)
+    assertEq(rejected, false, "playRadio rejected by 12s debounce guard")
+
+    -- preview() bypasses debounce guard and immediately triggers
+    local previewOk = RadioVoiceEngine.preview("cmd_push")
+    assertTrue(previewOk, "preview() successfully bypasses 12s debounce")
+    assertEq(RadioVoiceEngine.getLastPlayedKey(), "cmd_push", "Last played key is cmd_push")
+    assertEq(RadioVoiceEngine.getState(), RadioVoiceEngine.STATE_BEEP_OPEN, "preview transitions to STATE_BEEP_OPEN")
+
+    -- Step past open beep (0.12s) -> transitions to STATE_PLAYING_VOICE
+    RadioVoiceEngine.step(0.15)
+    assertEq(RadioVoiceEngine.getState(), RadioVoiceEngine.STATE_PLAYING_VOICE, "Engine transitions to STATE_PLAYING_VOICE")
+
+    -- 2. CSP ac.StateCar driverName Function-Type Guard Verification
+    TacticalTicker.reset()
+
+    -- Mock car where driverName is a C++ Lua function / method (as in CSP ac.StateCar)
+    local carLeadFn = {
+      index = 0,
+      driverName = function(self) return "Charles Leclerc" end,
+      position = { x = 0.0, y = 0.0, z = 12.0 },
+      speedKmh = 230,
+      gas = 1.0,
+      brake = 0.0,
+      splineLoc = 0.40,
+      steer = 0.0,
+      gear = 6,
+      isAIControlled = true,
+      isInPitlane = false,
+      isInPit = false,
+      rpm = 11000,
+      maxRpm = 12500,
+      steerAngle = 0.0,
+      slipRatio = {0.01, 0.01, 0.01, 0.01},
+      tyresWear = {0.1, 0.1, 0.1, 0.1},
+      tyresTemp = {90, 90, 90, 90},
+      wheelAngularSpeed = {200, 200, 200, 200},
+      tyreRadius = {0.33, 0.33, 0.33, 0.33},
+    }
+
+    local carHunterFn = {
+      index = 1,
+      driverName = function(self) return "Max Verstappen" end,
+      position = { x = 0.0, y = 0.0, z = 0.0 },
+      speedKmh = 245,
+      gas = 1.0,
+      brake = 0.0,
+      splineLoc = 0.395,
+      steer = 0.0,
+      gear = 6,
+      isAIControlled = true,
+      isInPitlane = false,
+      isInPit = false,
+      rpm = 11800,
+      maxRpm = 12500,
+      steerAngle = 0.0,
+      slipRatio = {0.01, 0.01, 0.01, 0.01},
+      tyresWear = {0.1, 0.1, 0.1, 0.1},
+      tyresTemp = {95, 95, 95, 95},
+      wheelAngularSpeed = {210, 210, 210, 210},
+      tyreRadius = {0.33, 0.33, 0.33, 0.33},
+    }
+
+    local persona = {
+      aggression = 0.70,
+      defensiveness = 0.65,
+      consistency = 0.85,
+      patience = 0.60,
+      awareness = 0.80,
+      paceBias = 1.0,
+      mistakeProne = 0.05,
+      reactionTime = 0.20,
+      overtakeSkill = 0.80,
+      pressureResistance = 0.75,
+    }
+
+    local raceCtx = {
+      isYellowFlag = false,
+      isBlueFlagged = false,
+      trackWetness = 0.0,
+      compoundGripMultiplier = 1.0,
+      isInPitlane = false,
+      isRetired = false,
+    }
+
+    -- Execute stepCar where behindCar.driverName is a Lua function
+    -- Previously threw: "bad argument #1 to 'lower' (string expected, got function)"
+    local okStep, leadAiState = pcall(TacticalTicker.stepCar, carLeadFn, nil, carHunterFn, persona, 0.0, raceCtx, 0.1)
+    assertTrue(okStep, "TacticalTicker.stepCar executed without crash when driverName is a function")
+    assertTrue(leadAiState ~= nil, "AI State successfully computed")
+    assertTrue(leadAiState.stress > 0.0, "Stress calculated with MTI bonus for top pressure driver Max Verstappen")
+
+    TacticalTicker.reset()
+    RadioVoiceEngine.reset()
+    print("  -> Passed: Radio Voice Preview & CSP DriverName Function Guard verified.")
+  end
+  runTest58()
+end
+
 print("==================================================================")
-print("  ALL 54 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
+print("  ALL 58 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
 print("==================================================================")
 
 

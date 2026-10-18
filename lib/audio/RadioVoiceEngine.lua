@@ -81,7 +81,43 @@ local _activePriority = 0
 local _activeDuration = 0.0
 local _lastPlayedKey = "NONE"
 
-local _baseDir = "audio/radio"
+local _baseDir = "apps/lua/Ultimate-AI-Grand-Prix-Pro/audio/radio"
+local _activeAudioEvent = nil
+
+local function resolveBaseDir()
+  local candidates = {}
+  if ac and ac.getFolder and ac.FolderID and ac.FolderID.ScriptOrigin then
+    local ok, p = pcall(ac.getFolder, ac.FolderID.ScriptOrigin)
+    if ok and p and p ~= "" then
+      table.insert(candidates, (p:gsub("\\", "/") .. "/audio/radio"))
+    end
+  end
+  if ac and ac.getFolder and ac.FolderID and ac.FolderID.ACApps then
+    local ok, p = pcall(ac.getFolder, ac.FolderID.ACApps)
+    if ok and p and p ~= "" then
+      table.insert(candidates, (p:gsub("\\", "/") .. "/lua/Ultimate-AI-Grand-Prix-Pro/audio/radio"))
+    end
+  end
+  if __dirname then
+    local clean = __dirname:gsub("\\", "/")
+    table.insert(candidates, clean .. "/../../audio/radio")
+    table.insert(candidates, clean .. "/audio/radio")
+  end
+  table.insert(candidates, "apps/lua/Ultimate-AI-Grand-Prix-Pro/audio/radio")
+  table.insert(candidates, "audio/radio")
+
+  if io and io.open then
+    for _, dir in ipairs(candidates) do
+      local testFile = dir .. "/common/beep_open.wav"
+      local f = io.open(testFile, "rb")
+      if f then
+        f:close()
+        return dir
+      end
+    end
+  end
+  return candidates[1] or "apps/lua/Ultimate-AI-Grand-Prix-Pro/audio/radio"
+end
 
 local function getClipPath(lang, key)
   return string.format("%s/%s/%s.wav", _baseDir, lang, key)
@@ -91,52 +127,65 @@ local function getCommonPath(key)
   return string.format("%s/common/%s.wav", _baseDir, key)
 end
 
---- Load or acquire AudioEvent handle safely
-local function loadAudioHandle(path)
+--- Stop active AudioEvent safely
+local function stopActiveAudio()
+  if _activeAudioEvent then
+    pcall(function()
+      if _activeAudioEvent.stop then
+        _activeAudioEvent:stop()
+      end
+    end)
+    _activeAudioEvent = nil
+  end
+end
+
+--- Play specific audio file via fresh CSP AudioEvent (prevent one-shot invalidation)
+local function playClipFile(path, vol)
+  if not path or path == "" then return nil end
+  stopActiveAudio()
+
   if ac and ac.AudioEvent and ac.AudioEvent.fromFile then
     local ok, evt = pcall(ac.AudioEvent.fromFile, {
       filename = path,
-      use3D = false,
-      loop = false
+      stream   = { name = "", size = 0 },
+      use3D    = false,
+      loop     = false
     }, false)
     if ok and evt then
+      _activeAudioEvent = evt
+      local v = vol or _volume or 0.85
+      pcall(function()
+        if evt.setVolumeMultipliers then
+          evt:setVolumeMultipliers(1.0, 1.0, 1.0)
+        end
+        if evt.volume ~= nil then
+          evt.volume = v
+        end
+        if evt.cameraInteriorMultiplier ~= nil then
+          evt.cameraInteriorMultiplier = 1.0
+        end
+        if evt.cameraExteriorMultiplier ~= nil then
+          evt.cameraExteriorMultiplier = 1.0
+        end
+        if evt.start then
+          evt:start()
+        end
+      end)
       return evt
     end
   end
   return nil
 end
 
---- Stop specific audio handle safely
-local function stopHandle(handle)
-  if handle and handle.stop then
-    pcall(handle.stop, handle)
-  end
-end
-
---- Play specific audio handle safely
-local function playHandle(handle, vol)
-  if handle and handle.start then
-    if handle.setVolumeMultipliers then
-      pcall(handle.setVolumeMultipliers, handle, vol, vol, vol)
-    end
-    pcall(handle.start, handle)
-  end
-end
-
---- Initialize Audio Event Pool
+--- Initialize Audio Event Engine
 ---@param baseDir string? Custom base directory for audio assets
 function M.init(baseDir)
-  if baseDir then _baseDir = baseDir end
-
-  -- Preload common beeps
-  _audioEvents.common.beep_open = loadAudioHandle(getCommonPath("beep_open"))
-  _audioEvents.common.beep_close = loadAudioHandle(getCommonPath("beep_close"))
-
-  -- Preload English clips
-  for k, _ in pairs(_clipDurations) do
-    _audioEvents.en[k] = loadAudioHandle(getClipPath("en", k))
-    _audioEvents.zh[k] = loadAudioHandle(getClipPath("zh", k))
+  if baseDir and baseDir ~= "" then
+    _baseDir = baseDir
+  else
+    _baseDir = resolveBaseDir()
   end
+  _activeAudioEvent = nil
 end
 
 --- Configure active spoken language
@@ -203,16 +252,7 @@ end
 
 --- Clear queue and stop current audio
 function M.stop()
-  if _currentState == M.STATE_PLAYING_VOICE then
-    local langHandles = _audioEvents[_language]
-    if langHandles and langHandles[_activeKey] then
-      stopHandle(langHandles[_activeKey])
-    end
-  elseif _currentState == M.STATE_BEEP_OPEN then
-    stopHandle(_audioEvents.common.beep_open)
-  elseif _currentState == M.STATE_BEEP_CLOSE then
-    stopHandle(_audioEvents.common.beep_close)
-  end
+  stopActiveAudio()
 
   _currentState = M.STATE_IDLE
   _stateTimer = 0.0
@@ -264,7 +304,7 @@ function M.playRadio(clipKey, priority)
     _stateTimer = DURATION_BEEP_OPEN
     _lastPlayedTimes[clipKey] = _sessionTime
     _lastPlayedKey = clipKey
-    playHandle(_audioEvents.common.beep_open, _volume)
+    playClipFile(getCommonPath("beep_open"), _volume)
     return true
   end
 
@@ -277,7 +317,7 @@ function M.playRadio(clipKey, priority)
     _stateTimer = DURATION_BEEP_OPEN
     _lastPlayedTimes[clipKey] = _sessionTime
     _lastPlayedKey = clipKey
-    playHandle(_audioEvents.common.beep_open, _volume)
+    playClipFile(getCommonPath("beep_open"), _volume)
     return true
   end
 
@@ -292,6 +332,25 @@ function M.playRadio(clipKey, priority)
   end
 
   return false
+end
+
+--- Preview a radio clip immediately (bypasses debounce guard, used for UI test)
+---@param clipKey string? Optional clip key (default: "cmd_push")
+---@return boolean success
+function M.preview(clipKey)
+  local key = (clipKey and clipKey ~= "") and clipKey or "cmd_push"
+  local clipDur = _clipDurations[key] or 1.6
+
+  M.stop()
+  _activeKey = key
+  _activePriority = M.PRIORITY_COMMAND
+  _activeDuration = clipDur
+  _currentState = M.STATE_BEEP_OPEN
+  _stateTimer = DURATION_BEEP_OPEN
+  _lastPlayedTimes[key] = _sessionTime
+  _lastPlayedKey = key
+  playClipFile(getCommonPath("beep_open"), _volume)
+  return true
 end
 
 --- Tick Radio Voice State Machine (Runs at 10Hz or 60Hz)
@@ -311,19 +370,17 @@ function M.step(dt)
     -- Open beep finished -> start speech clip
     _currentState = M.STATE_PLAYING_VOICE
     _stateTimer = _activeDuration
-    local langHandles = _audioEvents[_language]
-    if langHandles and langHandles[_activeKey] then
-      playHandle(langHandles[_activeKey], _volume)
-    end
+    playClipFile(getClipPath(_language, _activeKey), _volume)
 
   elseif _currentState == M.STATE_PLAYING_VOICE then
     -- Speech clip finished -> start close beep
     _currentState = M.STATE_BEEP_CLOSE
     _stateTimer = DURATION_BEEP_CLOSE
-    playHandle(_audioEvents.common.beep_close, _volume)
+    playClipFile(getCommonPath("beep_close"), _volume)
 
   elseif _currentState == M.STATE_BEEP_CLOSE then
     -- Close beep finished -> cooldown
+    stopActiveAudio()
     _currentState = M.STATE_COOLDOWN
     _stateTimer = DURATION_COOLDOWN
 
@@ -350,8 +407,9 @@ function M.step(dt)
       _stateTimer = DURATION_BEEP_OPEN
       _lastPlayedTimes[_activeKey] = _sessionTime
       _lastPlayedKey = _activeKey
-      playHandle(_audioEvents.common.beep_open, _volume)
+      playClipFile(getCommonPath("beep_open"), _volume)
     else
+      stopActiveAudio()
       _currentState = M.STATE_IDLE
       _activeKey = "NONE"
       _activePriority = 0

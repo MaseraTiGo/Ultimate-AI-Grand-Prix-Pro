@@ -125,14 +125,7 @@ function script.simUpdate(dt)
   watchdog.stepPhysics(dt)
 end
 
---- Frame Update & Decoupled Tactical / Strategy Pipeline
-function script.update(dt)
-  if not ensureInitialized() or _inUpdate then return end
-  local safeDt = math.max(0.0, math.min(0.1, (type(dt) == "number" and dt > 0) and dt or 0.016))
-  local sim = ac and ac.getSim and ac.getSim()
-  if not sim or RaceContext.safeSimGet(sim, "isReplayActive") then return end
-
-  _inUpdate = true
+local function doUpdate(safeDt, sim)
   RadioVoiceEngine.step(safeDt)
   _tacticalTimer = _tacticalTimer + safeDt
   _strategyTimer = _strategyTimer + safeDt
@@ -297,7 +290,21 @@ function script.update(dt)
 
     _perfMs = (os.clock() - t0) * 1000.0
   end
+end
+
+--- Frame Update & Decoupled Tactical / Strategy Pipeline
+function script.update(dt)
+  if not ensureInitialized() or _inUpdate then return end
+  local safeDt = math.max(0.0, math.min(0.1, (type(dt) == "number" and dt > 0) and dt or 0.016))
+  local sim = ac and ac.getSim and ac.getSim()
+  if not sim or RaceContext.safeSimGet(sim, "isReplayActive") then return end
+
+  _inUpdate = true
+  local ok, err = pcall(doUpdate, safeDt, sim)
   _inUpdate = false
+  if not ok then
+    Logger.error("MAIN_LOOP", "script.update error: " .. tostring(err))
+  end
 end
 
 function windowMain(dt)

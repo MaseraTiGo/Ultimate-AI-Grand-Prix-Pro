@@ -181,9 +181,11 @@ function M.applyActuator(car, aiState, dt)
                         aiState.activeSkill == "LATE_BRAKE_DIVE" or
                         aiState.activeSkill == "SWITCHBACK" or
                         aiState.activeSkill == "TOW_WEAVE" or
+                        aiState.activeSkill == "POUNCE_PASS" or
                         aiState.state == "ATTACK" or
                         aiState.state == "SWITCHBACK" or
-                        aiState.state == "DEFEND"
+                        aiState.state == "DEFEND" or
+                        aiState.state == "POUNCE_PASS"
   local baseRate = isManeuvering and 0.85 or 0.35
   local curSpeed = car.speedKmh or 80.0
   local stepRate = dt * baseRate
@@ -303,6 +305,8 @@ function M.applyActuator(car, aiState, dt)
                                         or "Set defensive lateral offset (Guarding outer lane)"
           elseif aiState.state == "ATTACK" or aiState.activeSkill == "LATE_BRAKE_DIVE" or aiState.activeSkill == "SWITCHBACK" then
             latDesc = string.format("Dynamic apex dive counter-attack (Offset: %+.2f)", safeOffset)
+          elseif aiState.state == "POUNCE_PASS" or aiState.activeSkill == "POUNCE_PASS" then
+            latDesc = string.format("Opportunistic inside pounce overtake on rival error (Offset: %+.2f)", safeOffset)
           elseif aiState.state == "YIELD" then
             latDesc = "Moved off racing line for blue flag safe passage"
           elseif aiState.isFeinting or aiState.activeSkill == "FEINT_DUMMY" then
@@ -376,6 +380,10 @@ function M.applyActuator(car, aiState, dt)
     -- Controlled smooth coast: deliver 25% smooth roll rather than 0% dead engine lockout
     targetThrottle = 0.25
     throttleDesc = "Engaged Lift & Coast (25% coast roll into deceleration; fuel & tyre preservation)"
+  elseif aiState.state == "MISTAKE" and aiState.lastMistakeType == "OVERSLOW" then
+    -- Tier 1 Hesitation Overslow: deliver 70% throttle out of corner
+    targetThrottle = 0.70
+    throttleDesc = "Tier 1 Hesitation Overslow (70% corner exit throttle delivery)"
   elseif aiState.radioCommand == "SAVE" then
     -- Controlled cruise fuel-saving: cap throttle delivery at 85% to burn less fuel smoothly
     targetThrottle = 0.85
@@ -420,8 +428,13 @@ function M.applyActuator(car, aiState, dt)
       local ok, n = pcall(ac.getDriverName, idx)
       if ok and type(n) == "string" and n ~= "" then dName = n end
     end
-    if not dName and car and type(car.driverName) == "string" then
-      dName = car.driverName
+    if not dName and car then
+      if type(car.driverName) == "string" then
+        dName = car.driverName
+      elseif type(car.driverName) == "function" then
+        local ok, n = pcall(car.driverName, car)
+        if ok and type(n) == "string" then dName = n end
+      end
     end
     local dLabel = EventHub.formatDriverLabel(idx, dName)
     local targetLabel = EventHub.formatDriverLabel(targetIdx, nil)

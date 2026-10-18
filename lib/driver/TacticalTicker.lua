@@ -22,6 +22,23 @@ local TelemetryBridge = require("lib/bridge/TelemetryBridge")
 local watchdog = require("lib/driver/watchdog")
 local SkillArbitrator = require("lib/skills/SkillArbitrator")
 
+local function safeExtractDriverName(car)
+  if not car then return "" end
+  local dn = car.driverName
+  if type(dn) == "string" then
+    return dn
+  elseif type(dn) == "function" then
+    local ok, res = pcall(dn, car)
+    if ok and type(res) == "string" then return res end
+  end
+  local idx = car.index
+  if idx and ac and ac.getDriverName then
+    local ok, res = pcall(ac.getDriverName, idx)
+    if ok and type(res) == "string" then return res end
+  end
+  return ""
+end
+
 local M = {}
 
 M.STATE_CRUISE = "CRUISE"
@@ -108,6 +125,14 @@ for i = 0, MAX_CARS - 1 do
     ringDist = { 999.0, 999.0, 999.0, 999.0 },
     ringSpeedDelta = { 0.0, 0.0, 0.0, 0.0 },
     ringTTC = { 999.0, 999.0, 999.0, 999.0 },
+
+    -- Direction A: Psychological Pressure, MTI & Hunter's Pounce
+    mti = 0.0,
+    breakdownRisk = 0.0,
+    psychStatus = "CALM",
+    pounceTimer = 0.0,
+    pounceActive = false,
+    pounceReported = false,
   }
 end
 
@@ -220,33 +245,128 @@ local function checkIsStraight(car)
   return true
 end
 
---- Calculate continuous dynamic psychological stress
-local function computeStress(s, dist, deltaV, persona, raceContext, dt)
-  local w_dist = 1.2
-  local w_speed = 0.8
-  local resist = persona and persona.pressure_resist or 0.6
-  local decayRate = 0.35 * resist
+--- Calculate Mirror Threat Index (MTI) from chaser dynamics, body language, reputation & stakes
+---@param dist number
+---@param behindCar table|nil
+---@param behindState table|nil
+---@param persona table|nil
+---@param raceContext table|nil
+---@return number mti (0.0 to 3.5)
+function M.calculateMTI(dist, behindCar, behindState, persona, raceContext)
+  if not dist or dist <= 0.1 or dist > 28.0 then
+    return 0.0
+  end
 
-  local contextMod = 1.0
-  if raceContext then
-    if raceContext.isLastLap then contextMod = contextMod * 1.35 end
-    if raceContext.tyreWear and raceContext.tyreWear > 0.6 then
-      contextMod = contextMod * (1.0 + (raceContext.tyreWear - 0.6) * 0.8)
+  -- Base distance threat: 1.0 at 0m, linearly decaying to 0.0 at 28m
+  local baseThreat = 1.0 - (dist / 28.0)
+  if baseThreat < 0.0 then baseThreat = 0.0 end
+
+  local kFlash = 0.0
+  local kWeave = 0.0
+  local kRep = 0.0
+  local kStakes = 0.0
+
+  if behindState then
+    -- Headlight strobe intimidation
+    if behindState.bodyLangAction == "HUNTING" then
+      kFlash = 0.45
+    end
+    -- Weaving / feinting lateral fake movements
+    if behindState.isFeinting or behindState.activeSkill == "FEINT_DUMMY" or behindState.activeSkill == "TOW_WEAVE" or behindState.isBreakingTow then
+      kWeave = 0.40
     end
   end
 
-  local pressureInc = 0.0
-  if dist > 0.1 and dist < 25.0 then
-    local safeD = dist
-    if safeD < 0.5 then safeD = 0.5 end
-    local dv = deltaV
-    if dv < 0.0 then dv = 0.0 end
-    pressureInc = ((w_dist * (1.0 / safeD) + w_speed * dv) * contextMod) * dt
+  -- Reputation intimidation
+  if behindCar then
+    local dName = safeExtractDriverName(behindCar)
+    if dName ~= "" then
+      local lower = string.lower(dName)
+      if string.find(lower, "verstappen") or string.find(lower, "alonso") or string.find(lower, "hamilton") or string.find(lower, "leclerc") or string.find(lower, "norris") then
+        kRep = 0.35
+      end
+    end
   end
 
-  local newStress = s.stress + pressureInc - (decayRate * dt)
+  -- High-stakes race context
+  if raceContext then
+    local pos = raceContext.racePosition or (raceContext.leaderDistance and raceContext.leaderDistance < 20.0 and 1) or 99
+    if pos <= 3 then
+      kStakes = kStakes + 0.30
+    end
+    if raceContext.isLastLap or (raceContext.totalLaps and raceContext.currentLap and (raceContext.totalLaps - raceContext.currentLap <= 3)) then
+      kStakes = kStakes + 0.35
+    end
+    if raceContext.tyreWear and raceContext.tyreWear > 0.65 then
+      kStakes = kStakes + 0.25
+    end
+  end
+
+  local mti = baseThreat * (1.0 + kFlash + kWeave + kRep + kStakes)
+  if mti > 3.5 then mti = 3.5 end
+  return mti
+end
+
+--- Calculate continuous dynamic psychological stress using MTI and persona resilience
+local function computeStress(s, dist, deltaV, persona, raceContext, behindCar, behindState, dt)
+  if type(behindCar) == "number" and dt == nil then
+    dt = behindCar
+    behindCar = nil
+    behindState = nil
+  end
+  dt = dt or 0.1
+
+  local mti = M.calculateMTI(dist, behindCar, behindState, persona, raceContext)
+  s.mti = mti
+
+  local pResist = (persona and (persona.mistake_resistance or persona.pressure_resist)) or 0.65
+  if pResist > 0.96 then pResist = 0.96 end
+  if pResist < 0.20 then pResist = 0.20 end
+
+  local alpha = 1.85
+  local beta = 0.45
+
+  -- Flow state or Tilting modifier
+  if s.isInFlow then
+    alpha = alpha * 0.50 -- Flow halves stress accumulation
+  elseif s.isTilting then
+    alpha = alpha * 1.60 -- Tilting amplifies stress accumulation by 60%
+  end
+
+  -- DeltaV closing bonus: if chaser is rapidly closing (deltaV > 0.5 m/s) within threat range
+  local dvBonus = 0.0
+  if mti > 0.0 and deltaV and deltaV > 0.5 then
+    dvBonus = math.min(1.5, deltaV * 0.35)
+  end
+
+  local pressureInc = alpha * (mti + dvBonus) * (1.0 - pResist) * dt
+  local decayRate = beta * pResist * dt
+
+  local newStress = s.stress + pressureInc - (decayRate * s.stress)
   if newStress < 0.0 then newStress = 0.0 end
   if newStress > 10.0 then newStress = 10.0 end
+
+  -- Breakdown Risk percentage (0 ~ 100%)
+  local risk = 0.0
+  if newStress >= 6.0 then
+    risk = (newStress - 6.0) / 4.0 * 100.0 -- 0% at 6.0, 100% at 10.0
+    if risk > 99.0 then risk = 99.0 end
+  end
+  s.breakdownRisk = risk
+
+  -- Psychological status classification
+  if s.isInFlow then
+    s.psychStatus = "FLOW"
+  elseif newStress >= 9.0 then
+    s.psychStatus = "CRACKING"
+  elseif newStress >= 7.5 then
+    s.psychStatus = "RATTLED"
+  elseif newStress >= 5.0 then
+    s.psychStatus = "UNDER_PRESSURE"
+  else
+    s.psychStatus = "CALM"
+  end
+
   return newStress
 end
 
@@ -523,7 +643,8 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
   s.isLaunchDelayed = MistakeEngine.isLaunchDelayed(idx)
 
   -- 3. Calculate Dynamic Stress Level
-  s.stress = computeStress(s, behindDist, behindSpeedDelta, persona, raceContext, dt)
+  local behindState = behindCar and _aiStates[behindCar.index]
+  s.stress = computeStress(s, behindDist, behindSpeedDelta, persona, raceContext, behindCar, behindState, dt)
 
   -- Update Dynamic Momentum & Flow State (-1.0 Tilt to +1.0 Flow)
   local momentumDelta = 0.0
@@ -557,7 +678,7 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
     effectiveStress = math.min(10.0, effectiveStress * 1.5 + 1.0)
   end
 
-  local mType, mDur, mOff, mCaut, mGrip, pType, pDur, pSev = MistakeEngine.rollMistake(
+  local mType, mDur, mOff, mCaut, mGrip, pType, pDur, pSev, mTier = MistakeEngine.rollMistake(
     idx, effectiveStress, persona, rivalryScore, hotspotDanger, dt, car, raceContext
   )
   if mType ~= MistakeEngine.TYPE_NONE then
@@ -571,6 +692,16 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
     s.physicalMistakeDur = pDur
     s.physicalMistakeSev = pSev
     s.physicalDispatched = false
+    s.tierMistake = mTier or 1
+    if mTier == MistakeEngine.TIER_2_TECHNICAL then
+      local EventHub = require("lib/core/EventHub")
+      local dLabel = EventHub.formatDriverLabel(idx, safeExtractDriverName(car))
+      EventHub.pushAiEvent(idx, "MISTAKE", string.format("【重压失误】%s 在后车压迫下入弯前轮抱死走大，内线门户大开！", dLabel), "TACTICAL")
+    elseif mTier == MistakeEngine.TIER_3_SEVERE then
+      local EventHub = require("lib/core/EventHub")
+      local dLabel = EventHub.formatDriverLabel(idx, safeExtractDriverName(car))
+      EventHub.pushAiEvent(idx, "SPIN", string.format("【心理崩盘】%s 极度慌乱急躁出弯尾部剧烈甩尾，险些掉头失控！", dLabel), "INCIDENT")
+    end
     M.recordTrackIncident(car.splinePosition)
     TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
     return s
@@ -585,6 +716,50 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
     s.targetSplineOffset = 0.65
     TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
     return s
+  end
+
+  -- 5.1 Hunter's Pounce (POUNCE_PASS): opportunistically pounce when ahead car makes an error / washes wide
+  if s.pounceTimer > 0.0 then
+    s.pounceTimer = s.pounceTimer - dt
+    if s.pounceTimer <= 0.0 then
+      s.pounceActive = false
+      s.pounceReported = false
+    else
+      s.state = "POUNCE_PASS"
+      s.activeSkill = "POUNCE_PASS"
+      s.targetCaution = 0.25
+      s.targetAggression = 0.98
+      evaluateBodyLanguage(s, car, aheadCar, behindCar, s.aheadDist or 999.0, s.behindDist or 999.0, persona, rivalryScore, raceContext, dt)
+      TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
+      return s
+    end
+  elseif aheadCar and s.aheadDist >= 1.5 and s.aheadDist <= 25.0 and not inPit then
+    local aheadState = _aiStates[aheadCar.index]
+    local aheadInMistake = aheadState and (aheadState.state == M.STATE_MISTAKE or aheadState.lastMistakeType == "MISSED_APEX" or aheadState.lastMistakeType == "BRAKE_LOCKUP" or aheadState.lastMistakeType == "TRAIL_UNDERSTEER")
+    local aheadWashedWide = aheadState and (math.abs(aheadState.targetSplineOffset or 0) >= 0.35 or math.abs(aheadState.currentSplineOffset or 0) >= 0.35)
+    if aheadInMistake or aheadWashedWide then
+      local aheadOff = (aheadState and (aheadState.currentSplineOffset or aheadState.targetSplineOffset)) or 0.0
+      local pounceLine = (aheadOff > 0) and -0.40 or 0.40
+      s.state = "POUNCE_PASS"
+      s.activeSkill = "POUNCE_PASS"
+      s.targetSplineOffset = pounceLine
+      s.targetCaution = 0.25 -- bold opportunistic attack
+      s.targetAggression = 0.98
+      s.pounceTimer = 2.0
+      s.pounceActive = true
+      if not s.pounceReported then
+        s.pounceReported = true
+        local EventHub = require("lib/core/EventHub")
+        local myLabel = EventHub.formatDriverLabel(idx, safeExtractDriverName(car))
+        local targetLabel = EventHub.formatDriverLabel(aheadCar.index, safeExtractDriverName(aheadCar))
+        EventHub.pushAiEvent(idx, "OVERTAKE", string.format("【绝杀突袭】%s 敏锐捕捉到前车 %s 失误走大，强行插入内线切弯反超！", myLabel, targetLabel), "COMBAT")
+        local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
+        RadioVoiceEngine.playRadio("info_overtake", RadioVoiceEngine.PRIORITY_COMMAND)
+      end
+      evaluateBodyLanguage(s, car, aheadCar, behindCar, s.aheadDist or 999.0, s.behindDist or 999.0, persona, rivalryScore, raceContext, dt)
+      TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
+      return s
+    end
   end
 
   -- 6. X-Skill Arbitrator Execution & Evaluation
@@ -991,6 +1166,12 @@ function M.reset()
     s.bodyLangFlashCount = 0
     s.lastAheadIdx = -1
     s.overtakeCooldown = 0.0
+    s.mti = 0.0
+    s.breakdownRisk = 0.0
+    s.psychStatus = "CALM"
+    s.pounceTimer = 0.0
+    s.pounceActive = false
+    s.pounceReported = false
     s.ringHead = 1
     s.ringInitialized = false
     for k = 1, RING_SIZE do

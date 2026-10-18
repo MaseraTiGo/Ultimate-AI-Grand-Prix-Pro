@@ -22,6 +22,7 @@ local strategyCalc = require("lib/strategy/strategy_calculator")
 local EventHub = require("lib/core/EventHub")
 local ControlTelemetry = require("lib/core/ControlTelemetry")
 local WeatherStrategyModel = require("lib/strategy/WeatherStrategyModel")
+local TacticalTicker = require("lib/driver/TacticalTicker")
 
 local M = {}
 
@@ -191,8 +192,15 @@ local function getDriverNameDisplay(carIdx, maxLen)
   end
   if rawName == "" then
     local car = safeGetCar(carIdx)
-    if car and car.driverName and car.driverName ~= "" then
-      rawName = car.driverName
+    if car then
+      if type(car.driverName) == "string" and car.driverName ~= "" then
+        rawName = car.driverName
+      elseif type(car.driverName) == "function" then
+        local ok, res = pcall(car.driverName, car)
+        if ok and type(res) == "string" and res ~= "" then
+          rawName = res
+        end
+      end
     end
   end
   if rawName == "" then
@@ -529,6 +537,9 @@ function M.renderLiveHudTab()
       elseif c.pitState == "REQUESTED" or c.tacticalState == "BOXING" or c.radioCommand == "BOX_THIS_LAP" or c.pit_requested then
         stText = "进站准备"
         stColor = COLOR_RED
+      elseif c.tacticalState == "POUNCE_PASS" or c.activeSkill == "POUNCE_PASS" then
+        stText = "捕食绝杀"
+        stColor = COLOR_GOLD
       elseif c.tacticalState == "ATTACK" or c.tacticalState == "LATE_BRAKE_DIVE" or c.tacticalState == "FEINT_DUMMY" or c.tacticalState == "SWITCHBACK" then
         stText = "进攻推进"
         stColor = COLOR_GOLD
@@ -550,6 +561,8 @@ function M.renderLiveHudTab()
 
       if c.isRetired or c.pitState == "RETIRED" or c.tacticalState == "RETIRED" or c.activeSkill == "RET" then
         drawInlineColored(COLOR_RED, "[RET]")
+      elseif c.activeSkill == "POUNCE_PASS" or c.tacticalState == "POUNCE_PASS" then
+        drawInlineColored(COLOR_GOLD, "[捕食绝杀]")
       elseif c.activeSkill and c.activeSkill ~= "NONE" then
         drawInlineColored(COLOR_CYAN, string.format("[%s]", c.activeSkill))
       elseif c.radioCommand and c.radioCommand ~= "NONE" then
@@ -589,6 +602,18 @@ function M.renderPitWallTab()
   ui.text("当前指挥目标: ")
   ui.sameLine()
   drawInlineColored(COLOR_CYAN, targetLabel)
+  ui.sameLine()
+
+  local selAi = TacticalTicker.getAiState(_selectedCarForRadio)
+  local mtiVal = (selAi and selAi.mti) or 0.0
+  local riskVal = (selAi and selAi.breakdownRisk) or 0.0
+  local psychSt = (selAi and selAi.psychStatus) or "CALM"
+  local psychCol = (psychSt == "FLOW") and COLOR_CYAN or ((psychSt == "CRACKING") and COLOR_RED or ((psychSt == "RATTLED") and COLOR_GOLD or ((psychSt == "UNDER_PRESSURE") and COLOR_GOLD or COLOR_GREEN)))
+  ui.text("| 心态:")
+  ui.sameLine()
+  drawInlineColored(psychCol, string.format("[%s]", psychSt))
+  ui.sameLine()
+  ui.text(string.format("| 威胁(MTI): %.2f | 崩盘风险: %.0f%%", mtiVal, riskVal))
   ui.sameLine()
 
   if ui.button(" < 上一车手##radio_prev ") then
@@ -1195,7 +1220,7 @@ function M.renderLogsTab()
 
     if ui and ui.sameLine then ui.sameLine() end
     if ui and ui.button and ui.button("试听电台##radio_test_play") then
-      RadioVoiceEngine.playRadio("cmd_push", RadioVoiceEngine.PRIORITY_COMMAND)
+      RadioVoiceEngine.preview("cmd_push")
     end
     setTooltip("播放测试指令语音，验证开闭蜂鸣与电台播报")
   end
