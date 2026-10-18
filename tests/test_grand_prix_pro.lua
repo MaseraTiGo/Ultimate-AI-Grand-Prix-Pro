@@ -3262,8 +3262,188 @@ do
   runTest58()
 end
 
+do
+  print("\n[Test 59] Testing TV Director Configuration, Hotspot Scoring & Priority Preemption...")
+  local function runTest59()
+    local TVDirectorEngine = require("lib/broadcast/TVDirectorEngine")
+    local RaceContext = require("lib/core/RaceContext")
+
+    TVDirectorEngine.reset()
+
+    -- 1. Default disabled verification (Requirement: defaults to closed)
+    assertEq(TVDirectorEngine.isEnabled(), false, "TV Director defaults to disabled (closed)")
+
+    -- 2. Single Button Toggle Logic
+    local stateOn = TVDirectorEngine.toggleEnabled()
+    assertEq(stateOn, true, "Single toggle button enables TV Director")
+    assertEq(TVDirectorEngine.isEnabled(), true, "isEnabled() reflects active state")
+
+    local stateOff = TVDirectorEngine.toggleEnabled()
+    assertEq(stateOff, false, "Single toggle button disables TV Director")
+    assertEq(TVDirectorEngine.isEnabled(), false, "isEnabled() reflects inactive state")
+
+    -- 3. Configurable Parameters & Defaults (Requirement: 1, 2 configurable, default 5s / 12s / 15s)
+    assertEq(TVDirectorEngine.getMinDwellTime(), 5.0, "Default min dwell time is 5.0s")
+    assertEq(TVDirectorEngine.getMaxDwellTime(), 12.0, "Default max dwell time is 12.0s")
+    assertEq(TVDirectorEngine.getQuietWindow(), 15.0, "Default quiet window is 15.0s")
+
+    TVDirectorEngine.setMinDwellTime(3.5)
+    assertEq(TVDirectorEngine.getMinDwellTime(), 3.5, "Custom min dwell time accepted")
+    TVDirectorEngine.setMaxDwellTime(18.0)
+    assertEq(TVDirectorEngine.getMaxDwellTime(), 18.0, "Custom max dwell time accepted")
+    TVDirectorEngine.setQuietWindow(25.0)
+    assertEq(TVDirectorEngine.getQuietWindow(), 25.0, "Custom quiet window accepted")
+
+    -- Clamping guards
+    TVDirectorEngine.setMinDwellTime(0.2)
+    assertEq(TVDirectorEngine.getMinDwellTime(), 1.0, "Min dwell time clamped to 1.0s minimum")
+    TVDirectorEngine.setMaxDwellTime(100.0)
+    assertEq(TVDirectorEngine.getMaxDwellTime(), 60.0, "Max dwell time clamped to 60.0s maximum")
+
+    -- Reset back to defaults
+    TVDirectorEngine.setMinDwellTime(5.0)
+    TVDirectorEngine.setMaxDwellTime(12.0)
+    TVDirectorEngine.setQuietWindow(15.0)
+
+    -- 4. Hotspot Scoring & Priority Preemption
+    TVDirectorEngine.setEnabled(true)
+
+    -- Mock RaceContext state:
+    -- Car 0: P1 leader, gap 999.0s (cruising alone)
+    -- Car 1: P2 chaser, gap 0.25s (intense battle)
+    -- Car 2: P3 car, spinning out (lastMistakeType = "SPIN")
+    local c0 = RaceContext.getCarState(0)
+    c0.isConnected = true
+    c0.isAIControlled = true
+    c0.isRetired = false
+    c0.racePosition = 1
+    c0.gapToAhead = 999.0
+    c0.lastMistakeType = "NONE"
+
+    local c1 = RaceContext.getCarState(1)
+    c1.isConnected = true
+    c1.isAIControlled = true
+    c1.isRetired = false
+    c1.racePosition = 2
+    c1.gapToAhead = 0.25
+    c1.lastMistakeType = "NONE"
+    c1.stress = 7.5
+    c1.mti = 2.2
+
+    local c2 = RaceContext.getCarState(2)
+    c2.isConnected = true
+    c2.isAIControlled = true
+    c2.isRetired = false
+    c2.racePosition = 3
+    c2.gapToAhead = 3.5
+    c2.lastMistakeType = "SPIN"
+
+    local raceState = RaceContext.getRaceState()
+    raceState.carsCount = 3
+    raceState.currentLap = 5
+    raceState.totalLaps = 13
+
+    -- Step TV Director: Car 2 (SPIN) has P0 Emergency priority -> instant cut
+    TVDirectorEngine.step(0.1, nil)
+    assertEq(TVDirectorEngine.getFocusedCar(), 2, "Car 2 spinning out takes highest priority (P0 EMERGENCY)")
+    assertEq(TVDirectorEngine.getCurrentPriority(), TVDirectorEngine.PRIORITY_EMERGENCY, "Priority is EMERGENCY (0)")
+    assertEq(TVDirectorEngine.getCurrentCameraMode(), TVDirectorEngine.CAMERA_MODE_TRACK, "Incident uses Track TV camera")
+
+    print("  -> Passed: TV Director Configuration, Hotspot Scoring & Priority Preemption verified.")
+  end
+  runTest59()
+end
+
+do
+  print("\n[Test 60] Testing TV Director Dwell Hysteresis, Styles & Manual Override...")
+  local function runTest60()
+    local TVDirectorEngine = require("lib/broadcast/TVDirectorEngine")
+    local RaceContext = require("lib/core/RaceContext")
+
+    TVDirectorEngine.reset()
+    TVDirectorEngine.setEnabled(true)
+    TVDirectorEngine.setMinDwellTime(5.0)
+    TVDirectorEngine.setMaxDwellTime(12.0)
+    TVDirectorEngine.setQuietWindow(15.0)
+
+    -- Clear past incidents in RaceContext for dwell test
+    local c2 = RaceContext.getCarState(2)
+    c2.lastMistakeType = "NONE"
+    c2.tacticalState = "CRUISE"
+    local c1 = RaceContext.getCarState(1)
+    c1.lastMistakeType = "NONE"
+    c1.tacticalState = "CRUISE"
+
+    -- Force initial cut to Car 1
+    TVDirectorEngine.forceCut(1, TVDirectorEngine.CAMERA_MODE_TRACK, "TEST_INITIAL", TVDirectorEngine.PRIORITY_BATTLE, 8.0)
+    assertEq(TVDirectorEngine.getFocusedCar(), 1, "Initial focus on Car 1")
+    assertEq(TVDirectorEngine.getDwellTimer(), 0.0, "Dwell timer initialized to 0")
+
+    -- 1. Dwell Time Hysteresis: Step 2.0s (< min dwell 5.0s) with competing candidate
+    local c0 = RaceContext.getCarState(0)
+    c0.isConnected = true
+    c0.racePosition = 1
+    c0.gapToAhead = 0.1 -- Small score increase
+
+    TVDirectorEngine.step(2.0, nil)
+    assertEq(TVDirectorEngine.getFocusedCar(), 1, "Director holds Car 1 due to min dwell hysteresis (elapsed 2.0s < 5.0s)")
+
+    -- Step past min dwell time (2.0s + 4.0s = 6.0s >= 5.0s min dwell threshold)
+    TVDirectorEngine.step(4.0, nil)
+    assertEq(TVDirectorEngine.getFocusedCar(), 0, "Director cut to higher-scoring Car 0 after min dwell elapsed")
+
+    -- 2. Director Style Presets
+    TVDirectorEngine.setStyle(TVDirectorEngine.STYLE_ONBOARD)
+    assertEq(TVDirectorEngine.getStyle(), TVDirectorEngine.STYLE_ONBOARD, "Director style set to ONBOARD")
+
+    TVDirectorEngine.setStyle(TVDirectorEngine.STYLE_ACTION)
+    assertEq(TVDirectorEngine.getStyle(), TVDirectorEngine.STYLE_ACTION, "Director style set to ACTION")
+
+    -- 3. Manual Override Protection
+    local mockSim = {
+      focusedCar = 1,
+      cameraMode = TVDirectorEngine.CAMERA_MODE_TRACK,
+      isReplayActive = false
+    }
+
+    -- Step to record baseline
+    TVDirectorEngine.step(0.1, mockSim)
+    assertEq(TVDirectorEngine.isManualOverrideActive(), false, "Override inactive when matching engine state")
+
+    -- Player changes camera/car externally (e.g. presses F1 or PageUp to Car 5)
+    mockSim.focusedCar = 5
+    TVDirectorEngine.step(0.1, mockSim)
+    assertTrue(TVDirectorEngine.isManualOverrideActive(), "Manual override activated when player alters camera externally")
+    assertTrue(TVDirectorEngine.getQuietTimer() >= 14.8 and TVDirectorEngine.getQuietTimer() <= 15.0, "Quiet window initialized to ~15.0s")
+
+    -- While quiet window active, automatic director cuts are suppressed
+    TVDirectorEngine.step(5.0, mockSim)
+    assertTrue(TVDirectorEngine.isManualOverrideActive(), "Override remains active (remaining 10.0s)")
+
+    -- Step past 15.0s quiet window
+    TVDirectorEngine.step(11.0, mockSim)
+    assertEq(TVDirectorEngine.isManualOverrideActive(), false, "Quiet window expires, director resumes autonomous operation")
+
+    -- 4. Verify DashboardUI Tab 6 & Header Master Button
+    local DashboardUI = require("lib/ui/DashboardUI")
+    local okUI1 = pcall(DashboardUI.renderDirectorTab)
+    assertTrue(okUI1, "DashboardUI.renderDirectorTab renders cleanly when disabled")
+
+    TVDirectorEngine.setEnabled(true)
+    local okUI2 = pcall(DashboardUI.renderDirectorTab)
+    assertTrue(okUI2, "DashboardUI.renderDirectorTab renders cleanly when active with live telemetry")
+
+    local okMain = pcall(DashboardUI.renderMain, 0.05, 4)
+    assertTrue(okMain, "DashboardUI.renderMain renders cleanly with TV Director master toggle button")
+
+    TVDirectorEngine.reset()
+    print("  -> Passed: TV Director Dwell Hysteresis, Styles, Manual Override & DashboardUI verified.")
+  end
+  runTest60()
+end
+
 print("==================================================================")
-print("  ALL 58 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
+print("  ALL 60 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
 print("==================================================================")
 
 

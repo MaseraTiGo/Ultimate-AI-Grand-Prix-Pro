@@ -26,6 +26,7 @@ local TelemetryBridge = require("lib/bridge/TelemetryBridge")
 local EventHub = require("lib/core/EventHub")
 local ControlTelemetry = require("lib/core/ControlTelemetry")
 local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
+local TVDirectorEngine = require("lib/broadcast/TVDirectorEngine")
 local DashboardUI = require("lib/ui/DashboardUI")
 
 local _initialized = false
@@ -74,7 +75,7 @@ function script.init()
   personaLoader.init("config/personas.json")
   rivalryMemory.init("rivalry_memory.jsonl")
   LODScheduler.reset()
-  LODScheduler.setDeepSleepEnabled(true)
+  LODScheduler.setDeepSleepEnabled(false)
   MistakeEngine.reset()
   BehaviorActuator.reset()
   TacticalTicker.init()
@@ -84,6 +85,7 @@ function script.init()
   ControlTelemetry.init()
   RadioVoiceEngine.init()
   RadioVoiceEngine.reset()
+  TVDirectorEngine.init()
 
   local sim = nil
   if ac and ac.getSim then
@@ -127,6 +129,7 @@ end
 
 local function doUpdate(safeDt, sim)
   RadioVoiceEngine.step(safeDt)
+  TVDirectorEngine.step(safeDt, sim)
   _tacticalTimer = _tacticalTimer + safeDt
   _strategyTimer = _strategyTimer + safeDt
   _flushTimer = _flushTimer + safeDt
@@ -167,6 +170,14 @@ local function doUpdate(safeDt, sim)
     local playerPos = playerCar and playerCar.position or nil
     LODScheduler.updateTiers(playerPos, carCount, getCarPositionScalar)
 
+    -- If TV Director is enabled and focusing on an AI car, elevate that car to TIER_FOCUS (10Hz)
+    if TVDirectorEngine.isEnabled() then
+      local tvCar = TVDirectorEngine.getFocusedCar()
+      if tvCar and tvCar >= 0 and tvCar < carCount then
+        LODScheduler.setCarTier(tvCar, LODScheduler.TIER_FOCUS)
+      end
+    end
+
     -- Update Global 24-Car Topological Neighbor Ring (AI-to-AI Inter-Vehicle Awareness)
     RaceContext.updateTopology(carCount, safeGetCar)
 
@@ -193,7 +204,7 @@ local function doUpdate(safeDt, sim)
         watchdog.checkStuckCars(c, tacticalDt, raceState.sessionTime)
 
         -- Collision detection & event wakeup trigger (runs for all active AI so sleeping cars awaken on impact)
-        if playerCar and c.collisionDepth and c.collisionDepth > 0.02 and playerCar.position and c.position then
+        if i > 0 and playerCar and c.collisionDepth and c.collisionDepth > 0.02 and playerCar.position and c.position then
           local dx = c.position.x - playerCar.position.x
           local dy = c.position.y - playerCar.position.y
           local dz = c.position.z - playerCar.position.z

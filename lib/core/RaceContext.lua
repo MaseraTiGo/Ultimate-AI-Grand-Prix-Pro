@@ -442,8 +442,23 @@ function M.updateCarFromAc(carIndex, c)
 
   local wasInPitlane = s.isInPitlane
   local wasInPit = s.isInPit
-  s.isInPitlane = safeCarGet(c, "isInPitlane") == true
-  s.isInPit = safeCarGet(c, "isInPit") == true
+  local rawInPitlane = safeCarGet(c, "isInPitlane") == true
+  local rawInPit = safeCarGet(c, "isInPit") == true
+
+  -- Anti-Trigger-Bleed & Starting Grid False Positive Filter:
+  -- 1. High Speed Rejection: Pit limiter in AC is strictly 60-80 km/h. Any car traveling > 95.0 km/h
+  --    is physically on the racing circuit passing by the pit wall, NOT in the pit lane.
+  -- 2. Starting Grid Immunity: On lap 0 with session time < 25s, cars are sitting on the grid waiting for lights.
+  local isHighSpeedOnTrack = (s.speedKmh and s.speedKmh > 95.0)
+  local isGridFormation = ((s.lapCount or 0) == 0 and (_raceState.sessionTime or 0) < 25.0)
+
+  if isHighSpeedOnTrack or isGridFormation then
+    rawInPitlane = false
+    rawInPit = false
+  end
+
+  s.isInPitlane = rawInPitlane
+  s.isInPit = rawInPit
   local isNowInPit = s.isInPitlane or s.isInPit
   local wasInAnyPit = wasInPitlane or wasInPit
 
@@ -511,8 +526,12 @@ function M.updateCarFromAc(carIndex, c)
       end
     elseif isStationaryInBay then
       local wo = s.pendingWorkOrder
+      local hasPitIntent = s.pit_requested or s.pit_stop_planned or (s.pitState == M.PIT_STATE_IN_PITLANE) or
+                           (s.pitState == M.PIT_STATE_IN_BAY) or (s.tacticalState == "BOXING") or
+                           (s.radioCommand == "BOX_THIS_LAP") or ((s.fuelInTank or 50.0) < 3.0) or
+                           ((s.tyreWear or 0.0) > 0.80)
       local shouldService = wo and not wo.serviced and (
-        wo.isConfirmed or wo.status == "CONFIRMED" or wo.isExplicit or (s.isAIControlled and not s.radioOrderActive)
+        wo.isConfirmed or wo.status == "CONFIRMED" or wo.isExplicit or (s.isAIControlled and not s.radioOrderActive and hasPitIntent)
       )
       if shouldService then
         s.pitState = M.PIT_STATE_SERVICING

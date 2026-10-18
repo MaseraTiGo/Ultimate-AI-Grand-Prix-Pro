@@ -23,6 +23,7 @@ local EventHub = require("lib/core/EventHub")
 local ControlTelemetry = require("lib/core/ControlTelemetry")
 local WeatherStrategyModel = require("lib/strategy/WeatherStrategyModel")
 local TacticalTicker = require("lib/driver/TacticalTicker")
+local TVDirectorEngine = require("lib/broadcast/TVDirectorEngine")
 
 local M = {}
 
@@ -429,6 +430,18 @@ function M.renderMain(perfMs, activeAiCount)
   ui.sameLine()
   if ui.button(_selectedTab == 5 and "[ 5. 诊断日志 ]" or "  5. 诊断日志  ") then _selectedTab = 5 end
   setTooltip("系统底层有界环形诊断事件流")
+  ui.sameLine()
+  if ui.button(_selectedTab == 6 and "[ 6. 智能导播 ]" or "  6. 智能导播  ") then _selectedTab = 6 end
+  setTooltip("智能实时导播系统控制台：镜头节奏配置、转播风格切换、实时热点雷达与手动直切")
+
+  -- Single Master Toggle Button (Requirement: Single button toggles ON/OFF, defaults to OFF)
+  if ui and ui.sameLine then ui.sameLine() end
+  local isDirectorOn = TVDirectorEngine.isEnabled()
+  local toggleBtnText = isDirectorOn and "[ 🎥 导播: 运行中 ]##top_tv_dir_btn" or "[ 🎥 导播: 已关闭 ]##top_tv_dir_btn"
+  if ui and ui.button and ui.button(toggleBtnText) then
+    TVDirectorEngine.toggleEnabled()
+  end
+  setTooltip("一键开启或关闭智能实时导播（默认关闭）。开启后系统根据全场攻防热度与突发失误自主运镜。")
 
   ui.separator()
 
@@ -442,6 +455,8 @@ function M.renderMain(perfMs, activeAiCount)
     M.renderGridSetupTab()
   elseif _selectedTab == 5 then
     M.renderLogsTab()
+  elseif _selectedTab == 6 then
+    M.renderDirectorTab()
   end
 
   -- Pinned Live Event Feed at the Bottom
@@ -1297,6 +1312,165 @@ function M.renderLogsTab()
       if ui and ui.text then
         ui.text(l.message)
       end
+    end
+  end
+end
+
+--------------------------------------------------------------------------------
+-- 9b. Tab 6: Intelligent Real-time TV Director Hub
+--------------------------------------------------------------------------------
+function M.renderDirectorTab()
+  if not ui or not ui.text then return end
+  drawTextColored(COLOR_CYAN, "【智能实时导播系统 (AI TV Director & Cinematic Broadcast Engine)】")
+
+  local isDirectorActive = TVDirectorEngine.isEnabled()
+
+  -- 1. Master Toggle Button (Single Button Requirement: defaults to OFF)
+  local toggleBtnText = isDirectorActive and "[ 🎥 智能导播: 运行中 (点击关闭) ]##tv_dir_main_toggle" or "[ 🎥 智能导播: 当前已关闭 (点击一键开启) ]##tv_dir_main_toggle"
+  local toggleBtnCol = isDirectorActive and COLOR_GREEN or COLOR_MUTED
+  if ui and ui.button and ui.button(toggleBtnText) then
+    TVDirectorEngine.toggleEnabled()
+  end
+  setTooltip("一键开启或关闭智能实时导播。开启后系统根据全场攻防热度、心理高压、超车与失误事故自主电影级运镜；默认关闭。")
+
+  if ui and ui.sameLine then ui.sameLine() end
+  local statusBadge = isDirectorActive and "[✔ 自动化电视运镜调度中 (F1转播机位)]" or "[已停用 - 镜头由游戏原生控制]"
+  drawInlineColored(toggleBtnCol, statusBadge)
+
+  if ui and ui.separator then ui.separator() end
+
+  -- 2. Live Telemetry Monitor (When Active)
+  if isDirectorActive then
+    drawTextColored(COLOR_CYAN, "=== 当前导播监视器 (Live Director Monitor) ===")
+    local focusedCar = TVDirectorEngine.getFocusedCar()
+    local _, fullTargetName = getDriverNameDisplay(focusedCar, 18)
+    local targetLabel = EventHub.formatDriverLabel(focusedCar, fullTargetName)
+
+    local curMode = TVDirectorEngine.getCurrentCameraMode()
+    local modeName = (curMode == TVDirectorEngine.CAMERA_MODE_CAR) and "Car T-Cam (车载特写)" or ((curMode == TVDirectorEngine.CAMERA_MODE_HELICOPTER) and "Helicopter (直升机鸟瞰)" or "Track TV (赛道电视机位)")
+
+    local reason = TVDirectorEngine.getCurrentReason()
+    local prio = TVDirectorEngine.getCurrentPriority()
+    local prioName = (prio == 0) and "P0_EMERGENCY" or ((prio == 1) and "P1_ACTION" or ((prio == 2) and "P2_TACTICS" or ((prio == 3) and "P3_BATTLE" or "P4_ATMOSPHERE")))
+    local prioCol = (prio <= 1) and COLOR_RED or ((prio <= 2) and COLOR_GOLD or COLOR_GREEN)
+
+    local dwellElapsed = TVDirectorEngine.getDwellTimer()
+    local dwellTarget = TVDirectorEngine.getTargetDwellTime()
+    local dwellRemain = TVDirectorEngine.getRemainingDwellTime()
+
+    if ui and ui.text then ui.text(string.format("聚焦目标: %s | 机位: %s", targetLabel, modeName)) end
+    if ui and ui.sameLine then ui.sameLine() end
+    if ui and ui.text then ui.text("| 运镜理由:") end
+    if ui and ui.sameLine then ui.sameLine() end
+    drawInlineColored(prioCol, string.format("[%s : %s]", prioName, reason))
+
+    if ui and ui.text then ui.text(string.format("镜头停留: %.1fs / %.1fs (剩余 %.1fs) | 导播风格: [%s]", dwellElapsed, dwellTarget, dwellRemain, TVDirectorEngine.getStyle())) end
+
+    if TVDirectorEngine.isManualOverrideActive() then
+      local quietRem = TVDirectorEngine.getQuietTimer()
+      if ui and ui.sameLine then ui.sameLine() end
+      drawInlineColored(COLOR_GOLD, string.format("[⚠️ 玩家接管中: 静默让渡剩余 %.1fs]", quietRem))
+    end
+
+    if ui and ui.separator then ui.separator() end
+  end
+
+  -- 3. Configurable Dwell Times & Quiet Window (Requirement 1 & 2)
+  drawTextColored(COLOR_CYAN, "=== 镜头节奏与人工让渡时限配置 (Configurable Timing Parameters) ===")
+
+  local minDwell = TVDirectorEngine.getMinDwellTime()
+  local maxDwell = TVDirectorEngine.getMaxDwellTime()
+  local quietWin = TVDirectorEngine.getQuietWindow()
+
+  -- Min Dwell Control (default 5.0s)
+  if ui and ui.text then ui.text(string.format("最小镜头驻留时限 (Min Dwell): %.1f 秒", minDwell)) end
+  if ui and ui.sameLine then ui.sameLine() end
+  if ui and ui.button and ui.button(" -1s##min_dwell_down ") then
+    TVDirectorEngine.setMinDwellTime(minDwell - 1.0)
+  end
+  if ui and ui.sameLine then ui.sameLine() end
+  if ui and ui.button and ui.button(" +1s##min_dwell_up ") then
+    TVDirectorEngine.setMinDwellTime(minDwell + 1.0)
+  end
+  setTooltip("单个镜头的保底最短停留时长（默认 5.0s），防止由于微小热点浮动导致镜头抽搐眩晕。P0 紧急事故除外。")
+
+  -- Max Dwell Control (default 12.0s)
+  if ui and ui.text then ui.text(string.format("最大镜头驻留时限 (Max Dwell): %.1f 秒", maxDwell)) end
+  if ui and ui.sameLine then ui.sameLine() end
+  if ui and ui.button and ui.button(" -1s##max_dwell_down ") then
+    TVDirectorEngine.setMaxDwellTime(maxDwell - 1.0)
+  end
+  if ui and ui.sameLine then ui.sameLine() end
+  if ui and ui.button and ui.button(" +1s##max_dwell_up ") then
+    TVDirectorEngine.setMaxDwellTime(maxDwell + 1.0)
+  end
+  setTooltip("单个镜头的最长停留时限（默认 12.0s），超时后强制轮换下一个焦点或切镜，防止镜头单调凝滞。")
+
+  -- Quiet Window Control (default 15.0s)
+  if ui and ui.text then ui.text(string.format("玩家手动切镜静默让渡 (Quiet Window): %.1f 秒", quietWin)) end
+  if ui and ui.sameLine then ui.sameLine() end
+  if ui and ui.button and ui.button(" -2s##quiet_win_down ") then
+    TVDirectorEngine.setQuietWindow(quietWin - 2.0)
+  end
+  if ui and ui.sameLine then ui.sameLine() end
+  if ui and ui.button and ui.button(" +2s##quiet_win_up ") then
+    TVDirectorEngine.setQuietWindow(quietWin + 2.0)
+  end
+  setTooltip("检测到玩家手动按键切镜时，导播系统静默让渡的观察时长（默认 15.0s），期间绝不强行夺取镜头。")
+
+  if ui and ui.sameLine then ui.sameLine() end
+  if ui and ui.button and ui.button(" 恢复推荐默认值 (5s / 12s / 15s)##reset_director_defaults ") then
+    TVDirectorEngine.setMinDwellTime(5.0)
+    TVDirectorEngine.setMaxDwellTime(12.0)
+    TVDirectorEngine.setQuietWindow(15.0)
+  end
+  setTooltip("将所有运镜时限一键恢复为官方推荐默认标准")
+
+  if ui and ui.separator then ui.separator() end
+
+  -- 4. Director Style Presets
+  drawTextColored(COLOR_CYAN, "=== 转播风格预设 (Broadcast Flavor Presets) ===")
+  local curStyle = TVDirectorEngine.getStyle()
+
+  local style1Text = (curStyle == TVDirectorEngine.STYLE_WORLD_FEED) and "[✔ 官方转播风格 (World Feed)]##wf_btn" or "  官方转播风格 (World Feed)  ##wf_btn"
+  if ui and ui.button and ui.button(style1Text) then
+    TVDirectorEngine.setStyle(TVDirectorEngine.STYLE_WORLD_FEED)
+  end
+  setTooltip("均衡转播 F1 攻防焦点、头车争霸、关键停站与突发意外（默认推荐）")
+
+  if ui and ui.sameLine then ui.sameLine() end
+  local style2Text = (curStyle == TVDirectorEngine.STYLE_ACTION) and "[✔ 全场激战风格 (Action Focus)]##act_btn" or "  全场激战风格 (Action Focus)  ##act_btn"
+  if ui and ui.button and ui.button(style2Text) then
+    TVDirectorEngine.setStyle(TVDirectorEngine.STYLE_ACTION)
+  end
+  setTooltip("全程锁定全场间距小于 0.8s 的拼抢缠斗，无激战时才看前排")
+
+  if ui and ui.sameLine then ui.sameLine() end
+  local style3Text = (curStyle == TVDirectorEngine.STYLE_ONBOARD) and "[✔ 电影车载视角 (Onboard T-Cam)]##onb_btn" or "  电影车载视角 (Onboard T-Cam)  ##onb_btn"
+  if ui and ui.button and ui.button(style3Text) then
+    TVDirectorEngine.setStyle(TVDirectorEngine.STYLE_ONBOARD)
+  end
+  setTooltip("优先使用车载机位（T-Cam 与前鼻翼机位）感受第一人称极速搏杀")
+
+  if ui and ui.separator then ui.separator() end
+
+  -- 5. Combat Hotspot Radar Top 3
+  drawTextColored(COLOR_CYAN, "=== 全场战斗精彩度雷达 (Top Combat Hotspots) ===")
+  local topHotspots = TVDirectorEngine.getTopHotspots(3)
+  for idx = 1, 3 do
+    local h = topHotspots[idx]
+    if h and h.carIndex >= 0 and h.score > 0 then
+      local _, hName = getDriverNameDisplay(h.carIndex, 16)
+      local hLabel = EventHub.formatDriverLabel(h.carIndex, hName)
+      local hCol = (h.priority <= 1) and COLOR_RED or ((h.priority <= 2) and COLOR_GOLD or COLOR_GREEN)
+      if ui and ui.text then ui.text(string.format("热点 #%d: %s | 精彩度: %.1f | ", idx, hLabel, h.score)) end
+      if ui and ui.sameLine then ui.sameLine() end
+      drawInlineColored(hCol, string.format("[%s]", h.reason))
+      if ui and ui.sameLine then ui.sameLine() end
+      if ui and ui.button and ui.button(string.format("直切镜头##force_cut_%d", idx)) then
+        TVDirectorEngine.forceCut(h.carIndex, nil, "MANUAL_UI_CUT", 1, 8.0)
+      end
+      setTooltip("立即将 TV 转播镜头直接切换至此处战况焦点")
     end
   end
 end
