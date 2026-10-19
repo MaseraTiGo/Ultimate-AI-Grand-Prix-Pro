@@ -739,10 +739,19 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
       local EventHub = require("lib/core/EventHub")
       local dLabel = EventHub.formatDriverLabel(idx, safeExtractDriverName(car))
       EventHub.pushAiEvent(idx, "MISTAKE", string.format("【重压失误】%s 在后车压迫下入弯前轮抱死走大，内线门户大开！", dLabel), "TACTICAL")
+      -- Proactive Team Radio: Alert human player (car 0) if car ahead made an error
+      if behindCar and behindCar.index == 0 then
+        local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
+        RadioVoiceEngine.playRadio("cmd_attack", RadioVoiceEngine.PRIORITY_COMMAND)
+      end
     elseif mTier == MistakeEngine.TIER_3_SEVERE then
       local EventHub = require("lib/core/EventHub")
       local dLabel = EventHub.formatDriverLabel(idx, safeExtractDriverName(car))
       EventHub.pushAiEvent(idx, "SPIN", string.format("【心理崩盘】%s 极度慌乱急躁出弯尾部剧烈甩尾，险些掉头失控！", dLabel), "INCIDENT")
+      if behindCar and behindCar.index == 0 then
+        local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
+        RadioVoiceEngine.playRadio("info_yellow_flag", RadioVoiceEngine.PRIORITY_EMERGENCY)
+      end
     end
     if s.stress > 2.5 or s.pressureCommitment > 0.5 then
       BattleTracker.recordPressureMistake(idx, mType)
@@ -1076,6 +1085,12 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
     s.commitTimer = 0.7
     s.targetAggression = math.min(0.98, (persona.base_aggression or 0.8) + 0.15)
     s.targetCaution = math.max(0.35, (persona.base_caution or 0.8) * 0.55)
+
+    -- Proactive Team Radio: Warn player car (0) when a chasing AI launches an attack
+    if aheadCar.index == 0 and aheadDist < 14.0 then
+      local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
+      RadioVoiceEngine.playRadio("cmd_defend", RadioVoiceEngine.PRIORITY_COMMAND)
+    end
 
     local aggr = persona and persona.base_aggression or 0.75
     -- Two-Phase Feint / Dummy Move: High aggression drivers (> 0.80) feint outside then dive inside

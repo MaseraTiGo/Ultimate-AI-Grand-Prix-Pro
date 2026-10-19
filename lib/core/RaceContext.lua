@@ -37,6 +37,10 @@ M.PIT_STATE_COMPLETED    = "COMPLETED"
 M.PIT_STATE_FAILED       = "FAILED"
 M.PIT_STATE_RETIRED      = "RETIRED"
 
+-- Dual Experience Mode Enums
+M.MODE_DRIVER    = "DRIVER"
+M.MODE_SPECTATOR = "SPECTATOR"
+
 local _raceState = {
   sessionType = "RACE",
   totalLaps = 13,
@@ -50,6 +54,8 @@ local _raceState = {
   leaderIndex = 0,
   leaderSpeedKmh = 200.0,
   trackLengthM = 5000.0,
+  experienceMode = M.MODE_DRIVER,
+  manualModeOverride = nil,
 }
 
 local _compoundsCache = {}
@@ -348,6 +354,26 @@ function M.updateFromSim(sim)
     local dName = safeGetDriverName(idx)
     if dName and dName ~= "" then
       _carStates[idx].driverName = dName
+    end
+  end
+
+  -- Experience Mode Auto-Detection & Resolution:
+  -- If manual override is explicitly set, honor it.
+  -- Otherwise:
+  -- 1. If in Replay (isReplayActive), or player car is retired, auto switch to SPECTATOR.
+  -- 2. If human player car is connected and moving or sitting on track/grid, keep DRIVER mode.
+  if _raceState.manualModeOverride then
+    _raceState.experienceMode = _raceState.manualModeOverride
+  else
+    if _raceState.isReplay then
+      _raceState.experienceMode = M.MODE_SPECTATOR
+    else
+      local pCar = _carStates[0]
+      if pCar and pCar.isRetired then
+        _raceState.experienceMode = M.MODE_SPECTATOR
+      else
+        _raceState.experienceMode = M.MODE_DRIVER
+      end
     end
   end
 end
@@ -832,6 +858,8 @@ function M.reset()
   _raceState.currentLap = 1
   _raceState.flagState = M.FLAG_GREEN
   _raceState.scActive = false
+  _raceState.experienceMode = M.MODE_DRIVER
+  _raceState.manualModeOverride = nil
   for i = 0, MAX_CARS - 1 do
     local s = _carStates[i]
     s.lapCount = 0
@@ -1193,6 +1221,23 @@ function M.setCarWorkOrder(carIndex, workOrder)
   wo.serviced = false
   wo.status = (workOrder.isConfirmed and "CONFIRMED") or (wo.isExplicit and "CONFIGURED") or "PENDING"
   wo.isExecuting = false
+end
+
+--- Get current active experience mode (DRIVER or SPECTATOR)
+---@return string
+function M.getExperienceMode()
+  return _raceState.experienceMode or M.MODE_DRIVER
+end
+
+--- Set or override experience mode
+---@param mode string? "DRIVER" or "SPECTATOR", nil to revert to auto
+function M.setExperienceMode(mode)
+  if mode == M.MODE_DRIVER or mode == M.MODE_SPECTATOR then
+    _raceState.manualModeOverride = mode
+    _raceState.experienceMode = mode
+  else
+    _raceState.manualModeOverride = nil
+  end
 end
 
 return M

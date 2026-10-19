@@ -3746,8 +3746,59 @@ do
   runTest63()
 end
 
+-- ==============================================================================
+-- Test 64: Experience Mode (Driver vs Spectator), Cockpit Safety Lock & Proactive Alerts
+-- ==============================================================================
+do
+  local function runTest64()
+    print("[Test 64] Testing Experience Mode, Cockpit Safety Lock & Proactive Radio Alerts...")
+    local RaceContext = require("lib/core/RaceContext")
+    local TVDirectorEngine = require("lib/broadcast/TVDirectorEngine")
+    local TacticalTicker = require("lib/driver/TacticalTicker")
+    local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
+
+    -- 1. Experience Mode State Machine
+    RaceContext.reset()
+    assertEq(RaceContext.getExperienceMode(), RaceContext.MODE_DRIVER, "Default experience mode is DRIVER")
+    RaceContext.setExperienceMode(RaceContext.MODE_SPECTATOR)
+    assertEq(RaceContext.getExperienceMode(), RaceContext.MODE_SPECTATOR, "Mode transitions to SPECTATOR")
+    RaceContext.setExperienceMode(RaceContext.MODE_DRIVER)
+    assertEq(RaceContext.getExperienceMode(), RaceContext.MODE_DRIVER, "Mode returns to DRIVER")
+
+    -- 2. Cockpit Anti-Interference Lock in TVDirectorEngine
+    TVDirectorEngine.reset()
+    TVDirectorEngine.setEnabled(true)
+    local liveSim = { isReplayActive = false }
+    
+    -- In DRIVER mode with liveSim, step() must return early and NOT advance dwell or execute cuts
+    local dwellBefore = TVDirectorEngine.getDwellTimer()
+    TVDirectorEngine.step(1.0, liveSim)
+    assertEq(TVDirectorEngine.getDwellTimer(), dwellBefore, "Dwell timer does not advance during live driving in DRIVER mode")
+
+    -- In SPECTATOR mode with liveSim, step() must execute
+    RaceContext.setExperienceMode(RaceContext.MODE_SPECTATOR)
+    TVDirectorEngine.step(0.5, liveSim)
+    -- Either dwellTimer executed a cut (reset to 0.0) or dwell advanced to 5.5
+    local dwellAfter = TVDirectorEngine.getDwellTimer()
+    assertTrue(dwellAfter == 0.0 or dwellAfter == 5.5, "TV Director executed step logic in SPECTATOR mode")
+
+    -- 3. Proactive Team Radio Alerts on Technical Mistakes
+    -- Step AI car 1 attacking human player car 0 (aheadCar.index == 0, distance 10m)
+    local aiCar = { index = 1, speedKmh = 160.0, splinePosition = 0.499, position = { x = 0, y = 0, z = 0 } }
+    local playerAhead = { index = 0, speedKmh = 155.0, splinePosition = 0.500, position = { x = 0, y = 0, z = 10 } }
+    local personaAggr = { base_caution = 0.3, base_aggression = 0.9 }
+    TacticalTicker.stepCar(aiCar, playerAhead, nil, personaAggr, 0.0, { currentLap = 3 }, 0.1)
+
+    assertEq(RadioVoiceEngine.getLastPlayedKey(), "cmd_defend", "Proactive team radio triggered cmd_defend when AI attacks player car 0")
+
+    RaceContext.setExperienceMode(RaceContext.MODE_DRIVER)
+    print("  -> Passed: Experience Mode, Cockpit Safety Lock & Proactive Radio Alerts verified.")
+  end
+  runTest64()
+end
+
 print("==================================================================")
-print("  ALL 63 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
+print("  ALL 64 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
 print("==================================================================")
 
 

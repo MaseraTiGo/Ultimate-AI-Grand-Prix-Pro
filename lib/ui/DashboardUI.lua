@@ -487,31 +487,53 @@ function M.renderMain(perfMs, activeAiCount)
   end
   drawInlineColored(wCol, wText)
 
-  ui.separator()
-
-  -- Modern Pill Navigation Tabs (Clean, distinct, no brackets)
-  if drawPillTabButton("  1. 实时战况  ##tab_1", _selectedTab == 1, "全场活跃 AI 赛车与玩家第一人称微观遥测矩阵") then _selectedTab = 1 end
-  ui.sameLine()
-  if drawPillTabButton("  2. 车队指挥  ##tab_2", _selectedTab == 2, "进站窗口监控、动态油耗与车队无线电指令下达") then _selectedTab = 2 end
-  ui.sameLine()
-  if drawPillTabButton("  3. 策略工坊  ##tab_3", _selectedTab == 3, "全场停站圈数拆解、进站窗口计算与全局策略应用") then _selectedTab = 3 end
-  ui.sameLine()
-  if drawPillTabButton("  4. 车手配置  ##tab_4", _selectedTab == 4, "7D 连续 DNA 个性基因覆写与车手风格矩阵") then _selectedTab = 4 end
-  ui.sameLine()
-  if drawPillTabButton("  5. 诊断日志  ##tab_5", _selectedTab == 5, "系统底层有界环形诊断事件流") then _selectedTab = 5 end
-  ui.sameLine()
-  if drawPillTabButton("  6. 智能导播  ##tab_6", _selectedTab == 6, "智能实时导播系统控制台：镜头节奏配置、转播风格切换、实时热点雷达与手动直切") then _selectedTab = 6 end
-  ui.sameLine()
-  if drawPillTabButton("  7. 行为博弈大屏  ##tab_7", _selectedTab == 7, "基于 COBAL 体系量化的 AI 攻防对决、缠斗时长、超车统计与原生对比改善大屏") then _selectedTab = 7 end
-
-  -- Single Master Toggle Button (Modern styled pill)
+  -- Experience Mode Selector & Director Pill (Modern styled pills)
   if ui and ui.sameLine then ui.sameLine() end
+  local expMode = RaceContext.getExperienceMode and RaceContext.getExperienceMode() or "DRIVER"
+  local isDriver = (expMode == "DRIVER")
+  local modeBtnText = isDriver and "🏁 车手沉浸模式##exp_mode_btn" or "📻 围场领队模式##exp_mode_btn"
+  local modeBtnBg = isDriver and COLOR_BTN_ATTACK or COLOR_BTN_PUSH
+  local modeBtnTxt = COLOR_WHITE
+  if drawActionButton(modeBtnText, modeBtnBg, modeBtnTxt, "点击切换体验模式：【车手沉浸模式】专为方向盘驾驶设计（智能导播物理锁死，极简战术HUD，车队主动语音汇报，0鼠标干预）；【围场领队模式】专为观战/回放设计（全景导播运镜、Pit Wall控制台与COBAL大屏）。") then
+    RaceContext.setExperienceMode(isDriver and "SPECTATOR" or "DRIVER")
+  end
+
+  ui.sameLine()
   local isDirectorOn = TVDirectorEngine.isEnabled()
   local toggleBtnText = isDirectorOn and "🎥 导播: 运行中##top_tv_dir_btn" or "🎥 导播: 已关闭##top_tv_dir_btn"
   local dirBtnBg = isDirectorOn and COLOR_BTN_SAVE or COLOR_BTN_TAB_IDLE
   local dirBtnTxt = isDirectorOn and COLOR_WHITE or COLOR_MUTED
-  if drawActionButton(toggleBtnText, dirBtnBg, dirBtnTxt, "一键开启或关闭智能实时导播（默认关闭）。开启后系统根据全场攻防热度与突发失误自主运镜。") then
+  if drawActionButton(toggleBtnText, dirBtnBg, dirBtnTxt, "一键开启或关闭智能实时导播（默认关闭）。注：在【车手沉浸模式】下导播自动硬件级静默，确保驾驶视线绝对安全。") then
     TVDirectorEngine.toggleEnabled()
+  end
+
+  ui.separator()
+
+  -- Modern Pill Navigation Tabs (Clean, distinct, no brackets)
+  if isDriver then
+    -- DRIVER MODE: Minimalist, driver-focused navigation tabs
+    if drawPillTabButton("  🏁 座舱战术HUD  ##tab_1", _selectedTab == 1, "轻量化驾驶者座舱微型看板，前后近距车距与心态警报") then _selectedTab = 1 end
+    ui.sameLine()
+    if drawPillTabButton("  📊 全场攻防大屏  ##tab_7", _selectedTab == 7, "基于 COBAL 体系量化的全场 AI 激烈攻防与改善对比大屏") then _selectedTab = 7 end
+    ui.sameLine()
+    if drawPillTabButton("  ⚙ 车手基因库  ##tab_4", _selectedTab == 4, "7D 连续 DNA 个性基因与车手模版风格矩阵") then _selectedTab = 4 end
+    ui.sameLine()
+    if drawPillTabButton("  🛠 系统日志  ##tab_5", _selectedTab == 5, "系统底层有界环形诊断事件流") then _selectedTab = 5 end
+  else
+    -- SPECTATOR / TEAM PRINCIPAL MODE: Complete 7-tab command suite
+    if drawPillTabButton("  1. 实时战况  ##tab_1", _selectedTab == 1, "全场活跃 AI 赛车与玩家第一人称微观遥测矩阵") then _selectedTab = 1 end
+    ui.sameLine()
+    if drawPillTabButton("  2. 车队指挥  ##tab_2", _selectedTab == 2, "进站窗口监控、动态油耗与车队无线电指令下达") then _selectedTab = 2 end
+    ui.sameLine()
+    if drawPillTabButton("  3. 策略工坊  ##tab_3", _selectedTab == 3, "全场停站圈数拆解、进站窗口计算与全局策略应用") then _selectedTab = 3 end
+    ui.sameLine()
+    if drawPillTabButton("  4. 车手配置  ##tab_4", _selectedTab == 4, "7D 连续 DNA 个性基因覆写与车手风格矩阵") then _selectedTab = 4 end
+    ui.sameLine()
+    if drawPillTabButton("  5. 诊断日志  ##tab_5", _selectedTab == 5, "系统底层有界环形诊断事件流") then _selectedTab = 5 end
+    ui.sameLine()
+    if drawPillTabButton("  6. 智能导播  ##tab_6", _selectedTab == 6, "智能实时导播系统控制台：镜头节奏配置、转播风格切换、实时热点雷达与手动直切") then _selectedTab = 6 end
+    ui.sameLine()
+    if drawPillTabButton("  7. 行为博弈大屏  ##tab_7", _selectedTab == 7, "基于 COBAL 体系量化的 AI 攻防对决、缠斗时长、超车统计与原生对比改善大屏") then _selectedTab = 7 end
   end
 
   ui.separator()
@@ -540,7 +562,14 @@ end
 -- 5. Tab 1: Live HUD (Player & Dynamic AI Telemetry Matrix)
 --------------------------------------------------------------------------------
 function M.renderLiveHudTab()
-  drawTextColored(COLOR_CYAN, "实时赛道战况与遥测 (LIVE RACING TELEMETRY)")
+  local expMode = RaceContext.getExperienceMode and RaceContext.getExperienceMode() or "DRIVER"
+  local isDriver = (expMode == "DRIVER")
+
+  if isDriver then
+    drawTextColored(COLOR_CYAN, "🏁 驾驶者座舱微型战术看板 (COCKPIT MINI-HUD - 0 鼠标干预，全自动博弈)")
+  else
+    drawTextColored(COLOR_CYAN, "实时赛道战况与遥测 (LIVE RACING TELEMETRY)")
+  end
 
   local carStates = RaceContext.getAllCarStates()
 
@@ -573,10 +602,49 @@ function M.renderLiveHudTab()
   ui.sameLine()
   drawInlineColored((pWear > 0.6) and COLOR_RED or COLOR_WHITE, string.format("  胎耗: %4.1f%%", pWear * 100.0))
 
+  -- Driver Mode Dedicated Proximity Radar Card
+  if isDriver then
+    local aheadIdx, aheadDist, behindIdx, behindDist = RaceContext.getNeighbors(0)
+    local aheadStr = "无人"
+    local behindStr = "无人"
+    if aheadIdx >= 0 then
+      local _, aName = getDriverNameDisplay(aheadIdx, 10)
+      aheadStr = string.format("#%02d %s (%.1fm)", aheadIdx + 1, aName, aheadDist)
+    end
+    if behindIdx >= 0 then
+      local _, bName = getDriverNameDisplay(behindIdx, 10)
+      behindStr = string.format("#%02d %s (%.1fm)", behindIdx + 1, bName, behindDist)
+    end
+
+    local plan0 = StrategyCoordinator.getCarPlan(0)
+    local targetLap0 = plan0 and plan0.targetLap or 0
+    local curLap0 = (RaceContext.getRaceState().currentLap or 1)
+    local pitNotice = (targetLap0 > 0 and (targetLap0 - curLap0) <= 2) and string.format("📦 进站窗口: 第%d圈 (剩余%d圈)", targetLap0, math.max(0, targetLap0 - curLap0)) or "🍃 策略窗口: 稳定巡航"
+
+    ui.offsetCursorY(2)
+    drawInlineColored(COLOR_CYAN, "  前车追击: ")
+    ui.sameLine()
+    drawInlineColored((aheadDist < 15.0) and COLOR_GOLD or COLOR_WHITE, aheadStr)
+    ui.sameLine()
+    ui.text("  |  ")
+    ui.sameLine()
+    drawInlineColored(COLOR_CYAN, "后车防守: ")
+    ui.sameLine()
+    drawInlineColored((behindDist < 15.0) and COLOR_RED or COLOR_WHITE, behindStr)
+    ui.sameLine()
+    ui.text("  |  ")
+    ui.sameLine()
+    drawInlineColored(COLOR_GREEN, pitNotice)
+  end
+
   ui.separator()
 
   -- 2. Dynamic AI Driver Telemetry Matrix
-  drawTextColored(COLOR_CYAN, "全场活跃 AI 战术姿态与心理博弈矩阵 (点击车手行可直接选中车队指挥目标)")
+  if isDriver then
+    drawTextColored(COLOR_CYAN, "全网 AI 对决与心理博弈看板 (全自主博弈中，无须手动干预)")
+  else
+    drawTextColored(COLOR_CYAN, "全场活跃 AI 战术姿态与心理博弈矩阵 (点击车手行可直接选中车队指挥目标)")
+  end
 
   if _activeAiCount == 0 then
     drawTextColored(COLOR_MUTED, "  待命状态: 当前单人练习模式，暂未发现其他 AI 赛车。")

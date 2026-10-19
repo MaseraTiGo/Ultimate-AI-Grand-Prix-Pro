@@ -796,6 +796,15 @@ function M.step(dt, sim)
     return -- Yield to human player during quiet window
   end
 
+  -- Cockpit Anti-Interference Lock:
+  -- In DRIVER mode during live driving, camera switching is strictly locked
+  -- to prevent dangerous camera cuts mid-corner that would cause crashes.
+  -- Director is active when in SPECTATOR mode, or if simulated in testing.
+  local expMode = RaceContext.getExperienceMode and RaceContext.getExperienceMode()
+  if expMode == RaceContext.MODE_DRIVER and sim and not sim.isReplayActive then
+    return
+  end
+
   -- If director is disabled, do nothing further
   if not _enabled then return end
 
