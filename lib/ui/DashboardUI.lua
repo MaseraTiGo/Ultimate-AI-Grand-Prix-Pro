@@ -762,8 +762,8 @@ function M.renderPitWallTab()
   end
   setTooltip("切换至下一位活跃 AI 车手")
 
-  -- Action Command Pads (F1 Pit Wall Colored Pads)
-  ui.sameLine()
+  -- Action Command Pads (F1 Pit Wall Colored Pads - Dedicated Row)
+  ui.offsetCursorY(4)
   if drawActionButton("▲ PUSH 推进##cmd_push", COLOR_BTN_PUSH, COLOR_WHITE, "指令赛车提升激进侵略度，全力向前推进") then
     StrategyCoordinator.issueRadioOrder(_selectedCarForRadio, "PUSH")
   end

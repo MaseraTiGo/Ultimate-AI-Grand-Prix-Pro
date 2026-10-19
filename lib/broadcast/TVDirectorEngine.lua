@@ -25,6 +25,7 @@
 
 local RaceContext = require("lib/core/RaceContext")
 local EventHub = require("lib/core/EventHub")
+local BattleTracker = require("lib/driver/BattleTracker")
 
 local M = {}
 
@@ -448,6 +449,11 @@ local function computeHotspots(raceState, recentEvents)
   local currentLap = raceState and raceState.currentLap or 1
   local isFinalLaps = (totalLaps > 0 and (totalLaps - currentLap) <= 3)
 
+  -- Query hottest active duel pair from BattleTracker
+  local hotDuel = BattleTracker.getHottestDuel and BattleTracker.getHottestDuel()
+  local hotCarA = (hotDuel and hotDuel.active and hotDuel.carA) or -1
+  local hotCarB = (hotDuel and hotDuel.active and hotDuel.carB) or -1
+
   for i = 0, carsCount - 1 do
     local slot = _hotspots[i]
     slot.carIndex = i
@@ -479,9 +485,18 @@ local function computeHotspots(raceState, recentEvents)
         wPos = 1.20
       end
 
-      -- 2. Battle Proximity Gap Score
-      local gap = cState.gapToAhead or 999.0
+      -- 2. Battle Proximity Gap Score (with physical distance fallback)
+      local gap = cState.gapAheadSec or cState.gapToAhead or 999.0
       local gapBehind = cState.gapBehindSec or 999.0
+      if gap >= 900.0 and aheadDist > 0.0 and aheadDist < 50.0 then
+        -- Synthesize proxy gap from physical distance if time delta not yet converged
+        local speedMs = math.max(10.0, (cState.speedKmh or 100.0) / 3.6)
+        gap = aheadDist / speedMs
+      end
+      if gapBehind >= 900.0 and behindDist > 0.0 and behindDist < 50.0 then
+        local speedMs = math.max(10.0, (cState.speedKmh or 100.0) / 3.6)
+        gapBehind = behindDist / speedMs
+      end
       slot.gap = gap
 
       local sGap = 0.0
@@ -566,7 +581,7 @@ local function computeHotspots(raceState, recentEvents)
         subMode = M.DRIVABLE_DASH
         rivalIdx = behindIdx
         dur = 5.5
-        baseScore = baseScore + 32.0
+        baseScore = baseScore + 36.0
       elseif _prefDefendRear and (skill == "DEFENSIVE_COVER" or skill == "WEAVING_DEFENSE" or tact == "DEFEND" or (tact == "DEFENDING" and behindDist < 16.0)) then
         -- Defender Rear Mirror / Chase Dual-Car Framing View
         sit = M.SITUATION_DEFEND_REAR
@@ -609,6 +624,29 @@ local function computeHotspots(raceState, recentEvents)
           subMode = 0
           dur = 9.0
         end
+      end
+
+      -- 5b. Tactical Skill Duel Priority Boost (Ensure intense AI battles get camera spotlight)
+      if tact == "ATTACK" or tact == "OVERTAKING" or skill == "POUNCE_PASS" or skill == "SWITCHBACK" or skill == "LATE_BRAKE_DIVE" then
+        baseScore = baseScore + 25.0
+      elseif tact == "DEFEND" or tact == "DEFENDING" or skill == "GENTLE_SQUEEZE" or skill == "TOW_WEAVE" or skill == "DEFENSIVE_COVER" then
+        baseScore = baseScore + 20.0
+      end
+
+      -- 5c. Hottest Active Duel Spotlight Bonus
+      if i == hotCarA or i == hotCarB then
+        baseScore = baseScore + 22.0
+        if prio > M.PRIORITY_BATTLE then prio = M.PRIORITY_BATTLE end
+        if rivalIdx < 0 then
+          rivalIdx = (i == hotCarA) and hotCarB or hotCarA
+        end
+      end
+
+      -- 5d. Player Cruise Bias Equalizer:
+      -- If car 0 (human player) is in a pure cruise without close rival, reduce its base weight
+      -- so active duels across the AI field receive prominent TV coverage
+      if i == 0 and prio == M.PRIORITY_ATMOSPHERE and _style ~= M.STYLE_STAR_CAM then
+        baseScore = baseScore * 0.5
       end
 
       -- 6. Narrative Coherence Bonus (Storytelling Arc)
