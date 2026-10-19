@@ -87,6 +87,7 @@ function script.init()
   ControlTelemetry.init()
   RadioVoiceEngine.init()
   RadioVoiceEngine.reset()
+  DriverChatterEngine.reset()
   TVDirectorEngine.init()
 
   local sim = nil

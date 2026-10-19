@@ -406,6 +406,35 @@ local _woRefuelLiters = 0.0
 local _selectedCarForPersona = nil
 
 --------------------------------------------------------------------------------
+-- 3.5 Global Team Radio Floating Graphic Card (Visible across all tabs)
+--------------------------------------------------------------------------------
+function M.renderRadioChatterCard()
+  local DriverChatterEngine = require("lib/audio/DriverChatterEngine")
+  if not DriverChatterEngine or not DriverChatterEngine.isChatterActive() then return end
+
+  local chatter = DriverChatterEngine.getActiveChatter()
+  local cName = chatter.driverName or "DRIVER"
+  local cTag = chatter.tag or "RADIO"
+  local cTxt = chatter.textZh or chatter.textEn or ""
+  local tagCol = (chatter.priority == 3) and COLOR_RED or ((chatter.priority == 2) and COLOR_GOLD or COLOR_GREEN)
+
+  if ui and ui.offsetCursorY then ui.offsetCursorY(2) end
+  drawInlineColored(COLOR_CYAN, "╭─ 📻 [TEAM RADIO] ")
+  if ui and ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_WHITE, string.format("#%02d %-12s", chatter.carIndex + 1, cName:sub(1, 12)))
+  if ui and ui.sameLine then ui.sameLine() end
+  drawInlineColored(tagCol, string.format("【%s】", cTag))
+  if ui and ui.sameLine then ui.sameLine() end
+  local waveStr = (math.floor(chatter.waveformAnim) % 2 == 0) and " ▰▰▱▰▱▰ " or " ▱▰▰▱▰▰ "
+  drawInlineColored(COLOR_GREEN, waveStr)
+  if ui and ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_CYAN, "─╮")
+
+  if ui and ui.text then ui.text(string.format("│  \"%s\"", cTxt)) end
+  drawTextColored(COLOR_CYAN, "╰──────────────────────────────────────────╯")
+end
+
+--------------------------------------------------------------------------------
 -- 4. Main Header & Entry Point
 --------------------------------------------------------------------------------
 function M.renderMain(perfMs, activeAiCount)
@@ -538,6 +567,9 @@ function M.renderMain(perfMs, activeAiCount)
 
   ui.separator()
 
+  -- Top-level Paddock Radio Popup Card (Rendered across all tabs and spectator modes)
+  M.renderRadioChatterCard()
+
   if _selectedTab == 1 then
     M.renderLiveHudTab()
   elseif _selectedTab == 2 then
@@ -636,31 +668,6 @@ function M.renderLiveHudTab()
     ui.text("  |  ")
     ui.sameLine()
     drawInlineColored(COLOR_GREEN, pitNotice)
-  end
-
-  -- F1 Broadcast Team Radio Floating Graphic Card
-  local DriverChatterEngine = require("lib/audio/DriverChatterEngine")
-  if DriverChatterEngine and DriverChatterEngine.isChatterActive() then
-    local chatter = DriverChatterEngine.getActiveChatter()
-    local cName = chatter.driverName or "DRIVER"
-    local cTag = chatter.tag or "RADIO"
-    local cTxt = chatter.textZh or chatter.textEn or ""
-    local tagCol = (chatter.priority == 3) and COLOR_RED or ((chatter.priority == 2) and COLOR_GOLD or COLOR_GREEN)
-    
-    if ui and ui.offsetCursorY then ui.offsetCursorY(4) end
-    drawInlineColored(COLOR_CYAN, "╭─ 📻 [TEAM RADIO] ")
-    if ui and ui.sameLine then ui.sameLine() end
-    drawInlineColored(COLOR_WHITE, string.format("#%02d %-12s", chatter.carIndex + 1, cName:sub(1, 12)))
-    if ui and ui.sameLine then ui.sameLine() end
-    drawInlineColored(tagCol, string.format("【%s】", cTag))
-    if ui and ui.sameLine then ui.sameLine() end
-    local waveStr = (math.floor(chatter.waveformAnim) % 2 == 0) and " ▰▰▱▰▱▰ " or " ▱▰▰▱▰▰ "
-    drawInlineColored(COLOR_GREEN, waveStr)
-    if ui and ui.sameLine then ui.sameLine() end
-    drawInlineColored(COLOR_CYAN, "─╮")
-
-    if ui and ui.text then ui.text(string.format("│  \"%s\"", cTxt)) end
-    drawTextColored(COLOR_CYAN, "╰──────────────────────────────────────────╯")
   end
 
   ui.separator()

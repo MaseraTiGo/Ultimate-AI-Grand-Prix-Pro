@@ -2713,8 +2713,8 @@ do
     RadioVoiceEngine.step(0.15)
     assertEq(RadioVoiceEngine.getState(), RadioVoiceEngine.STATE_PLAYING_VOICE, "Engine transitions to STATE_PLAYING_VOICE")
 
-    -- Step past speech clip (1.6s)
-    RadioVoiceEngine.step(1.70)
+    -- Step past speech clip (cmd_push is 2.64s in en)
+    RadioVoiceEngine.step(2.70)
     assertEq(RadioVoiceEngine.getState(), RadioVoiceEngine.STATE_BEEP_CLOSE, "Engine transitions to STATE_BEEP_CLOSE")
 
     -- Step past close beep (0.09s)
@@ -3823,36 +3823,50 @@ do
     assertTrue(card1.textZh:len() > 0, "Chinese dialogue populated")
     assertTrue(card1.tag == "HYPED" or card1.tag == "TAUNT", "Tag matches aggression context")
 
-    -- 2. Anti-Fatigue Silence Gates
-    -- Attempting immediate second chatter from any car should be blocked by global silence
-    local ok2 = DriverChatterEngine.triggerChatter(2, DriverChatterEngine.SIT_CRASH, personaAggro, "Charles Leclerc")
-    assertTrue(not ok2, "Second immediate chatter blocked by global silence gate")
+    -- 2. Anti-Fatigue Silence Gates & Emergency Bypass
+    -- Non-emergency chatter is blocked by 6s global silence
+    local personaIce = { base_aggression = 0.6, base_caution = 0.5, pressure_resist = 0.92 }
+    local okBlocked = DriverChatterEngine.triggerChatter(2, DriverChatterEngine.SIT_SQUEEZED, personaIce, "Kimi Raikkonen")
+    assertTrue(not okBlocked, "Normal chatter blocked by global silence gate")
 
-    -- Step engine to advance timers past global silence
-    for _ = 1, 130 do
+    -- SIT_CRASH is EMERGENCY priority: bypasses global silence
+    local okCrash = DriverChatterEngine.triggerChatter(2, DriverChatterEngine.SIT_CRASH, personaAggro, "Charles Leclerc")
+    assertTrue(okCrash, "EMERGENCY crash chatter successfully bypasses global silence")
+
+    -- Step engine to advance timers past 6s global silence
+    for _ = 1, 70 do
       DriverChatterEngine.step(0.1)
     end
-    assertEq(DriverChatterEngine.getGlobalSilenceTimer(), 0.0, "Global silence expired after 13s")
+    assertEq(DriverChatterEngine.getGlobalSilenceTimer(), 0.0, "Global silence expired after 7s")
 
     -- Attempting chatter from Car 1 should STILL be blocked by per-car 45s cooldown
     local okCar1 = DriverChatterEngine.triggerChatter(1, DriverChatterEngine.SIT_OVERTAKE, personaAggro, "Max Verstappen")
     assertTrue(not okCar1, "Car 1 blocked by its 45s cooldown")
 
-    -- Car 2 should now succeed
-    local personaIce = { base_aggression = 0.6, base_caution = 0.5, pressure_resist = 0.92 }
-    local ok3 = DriverChatterEngine.triggerChatter(2, DriverChatterEngine.SIT_SQUEEZED, personaIce, "Kimi Raikkonen")
-    assertTrue(ok3, "Car 2 chatter succeeded after global silence lifted")
+    -- Car 3 should now succeed for all situational categories
+    local ok3 = DriverChatterEngine.triggerChatter(3, DriverChatterEngine.SIT_SQUEEZED, personaIce, "Kimi Raikkonen")
+    assertTrue(ok3, "Car 3 chatter succeeded after global silence lifted")
 
     local card2 = DriverChatterEngine.getActiveChatter()
     assertEq(card2.archetype, DriverChatterEngine.ARCHETYPE_ICE_COLD, "Ice cold archetype correctly resolved")
     assertEq(card2.tag, "IRONIC", "Ice cold archetype uses IRONIC tag on squeeze")
 
-    -- 3. Verify DashboardUI Radio Card renders cleanly with active chatter
-    local okUI, errUI = pcall(DashboardUI.renderLiveHudTab)
+    -- Test other situations
+    DriverChatterEngine.reset()
+    assertTrue(DriverChatterEngine.triggerChatter(4, DriverChatterEngine.SIT_BLUE_FLAG, personaAggro, "Max Verstappen"), "SIT_BLUE_FLAG dispatches")
+    DriverChatterEngine.reset()
+    assertTrue(DriverChatterEngine.triggerChatter(5, DriverChatterEngine.SIT_TYRE_CLIFF, personaAggro, "Lewis Hamilton"), "SIT_TYRE_CLIFF dispatches")
+    DriverChatterEngine.reset()
+    assertTrue(DriverChatterEngine.triggerChatter(6, DriverChatterEngine.SIT_UNDERCUT, personaIce, "Fernando Alonso"), "SIT_UNDERCUT dispatches")
+    DriverChatterEngine.reset()
+    assertTrue(DriverChatterEngine.triggerChatter(7, DriverChatterEngine.SIT_VICTORY, personaAggro, "Max Verstappen"), "SIT_VICTORY dispatches")
+
+    -- 3. Verify DashboardUI Global Radio Card renders cleanly across tabs
+    local okUI, errUI = pcall(DashboardUI.renderMain, 0.5, 10)
     if not okUI then
-      print("renderLiveHudTab error: " .. tostring(errUI))
+      print("renderMain error: " .. tostring(errUI))
     end
-    assertTrue(okUI, "DashboardUI renders live HUD with active F1 radio card without crash")
+    assertTrue(okUI, "DashboardUI renders global main UI with active F1 radio card without crash")
 
     DriverChatterEngine.reset()
     print("  -> Passed: Anthropomorphic AI Driver Psyche & Radio Chatter Corpus verified.")

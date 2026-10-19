@@ -143,6 +143,11 @@ for i = 0, MAX_CARS - 1 do
     lineVariationOffset = 0.0,    -- subtle natural wandering in free air (-0.05 ~ +0.05)
     variationPhase = math.random() * 6.28,
     isCalmRecovery = false,
+
+    -- Chatter Event Trigger State Trackers
+    chatterTyreReported = false,
+    chatterBlueReported = false,
+    chatterVictoryReported = false,
   }
 end
 
@@ -549,8 +554,17 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
     s.targetAggression = 0.3
     s.stress = s.stress - dt * 0.5
     if s.stress < 0.0 then s.stress = 0.0 end
+
+    if not s.chatterBlueReported then
+      s.chatterBlueReported = true
+      local DriverChatterEngine = require("lib/audio/DriverChatterEngine")
+      DriverChatterEngine.triggerChatter(idx, DriverChatterEngine.SIT_BLUE_FLAG, persona, safeExtractDriverName(car))
+    end
+
     TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
     return s
+  else
+    s.chatterBlueReported = false
   end
 
   -- 1. Handle Active Recovery / Mistake / Switchback States
@@ -690,8 +704,15 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
 
   -- Update Dynamic Momentum & Flow State (-1.0 Tilt to +1.0 Flow)
   local momentumDelta = 0.0
-  if raceContext and raceContext.tyreWear and raceContext.tyreWear > 0.65 then
+  if raceContext and raceContext.tyreWear and raceContext.tyreWear > 0.60 then
     momentumDelta = momentumDelta - dt * 0.25
+    if not s.chatterTyreReported and raceContext.tyreWear >= 0.65 then
+      s.chatterTyreReported = true
+      local DriverChatterEngine = require("lib/audio/DriverChatterEngine")
+      DriverChatterEngine.triggerChatter(idx, DriverChatterEngine.SIT_TYRE_CLIFF, persona, safeExtractDriverName(car))
+    end
+  elseif raceContext and raceContext.tyreWear and raceContext.tyreWear < 0.20 then
+    s.chatterTyreReported = false
   end
   if raceContext and raceContext.isBlueFlagged then
     momentumDelta = momentumDelta - dt * 0.30
@@ -941,7 +962,11 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
         end
 
         local DriverChatterEngine = require("lib/audio/DriverChatterEngine")
-        DriverChatterEngine.triggerChatter(idx, DriverChatterEngine.SIT_DOGFIGHT, persona, safeExtractDriverName(car))
+        if overlap > 0.45 or (behindDist < 3.8 and math.abs(behindRelX) < 1.8) then
+          DriverChatterEngine.triggerChatter(idx, DriverChatterEngine.SIT_SQUEEZED, persona, safeExtractDriverName(car))
+        else
+          DriverChatterEngine.triggerChatter(idx, DriverChatterEngine.SIT_DOGFIGHT, persona, safeExtractDriverName(car))
+        end
       end
 
       local baseC = persona.base_caution or 1.0
@@ -1201,6 +1226,14 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
     s.state = M.STATE_DEFEND
     -- targetCaution and targetAggression already set by DEFEND above
   end
+
+  -- Victory check (Checker flag / Last Lap finish line crossed)
+  if raceContext and raceContext.isLastLap and not s.chatterVictoryReported and (car.splinePosition or 0) > 0.95 then
+    s.chatterVictoryReported = true
+    local DriverChatterEngine = require("lib/audio/DriverChatterEngine")
+    DriverChatterEngine.triggerChatter(idx, DriverChatterEngine.SIT_VICTORY, persona, safeExtractDriverName(car), true)
+  end
+
   evaluateBodyLanguage(s, car, aheadCar, behindCar, s.aheadDist or 999.0, s.behindDist or 999.0, persona, rivalryScore, raceContext, dt)
   TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, tyreWear, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
   return s

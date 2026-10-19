@@ -57,7 +57,7 @@ local MAX_SLOTS = 32
 
 -- Global timing & arbitration
 local _globalSilenceTimer = 0.0
-local _globalSilenceInterval = 12.0 -- Min seconds between ANY two radio chatters
+local _globalSilenceInterval = 6.0 -- Min seconds between normal radio chatters (6s responsive window)
 local _carCooldowns = {}
 local _carRecentHistories = {} -- Circular buffer of last 3 line indices per car
 for i = 0, MAX_SLOTS - 1 do
@@ -289,19 +289,12 @@ local function triggerVoiceAudio(situation, priority)
   local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
   if not RadioVoiceEngine or not RadioVoiceEngine.isEnabled() then return end
 
-  -- Play authentic F1 radio chirp / command cues based on situation
-  if situation == M.SIT_CRASH or situation == M.SIT_SQUEEZED then
+  -- Always emit authentic F1 radio chirp (beep_open) for incoming driver chatter
+  RadioVoiceEngine.playChirp("open")
+
+  -- If emergency situation, dispatch high priority radio flag
+  if priority == M.PRIO_EMERGENCY then
     RadioVoiceEngine.playRadio("info_yellow_flag", RadioVoiceEngine.PRIORITY_EMERGENCY)
-  elseif situation == M.SIT_OVERTAKE then
-    RadioVoiceEngine.playRadio("info_overtake", RadioVoiceEngine.PRIORITY_COMMAND)
-  elseif situation == M.SIT_BLUE_FLAG then
-    RadioVoiceEngine.playRadio("info_blue_flag", RadioVoiceEngine.PRIORITY_INFO)
-  elseif situation == M.SIT_TYRE_CLIFF then
-    RadioVoiceEngine.playRadio("info_tyre_cliff", RadioVoiceEngine.PRIORITY_INFO)
-  elseif situation == M.SIT_UNDERCUT then
-    RadioVoiceEngine.playRadio("info_undercut", RadioVoiceEngine.PRIORITY_COMMAND)
-  elseif situation == M.SIT_DOGFIGHT then
-    RadioVoiceEngine.playRadio("cmd_defend", RadioVoiceEngine.PRIORITY_COMMAND)
   end
 end
 
@@ -318,18 +311,19 @@ function M.triggerChatter(carIndex, situation, persona, driverName, force)
   if not carIndex or carIndex < 0 or carIndex >= MAX_SLOTS then return false end
   situation = situation or M.SIT_DOGFIGHT
 
-  -- 1. Anti-Fatigue Silence Gates (Skip if forced, e.g. for testing)
-  if not force then
-    if _globalSilenceTimer > 0.0 then return false end
-    if (_carCooldowns[carIndex] or 0.0) > 0.0 then return false end
-  end
-
   local sitBucket = CORPUS[situation]
   if not sitBucket then return false end
 
   local arch = resolveArchetype(persona)
   local list = sitBucket[arch] or sitBucket[M.ARCHETYPE_STRATEGIC] or sitBucket[M.ARCHETYPE_AGGRESSIVE]
   if not list or #list == 0 then return false end
+
+  -- 1. Anti-Fatigue Silence Gates (Skip if forced or if EMERGENCY priority)
+  local isEmergency = (situation == M.SIT_CRASH)
+  if not force and not isEmergency then
+    if _globalSilenceTimer > 0.0 then return false end
+    if (_carCooldowns[carIndex] or 0.0) > 0.0 then return false end
+  end
 
   -- 2. Multi-Entropy Randomization with 3-step repeat elimination
   local hist = _carRecentHistories[carIndex]

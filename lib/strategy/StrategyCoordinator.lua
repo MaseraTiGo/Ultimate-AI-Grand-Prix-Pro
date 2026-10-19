@@ -522,6 +522,8 @@ function M.stepStrategy(dt)
               end
               if cState.pendingWorkOrder then cState.pendingWorkOrder.serviced = true end
               Logger.info("PIT", string.format("%s completed pit stop (Refilled: %.1fL, Next Stint Ready, Cold Out-Lap Active)", dLabel, refillLiters))
+              local DriverChatterEngine = require("lib/audio/DriverChatterEngine")
+              DriverChatterEngine.triggerChatter(i, DriverChatterEngine.SIT_UNDERCUT, persona, cState.driverName)
             end
           end
 

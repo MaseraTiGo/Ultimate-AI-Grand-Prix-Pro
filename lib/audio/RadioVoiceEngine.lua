@@ -41,20 +41,44 @@ local DURATION_BEEP_OPEN = 0.12
 local DURATION_BEEP_CLOSE = 0.09
 local DURATION_COOLDOWN = 0.25
 
--- Standard duration fallbacks when getDuration() is unavailable
+-- Accurate duration tables (seconds, measured exactly from master wav assets)
 local _clipDurations = {
-  cmd_box = 1.8,
-  cmd_push = 1.6,
-  cmd_save = 2.4,
-  cmd_attack = 2.0,
-  cmd_defend = 2.0,
-  info_undercut = 2.2,
-  info_safety_car = 2.8,
-  info_yellow_flag = 1.8,
-  info_blue_flag = 2.2,
-  info_tyre_cliff = 2.2,
-  info_overtake = 1.5,
+  en = {
+    cmd_attack = 3.50,
+    cmd_box = 3.59,
+    cmd_defend = 3.75,
+    cmd_push = 2.64,
+    cmd_save = 3.99,
+    info_blue_flag = 3.82,
+    info_overtake = 2.62,
+    info_safety_car = 4.81,
+    info_tyre_cliff = 3.71,
+    info_undercut = 3.93,
+    info_yellow_flag = 2.96,
+  },
+  zh = {
+    cmd_attack = 4.20,
+    cmd_box = 3.14,
+    cmd_defend = 3.70,
+    cmd_push = 3.78,
+    cmd_save = 3.60,
+    info_blue_flag = 3.77,
+    info_overtake = 3.27,
+    info_safety_car = 4.60,
+    info_tyre_cliff = 4.03,
+    info_undercut = 3.94,
+    info_yellow_flag = 3.77,
+  }
 }
+
+local function getClipDuration(key, lang)
+  local l = lang or _language or "en"
+  local langTable = _clipDurations[l] or _clipDurations.en
+  if langTable and langTable[key] then
+    return langTable[key]
+  end
+  return (_clipDurations.en and _clipDurations.en[key]) or 2.5
+end
 
 -- Preallocated Audio Event handles
 local _audioEvents = {
@@ -286,7 +310,7 @@ function M.playRadio(clipKey, priority)
   if not clipKey or clipKey == "NONE" then return false end
 
   local prio = priority or M.PRIORITY_INFO
-  local clipDur = _clipDurations[clipKey] or 2.0
+  local clipDur = getClipDuration(clipKey, _language)
 
   -- Debounce check: 12.0s cooldown per key unless Emergency priority
   local lastT = _lastPlayedTimes[clipKey] or -999.0
@@ -339,7 +363,7 @@ end
 ---@return boolean success
 function M.preview(clipKey)
   local key = (clipKey and clipKey ~= "") and clipKey or "cmd_push"
-  local clipDur = _clipDurations[key] or 1.6
+  local clipDur = getClipDuration(key, _language)
 
   M.stop()
   _activeKey = key
@@ -369,8 +393,15 @@ function M.step(dt)
   if _currentState == M.STATE_BEEP_OPEN then
     -- Open beep finished -> start speech clip
     _currentState = M.STATE_PLAYING_VOICE
-    _stateTimer = _activeDuration
-    playClipFile(getClipPath(_language, _activeKey), _volume)
+    local dur = _activeDuration
+    local evt = playClipFile(getClipPath(_language, _activeKey), _volume)
+    if evt and evt.getDuration then
+      local okD, dSec = pcall(evt.getDuration, evt)
+      if okD and type(dSec) == "number" and dSec > 0.5 then
+        dur = dSec + 0.15 -- 150ms natural cadence safety margin
+      end
+    end
+    _stateTimer = dur
 
   elseif _currentState == M.STATE_PLAYING_VOICE then
     -- Speech clip finished -> start close beep
@@ -416,6 +447,21 @@ function M.step(dt)
       _activeDuration = 0.0
     end
   end
+end
+
+--- Play standalone chirp cue (used by driver chatter to signal incoming transmission)
+--- Does not disturb speech state machine if a speech clip is actively playing
+---@param chirpType string? "open" or "close"
+---@return boolean success
+function M.playChirp(chirpType)
+  if not _enabled then return false end
+  local cName = (chirpType == "close") and "beep_close" or "beep_open"
+  -- If radio is already playing speech, don't interrupt speech with a beep
+  if _currentState == M.STATE_PLAYING_VOICE then
+    return false
+  end
+  playClipFile(getCommonPath(cName), _volume)
+  return true
 end
 
 --- Map Radio Command String to Clip Key
