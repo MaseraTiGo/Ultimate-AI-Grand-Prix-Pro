@@ -1,1 +1,79 @@
-﻿powershell.cmd
+# ==============================================================================
+# Ultimate AI Grand Prix Pro - Git Ignore Configuration
+# ==============================================================================
+
+# --- Shell / Temporary Local Scripts ---
+powershell.cmd
+*.cmd
+*.bat.tmp
+*.ps1.tmp
+
+# --- IDEs, Editors & Workspaces ---
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*~
+*.sublime-project
+*.sublime-workspace
+
+# --- Python Build, Cache & Environments ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# --- Lua & LuaJIT Temporary Files ---
+*.luac
+luac.out
+.luacheckcache/
+.emmy/
+
+# --- OS Artifacts & System Files ---
+.DS_Store
+Thumbs.db
+ehthumbs.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+
+# --- Assetto Corsa & CSP Logs / Dumps / Telemetry Dumps ---
+*.log
+*.dmp
+*.crash
+logs/
+crash_dumps/
+telemetry_dumps/
+*.tlog
+
+# --- Scratch / Working Notes ---
+scratch/
+tmp/
+*.tmp
+*.bak

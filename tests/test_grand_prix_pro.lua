@@ -3665,8 +3665,89 @@ do
   runTest62()
 end
 
+-- ==============================================================================
+-- [Test 63] Testing COBAL Metrics, BattleTracker, Fuzzy Commitment & Tab 7 Radar
+-- ==============================================================================
+do
+  local function runTest63()
+    print("[Test 63] Testing COBAL Metrics, BattleTracker, Fuzzy Commitment & Tab 7 Radar...")
+    local BattleTracker = require("lib/driver/BattleTracker")
+    local TacticalTicker = require("lib/driver/TacticalTicker")
+    local DashboardUI = require("lib/ui/DashboardUI")
+    local RaceContext = require("lib/core/RaceContext")
+
+    BattleTracker.reset()
+
+    -- 1. Verify BattleTracker reset state
+    local s0 = BattleTracker.getStats()
+    assertEq(s0.totalDuelTime, 0.0, "Initial duel time is 0")
+    assertEq(s0.completedOvertakes, 0, "Initial completed overtakes is 0")
+    assertEq(s0.activeDuelsCount, 0, "Initial active duels is 0")
+
+    -- 2. Mock race cars in close proximity to simulate a sustained duel
+    local mockCars = {
+      [0] = { index = 0, speedKmh = 120.0, splinePosition = 0.500, position = { x = 0, y = 0, z = 100 } },
+      [1] = { index = 1, speedKmh = 125.0, splinePosition = 0.498, position = { x = 0, y = 0, z = 92 } },
+    }
+    local mockStates = {
+      [0] = { isRetired = false, aheadCarIndex = -1, aheadDist = 999.0, driverName = "Driver 1" },
+      [1] = { isRetired = false, aheadCarIndex = 0, aheadDist = 8.0, driverName = "Driver 2" },
+    }
+
+    local function mockGetCar(idx) return mockCars[idx] end
+    local function mockGetState(idx) return mockStates[idx] end
+
+    -- Step 1: Trigger duel detection
+    BattleTracker.step(0.5, 10.0, 2, mockGetState, mockGetCar)
+    local s1 = BattleTracker.getStats()
+    assertEq(s1.activeDuelsCount, 1, "Active duels detected between Car 1 and Car 0")
+    assertTrue(s1.totalDuelTime >= 0.5, "Duel time accumulated")
+    assertEq(s1.duelEpisodesCount, 1, "One duel episode registered")
+
+    -- Step 2: Simulate overtake by swapping positions and reporting
+    mockStates[1].aheadCarIndex = -1
+    mockStates[1].aheadDist = 999.0
+    mockStates[0].aheadCarIndex = 1
+    mockStates[0].aheadDist = 8.0
+    mockCars[1].splinePosition = 0.505
+    mockCars[0].splinePosition = 0.500
+    BattleTracker.step(0.5, 10.5, 2, mockGetState, mockGetCar)
+    local s2 = BattleTracker.getStats()
+    assertEq(s2.completedOvertakes, 1, "Completed overtake correctly detected and counted")
+
+    -- Step 3: Record combat maneuvers & pressure mistakes
+    BattleTracker.recordSkillExecuted("POUNCE_PASS", 1)
+    BattleTracker.recordSkillExecuted("SWITCHBACK", 0)
+    BattleTracker.recordSkillExecuted("GENTLE_SQUEEZE", 1)
+    BattleTracker.recordPressureMistake(0, "BRAKE_LOCKUP")
+
+    local s3 = BattleTracker.getStats()
+    assertEq(s3.lateBrakeDivesCount, 1, "POUNCE_PASS recorded")
+    assertEq(s3.switchbacksCount, 1, "SWITCHBACK recorded")
+    assertEq(s3.defenseSqueezesCount, 1, "GENTLE_SQUEEZE recorded")
+    assertEq(s3.pressureMistakesCount, 1, "Pressure mistake recorded")
+
+    -- 4. Verify TacticalTicker Fuzzy Commitments in aiState
+    local persona = { base_caution = 0.8, base_aggression = 0.85, pressure_resist = 0.8 }
+    local carA = { index = 1, speedKmh = 120.0, splinePosition = 0.40, position = { x = 0, y = 0, z = 0 } }
+    local carAhead = { index = 0, speedKmh = 115.0, splinePosition = 0.401, position = { x = 0, y = 0, z = 12 } }
+    local aiState = TacticalTicker.stepCar(carA, carAhead, nil, persona, 0.0, { currentLap = 2 }, 0.1)
+
+    assertTrue(aiState.pursuitCommitment > 0.0, "Pursuit commitment ramped up continuously when closing in")
+    assertTrue(type(aiState.lineVariationOffset) == "number", "Line variation offset exists as scalar")
+
+    -- 5. Verify DashboardUI Tab 7 renders cleanly
+    local okTab7 = pcall(DashboardUI.renderBattleRadarTab)
+    assertTrue(okTab7, "DashboardUI.renderBattleRadarTab renders cleanly without exceptions")
+
+    BattleTracker.reset()
+    print("  -> Passed: COBAL Metrics, BattleTracker, Fuzzy Commitment & Tab 7 Radar verified.")
+  end
+  runTest63()
+end
+
 print("==================================================================")
-print("  ALL 62 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
+print("  ALL 63 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
 print("==================================================================")
 
 

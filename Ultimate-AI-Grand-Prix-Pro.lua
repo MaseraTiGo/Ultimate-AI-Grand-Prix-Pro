@@ -27,6 +27,7 @@ local EventHub = require("lib/core/EventHub")
 local ControlTelemetry = require("lib/core/ControlTelemetry")
 local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
 local TVDirectorEngine = require("lib/broadcast/TVDirectorEngine")
+local BattleTracker = require("lib/driver/BattleTracker")
 local DashboardUI = require("lib/ui/DashboardUI")
 
 local _initialized = false
@@ -295,6 +296,9 @@ local function doUpdate(safeDt, sim)
         end
       end
     end
+
+    -- Step COBAL Battle & Dynamics Tracker
+    BattleTracker.step(tacticalDt, raceState.sessionTime or 0.0, totalCars, RaceContext.getCarState, safeGetCar)
 
     -- Stamp telemetry packet for external ecosystem consumers
     TelemetryBridge.stampPacket(_activeAiCount, raceState.sessionTime or 0.0)

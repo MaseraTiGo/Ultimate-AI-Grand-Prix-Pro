@@ -21,6 +21,7 @@ local LODScheduler = require("lib/driver/LODScheduler")
 local TelemetryBridge = require("lib/bridge/TelemetryBridge")
 local watchdog = require("lib/driver/watchdog")
 local SkillArbitrator = require("lib/skills/SkillArbitrator")
+local BattleTracker = require("lib/driver/BattleTracker")
 
 local function safeExtractDriverName(car)
   if not car then return "" end
@@ -133,6 +134,15 @@ for i = 0, MAX_CARS - 1 do
     pounceTimer = 0.0,
     pounceActive = false,
     pounceReported = false,
+
+    -- COBAL Fuzzy Context & Commitment Engine (SCE / DCA / CCM / CPM)
+    pursuitCommitment = 0.0,      -- 0.0 ~ 1.0 continuous attack commitment
+    pressureCommitment = 0.0,     -- 0.0 ~ 1.0 continuous defensive commitment
+    duelCommitment = 0.0,         -- 0.0 ~ 1.0 side-by-side intense battle commitment
+    cohesionPacingBonus = 0.0,    -- -0.05 ~ +0.05 dynamic field cohesion pace modifier
+    lineVariationOffset = 0.0,    -- subtle natural wandering in free air (-0.05 ~ +0.05)
+    variationPhase = math.random() * 6.28,
+    isCalmRecovery = false,
   }
 end
 
@@ -642,6 +652,38 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
   s.behindDist = behindDist
   s.isLaunchDelayed = MistakeEngine.isLaunchDelayed(idx)
 
+  -- COBAL Fuzzy Scenario Context (SCE) & Commitment Evaluation (DCA)
+  -- 1. Pursuit Commitment (0.0 to 1.0 smooth ramp as closing within 25m)
+  local pursuitMu = 0.0
+  if aheadCar and s.aheadDist < 30.0 and s.aheadDist > 0.5 then
+    pursuitMu = 1.0 - (s.aheadDist / 30.0)
+    if pursuitMu < 0.0 then pursuitMu = 0.0 end
+    if pursuitMu > 1.0 then pursuitMu = 1.0 end
+  end
+  s.pursuitCommitment = pursuitMu
+
+  -- 2. Defensive Pressure Commitment (0.0 to 1.0 as rival approaches within 25m / TTC < 2.5s)
+  local pressureMu = 0.0
+  if behindCar and behindDist < 25.0 and behindDist > 0.5 then
+    pressureMu = 1.0 - (behindDist / 25.0)
+    if ttcBehind < 2.0 then
+      pressureMu = math.min(1.0, pressureMu + (2.0 - ttcBehind) * 0.25)
+    end
+    if pressureMu < 0.0 then pressureMu = 0.0 end
+    if pressureMu > 1.0 then pressureMu = 1.0 end
+  end
+  s.pressureCommitment = pressureMu
+
+  -- 3. Side-by-Side Duel Commitment (0.0 to 1.0 when lateral overlap is detected)
+  local duelMu = 0.0
+  if (behindCar and behindDist < 8.0) or (aheadCar and s.aheadDist < 8.0) then
+    local gap = (behindCar and behindDist < 8.0) and behindDist or s.aheadDist
+    duelMu = 1.0 - (gap / 8.0)
+    if duelMu < 0.0 then duelMu = 0.0 end
+    if duelMu > 1.0 then duelMu = 1.0 end
+  end
+  s.duelCommitment = duelMu
+
   -- 3. Calculate Dynamic Stress Level
   local behindState = behindCar and _aiStates[behindCar.index]
   s.stress = computeStress(s, behindDist, behindSpeedDelta, persona, raceContext, behindCar, behindState, dt)
@@ -702,6 +744,9 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
       local dLabel = EventHub.formatDriverLabel(idx, safeExtractDriverName(car))
       EventHub.pushAiEvent(idx, "SPIN", string.format("【心理崩盘】%s 极度慌乱急躁出弯尾部剧烈甩尾，险些掉头失控！", dLabel), "INCIDENT")
     end
+    if s.stress > 2.5 or s.pressureCommitment > 0.5 then
+      BattleTracker.recordPressureMistake(idx, mType)
+    end
     M.recordTrackIncident(car.splinePosition)
     TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
     return s
@@ -747,6 +792,7 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
       s.targetAggression = 0.98
       s.pounceTimer = 2.0
       s.pounceActive = true
+      BattleTracker.recordSkillExecuted("POUNCE_PASS", idx)
       if not s.pounceReported then
         s.pounceReported = true
         local EventHub = require("lib/core/EventHub")
@@ -770,6 +816,7 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
   if hasSkill then
     local skillCtx = SkillArbitrator.getContext(idx)
     s.activeSkill = skillCtx.activeSkillName or "SKILL"
+    BattleTracker.recordSkillExecuted(s.activeSkill, idx)
     s.state = s.activeSkill
     s.targetSplineOffset = sOffset
     s.targetCaution = sCaution
@@ -834,6 +881,7 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
     s.targetSplineOffset = 0.50
     s.targetCaution = 0.3
     s.targetAggression = 0.95
+    BattleTracker.recordSkillExecuted("SWITCHBACK", idx)
     TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
     return s
   end
@@ -1102,7 +1150,20 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
   s.committedState = nil
   s.commitTimer = 0.0
   if not s.isLiftAndCoast and radioCmd == "NONE" then
-    s.targetSplineOffset = 0.0
+    -- COBAL CPM (Cooperative Positioning Module): Subtle line variation in free air
+    -- Prevents rigid "slot car" mechanical feeling when racing without immediate threats
+    local isFreeAir = (s.aheadDist > 25.0) and (s.behindDist > 20.0)
+    local curSpd = car.speedKmh or 0.0
+    if isFreeAir and curSpd > 80.0 and (car.lapCount or 0) > 0 then
+      s.variationPhase = (s.variationPhase or 0.0) + dt * 0.8
+      if s.variationPhase > 62.8 then s.variationPhase = s.variationPhase - 62.8 end
+      -- Subtle wandering within +/- 0.04 spline offset
+      s.lineVariationOffset = math.sin(s.variationPhase) * 0.035
+      s.targetSplineOffset = s.lineVariationOffset
+    else
+      s.lineVariationOffset = 0.0
+      s.targetSplineOffset = 0.0
+    end
     s.targetCaution = persona.base_caution or 1.0
     s.targetAggression = persona.base_aggression or 0.75
   elseif radioCmd == "PUSH" then

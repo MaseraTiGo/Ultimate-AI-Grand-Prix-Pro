@@ -24,10 +24,15 @@ def verify_agents_rules():
 
 def run_suite():
     print("[CHECK] Running regression suite...")
-    cmd = [
-        sys.executable, "-c",
-        "import lupa; from lupa import LuaRuntime; lua = LuaRuntime(unpack_returned_tuples=True); lua.execute(open('tests/test_grand_prix_pro.lua', 'r', encoding='utf-8').read())"
-    ]
+    # Check if lua.exe exists first (Plan A from AGENTS.md)
+    lua_exe = r"D:\Program Files (x86)\Lua\5.1\lua.exe"
+    if os.path.exists(lua_exe):
+        cmd = [lua_exe, "tests/test_grand_prix_pro.lua"]
+    else:
+        cmd = [
+            sys.executable, "-c",
+            "import lupa; from lupa import LuaRuntime; lua = LuaRuntime(unpack_returned_tuples=True); lua.execute(open('tests/test_grand_prix_pro.lua', 'r', encoding='utf-8').read())"
+        ]
     res = subprocess.run(cmd, capture_output=True, text=True)
     if res.returncode != 0:
         print(f"  -> [FAIL] Test suite failed:\n{res.stdout}\n{res.stderr}")
