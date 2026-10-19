@@ -744,6 +744,8 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
         local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
         RadioVoiceEngine.playRadio("cmd_attack", RadioVoiceEngine.PRIORITY_COMMAND)
       end
+      local DriverChatterEngine = require("lib/audio/DriverChatterEngine")
+      DriverChatterEngine.triggerChatter(idx, DriverChatterEngine.SIT_MISTAKE, persona, safeExtractDriverName(car))
     elseif mTier == MistakeEngine.TIER_3_SEVERE then
       local EventHub = require("lib/core/EventHub")
       local dLabel = EventHub.formatDriverLabel(idx, safeExtractDriverName(car))
@@ -752,6 +754,8 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
         local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
         RadioVoiceEngine.playRadio("info_yellow_flag", RadioVoiceEngine.PRIORITY_EMERGENCY)
       end
+      local DriverChatterEngine = require("lib/audio/DriverChatterEngine")
+      DriverChatterEngine.triggerChatter(idx, DriverChatterEngine.SIT_CRASH, persona, safeExtractDriverName(car))
     end
     if s.stress > 2.5 or s.pressureCommitment > 0.5 then
       BattleTracker.recordPressureMistake(idx, mType)
@@ -810,6 +814,8 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
         EventHub.pushAiEvent(idx, "OVERTAKE", string.format("【绝杀突袭】%s 敏锐捕捉到前车 %s 失误走大，强行插入内线切弯反超！", myLabel, targetLabel), "COMBAT")
         local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
         RadioVoiceEngine.playRadio("info_overtake", RadioVoiceEngine.PRIORITY_COMMAND)
+        local DriverChatterEngine = require("lib/audio/DriverChatterEngine")
+        DriverChatterEngine.triggerChatter(idx, DriverChatterEngine.SIT_OVERTAKE, persona, safeExtractDriverName(car))
       end
       evaluateBodyLanguage(s, car, aheadCar, behindCar, s.aheadDist or 999.0, s.behindDist or 999.0, persona, rivalryScore, raceContext, dt)
       TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
@@ -933,6 +939,9 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
         else
           s.targetSplineOffset = -math.min(0.85, blockWidth)
         end
+
+        local DriverChatterEngine = require("lib/audio/DriverChatterEngine")
+        DriverChatterEngine.triggerChatter(idx, DriverChatterEngine.SIT_DOGFIGHT, persona, safeExtractDriverName(car))
       end
 
       local baseC = persona.base_caution or 1.0

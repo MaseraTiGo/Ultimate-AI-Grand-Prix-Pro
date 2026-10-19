@@ -26,6 +26,7 @@ local TelemetryBridge = require("lib/bridge/TelemetryBridge")
 local EventHub = require("lib/core/EventHub")
 local ControlTelemetry = require("lib/core/ControlTelemetry")
 local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
+local DriverChatterEngine = require("lib/audio/DriverChatterEngine")
 local TVDirectorEngine = require("lib/broadcast/TVDirectorEngine")
 local BattleTracker = require("lib/driver/BattleTracker")
 local DashboardUI = require("lib/ui/DashboardUI")
@@ -130,6 +131,7 @@ end
 
 local function doUpdate(safeDt, sim)
   RadioVoiceEngine.step(safeDt)
+  DriverChatterEngine.step(safeDt)
   TVDirectorEngine.step(safeDt, sim)
   _tacticalTimer = _tacticalTimer + safeDt
   _strategyTimer = _strategyTimer + safeDt

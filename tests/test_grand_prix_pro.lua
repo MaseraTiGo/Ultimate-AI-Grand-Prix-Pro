@@ -3797,8 +3797,71 @@ do
   runTest64()
 end
 
+-- ==============================================================================
+-- Test 65: Anthropomorphic AI Driver Psyche & Radio Chatter Corpus (80+ Lines)
+-- ==============================================================================
+do
+  local function runTest65()
+    print("[Test 65] Testing Anthropomorphic AI Driver Psyche & Radio Chatter Corpus...")
+    local DriverChatterEngine = require("lib/audio/DriverChatterEngine")
+    local DashboardUI = require("lib/ui/DashboardUI")
+
+    DriverChatterEngine.reset()
+    assertTrue(not DriverChatterEngine.isChatterActive(), "No chatter active initially")
+    assertEq(DriverChatterEngine.getGlobalSilenceTimer(), 0.0, "Global silence timer is 0 initially")
+
+    -- 1. Test Aggressive Archetype Chatter on Overtake
+    local personaAggro = { base_aggression = 0.95, base_caution = 0.4, pressure_resist = 0.7 }
+    local ok1 = DriverChatterEngine.triggerChatter(1, DriverChatterEngine.SIT_OVERTAKE, personaAggro, "Max Verstappen")
+    assertTrue(ok1, "First chatter successfully dispatched")
+    assertTrue(DriverChatterEngine.isChatterActive(), "Chatter card is now active")
+
+    local card1 = DriverChatterEngine.getActiveChatter()
+    assertEq(card1.carIndex, 1, "Card reports correct carIndex")
+    assertEq(card1.archetype, DriverChatterEngine.ARCHETYPE_AGGRESSIVE, "Aggressive archetype correctly identified")
+    assertTrue(card1.textEn:len() > 0, "English dialogue populated")
+    assertTrue(card1.textZh:len() > 0, "Chinese dialogue populated")
+    assertTrue(card1.tag == "HYPED" or card1.tag == "TAUNT", "Tag matches aggression context")
+
+    -- 2. Anti-Fatigue Silence Gates
+    -- Attempting immediate second chatter from any car should be blocked by global silence
+    local ok2 = DriverChatterEngine.triggerChatter(2, DriverChatterEngine.SIT_CRASH, personaAggro, "Charles Leclerc")
+    assertTrue(not ok2, "Second immediate chatter blocked by global silence gate")
+
+    -- Step engine to advance timers past global silence
+    for _ = 1, 130 do
+      DriverChatterEngine.step(0.1)
+    end
+    assertEq(DriverChatterEngine.getGlobalSilenceTimer(), 0.0, "Global silence expired after 13s")
+
+    -- Attempting chatter from Car 1 should STILL be blocked by per-car 45s cooldown
+    local okCar1 = DriverChatterEngine.triggerChatter(1, DriverChatterEngine.SIT_OVERTAKE, personaAggro, "Max Verstappen")
+    assertTrue(not okCar1, "Car 1 blocked by its 45s cooldown")
+
+    -- Car 2 should now succeed
+    local personaIce = { base_aggression = 0.6, base_caution = 0.5, pressure_resist = 0.92 }
+    local ok3 = DriverChatterEngine.triggerChatter(2, DriverChatterEngine.SIT_SQUEEZED, personaIce, "Kimi Raikkonen")
+    assertTrue(ok3, "Car 2 chatter succeeded after global silence lifted")
+
+    local card2 = DriverChatterEngine.getActiveChatter()
+    assertEq(card2.archetype, DriverChatterEngine.ARCHETYPE_ICE_COLD, "Ice cold archetype correctly resolved")
+    assertEq(card2.tag, "IRONIC", "Ice cold archetype uses IRONIC tag on squeeze")
+
+    -- 3. Verify DashboardUI Radio Card renders cleanly with active chatter
+    local okUI, errUI = pcall(DashboardUI.renderLiveHudTab)
+    if not okUI then
+      print("renderLiveHudTab error: " .. tostring(errUI))
+    end
+    assertTrue(okUI, "DashboardUI renders live HUD with active F1 radio card without crash")
+
+    DriverChatterEngine.reset()
+    print("  -> Passed: Anthropomorphic AI Driver Psyche & Radio Chatter Corpus verified.")
+  end
+  runTest65()
+end
+
 print("==================================================================")
-print("  ALL 64 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
+print("  ALL 65 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
 print("==================================================================")
 
 
