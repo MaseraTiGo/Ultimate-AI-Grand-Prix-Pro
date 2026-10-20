@@ -283,18 +283,20 @@ local function resolveArchetype(persona)
 end
 
 --------------------------------------------------------------------------------
--- Audio Voiceover Integration
+-- Audio Voiceover Integration (Plays real synthesized driver voice clips)
 --------------------------------------------------------------------------------
-local function triggerVoiceAudio(situation, priority)
+local function triggerVoiceAudio(situation, priority, clipKey, cardDuration)
   local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
   if not RadioVoiceEngine or not RadioVoiceEngine.isEnabled() then return end
 
-  -- Always emit authentic F1 radio chirp (beep_open) for incoming driver chatter
-  RadioVoiceEngine.playChirp("open")
-
-  -- If emergency situation, dispatch high priority radio flag
-  if priority == M.PRIO_EMERGENCY then
-    RadioVoiceEngine.playRadio("info_yellow_flag", RadioVoiceEngine.PRIORITY_EMERGENCY)
+  if clipKey and clipKey ~= "" then
+    -- Play authentic driver voice audio via chatter sub-bank
+    local chatterAudioKey = "chatter:" .. clipKey
+    local prio = (priority == M.PRIO_EMERGENCY) and RadioVoiceEngine.PRIORITY_EMERGENCY or RadioVoiceEngine.PRIORITY_COMMAND
+    RadioVoiceEngine.playRadio(chatterAudioKey, prio, cardDuration)
+  else
+    -- Fallback chirp if no specific clip key
+    RadioVoiceEngine.playChirp("open")
   end
 end
 
@@ -368,8 +370,17 @@ function M.triggerChatter(carIndex, situation, persona, driverName, force)
     EventHub.pushAiEvent(carIndex, "RADIO", broadcastMsg, "TACTICAL")
   end
 
-  -- 6. Trigger Audio Voiceover
-  triggerVoiceAudio(situation, line.prio)
+  -- 6. Trigger Audio Voiceover with authentic speech audio asset
+  local sitShort = situation:gsub("^SIT_", ""):lower()
+  local archMap = {
+    [M.ARCHETYPE_AGGRESSIVE] = "agg",
+    [M.ARCHETYPE_ICE_COLD] = "ice",
+    [M.ARCHETYPE_EMOTIONAL] = "emo",
+    [M.ARCHETYPE_STRATEGIC] = "str",
+  }
+  local archShort = archMap[arch] or "str"
+  local clipKey = string.format("%s_%s_%d", sitShort, archShort, chosenIdx)
+  triggerVoiceAudio(situation, line.prio, clipKey, _activeChatter.duration)
 
   return true
 end

@@ -71,11 +71,14 @@ local _clipDurations = {
   }
 }
 
-local function getClipDuration(key, lang)
+local function getClipDuration(key, lang, defaultDur)
   local l = lang or _language or "en"
   local langTable = _clipDurations[l] or _clipDurations.en
   if langTable and langTable[key] then
     return langTable[key]
+  end
+  if defaultDur and type(defaultDur) == "number" and defaultDur > 0.0 then
+    return defaultDur
   end
   return (_clipDurations.en and _clipDurations.en[key]) or 2.5
 end
@@ -144,6 +147,10 @@ local function resolveBaseDir()
 end
 
 local function getClipPath(lang, key)
+  if key and key:sub(1, 8) == "chatter:" then
+    local actualKey = key:sub(9)
+    return string.format("%s/chatter/%s/%s.wav", _baseDir, lang, actualKey)
+  end
   return string.format("%s/%s/%s.wav", _baseDir, lang, key)
 end
 
@@ -305,12 +312,12 @@ end
 ---@param clipKey string Key corresponding to audio clip (e.g. "cmd_box", "cmd_push")
 ---@param priority integer? Priority level (P0_EMERGENCY, P1_COMMAND, P2_INFO)
 ---@return boolean wasAccepted
-function M.playRadio(clipKey, priority)
+function M.playRadio(clipKey, priority, customDuration)
   if not _enabled then return false end
   if not clipKey or clipKey == "NONE" then return false end
 
   local prio = priority or M.PRIORITY_INFO
-  local clipDur = getClipDuration(clipKey, _language)
+  local clipDur = getClipDuration(clipKey, _language, customDuration)
 
   -- Debounce check: 12.0s cooldown per key unless Emergency priority
   local lastT = _lastPlayedTimes[clipKey] or -999.0

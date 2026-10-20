@@ -3861,13 +3861,30 @@ do
     DriverChatterEngine.reset()
     assertTrue(DriverChatterEngine.triggerChatter(7, DriverChatterEngine.SIT_VICTORY, personaAggro, "Max Verstappen"), "SIT_VICTORY dispatches")
 
-    -- 3. Verify DashboardUI Global Radio Card renders cleanly across tabs
+    -- 3. Verify Real Audio Playback Pipeline Integration (RadioVoiceEngine audio state machine)
+    local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
+    RadioVoiceEngine.reset()
+    DriverChatterEngine.reset()
+    
+    local okVoice = DriverChatterEngine.triggerChatter(1, DriverChatterEngine.SIT_OVERTAKE, personaAggro, "Max Verstappen", true)
+    assertTrue(okVoice, "Chatter with audio dispatch succeeded")
+    
+    local playedKey = RadioVoiceEngine.getLastPlayedKey()
+    assertTrue(playedKey:sub(1, 8) == "chatter:", "RadioVoiceEngine dispatched real audio key prefixed with chatter:")
+    assertEq(RadioVoiceEngine.getState(), RadioVoiceEngine.STATE_BEEP_OPEN, "Audio engine entered STATE_BEEP_OPEN")
+    
+    -- Step past open chirp into active speech voice playback
+    RadioVoiceEngine.step(0.15)
+    assertEq(RadioVoiceEngine.getState(), RadioVoiceEngine.STATE_PLAYING_VOICE, "Audio engine entered STATE_PLAYING_VOICE")
+
+    -- 4. Verify DashboardUI Global Radio Card renders cleanly across tabs
     local okUI, errUI = pcall(DashboardUI.renderMain, 0.5, 10)
     if not okUI then
       print("renderMain error: " .. tostring(errUI))
     end
     assertTrue(okUI, "DashboardUI renders global main UI with active F1 radio card without crash")
 
+    RadioVoiceEngine.reset()
     DriverChatterEngine.reset()
     print("  -> Passed: Anthropomorphic AI Driver Psyche & Radio Chatter Corpus verified.")
   end
