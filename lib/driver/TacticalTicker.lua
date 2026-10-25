@@ -833,8 +833,20 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
         local myLabel = EventHub.formatDriverLabel(idx, safeExtractDriverName(car))
         local targetLabel = EventHub.formatDriverLabel(aheadCar.index, safeExtractDriverName(aheadCar))
         EventHub.pushAiEvent(idx, "OVERTAKE", string.format("【绝杀突袭】%s 敏锐捕捉到前车 %s 失误走大，强行插入内线切弯反超！", myLabel, targetLabel), "COMBAT")
-        local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
-        RadioVoiceEngine.playRadio("info_overtake", RadioVoiceEngine.PRIORITY_COMMAND)
+        -- Team Radio Voice: Only praise player if player executed the pass, or if spectator mode focuses this car
+        local RaceContext = require("lib/core/RaceContext")
+        local expMode = RaceContext.getExperienceMode and RaceContext.getExperienceMode() or "DRIVER"
+        local shouldBroadcastRadio = (idx == 0) or (aheadCar and aheadCar.index == 0)
+        if expMode == "SPECTATOR" then
+          local TVDirectorEngine = require("lib/broadcast/TVDirectorEngine")
+          if TVDirectorEngine.isEnabled() and TVDirectorEngine.getFocusedCar() == idx then
+            shouldBroadcastRadio = true
+          end
+        end
+        if shouldBroadcastRadio then
+          local RadioVoiceEngine = require("lib/audio/RadioVoiceEngine")
+          RadioVoiceEngine.playRadio("info_overtake", RadioVoiceEngine.PRIORITY_COMMAND)
+        end
         local DriverChatterEngine = require("lib/audio/DriverChatterEngine")
         DriverChatterEngine.triggerChatter(idx, DriverChatterEngine.SIT_OVERTAKE, persona, safeExtractDriverName(car))
       end

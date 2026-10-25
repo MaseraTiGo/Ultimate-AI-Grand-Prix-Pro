@@ -3094,7 +3094,8 @@ do
       lapCount = 6,
       position = { x = 100, y = 0, z = 0 },
     }
-    local carChaser = {
+    -- AI vs AI pounce (car 2 vs car 1 in DRIVER mode) should NOT spam human team radio
+    local carChaserAi = {
       index = 2,
       driverName = "Leclerc",
       speedKmh = 128.0,
@@ -3115,10 +3116,31 @@ do
     leadState.currentSplineOffset = 0.55
     leadState.targetSplineOffset = 0.55
 
-    -- 2. Step Chaser AI
-    local chaserState = TacticalTicker.stepCar(carChaser, carLead, nil, pChaser, 0.0, nil, 0.1)
+    -- Step AI Chaser: executes pounce tactical move but player radio does not play info_overtake
+    local aiChaserState = TacticalTicker.stepCar(carChaserAi, carLead, nil, pChaser, 0.0, nil, 0.1)
+    assertEq(aiChaserState.state, "POUNCE_PASS", "AI Chaser transitions to POUNCE_PASS on lead car error")
+    assertTrue(RadioVoiceEngine.getLastPlayedKey() ~= "info_overtake", "AI-to-AI pounce does not trigger human player info_overtake radio")
 
-    -- Chaser should immediately sense the error and launch Hunter's Pounce
+    -- 2. Setup Player Car (0) chasing car 1
+    local carPlayerChaser = {
+      index = 0,
+      driverName = "Player",
+      speedKmh = 128.0,
+      lapCount = 6,
+      position = { x = 93, y = 0, z = 0 },
+    }
+    TacticalTicker.reset()
+    RadioVoiceEngine.reset()
+    EventHub.clearAll()
+    leadState = TacticalTicker.getAiState(1)
+    leadState.state = "MISTAKE"
+    leadState.lastMistakeType = "MISSED_APEX"
+    leadState.currentSplineOffset = 0.55
+    leadState.targetSplineOffset = 0.55
+
+    local chaserState = TacticalTicker.stepCar(carPlayerChaser, carLead, nil, pChaser, 0.0, nil, 0.1)
+
+    -- Player chaser should execute POUNCE_PASS and trigger engineer praise radio
     assertEq(chaserState.state, "POUNCE_PASS", "Chaser transitions to POUNCE_PASS on lead car error")
     assertEq(chaserState.activeSkill, "POUNCE_PASS", "Active skill is POUNCE_PASS")
     assertEq(chaserState.targetSplineOffset, -0.40, "Chaser dives to opposite inside lane (-0.40)")
@@ -3126,7 +3148,7 @@ do
     assertEq(chaserState.targetAggression, 0.98, "Chaser maximizes aggression to 0.98")
     assertTrue(chaserState.pounceActive, "pounceActive flag is true")
 
-    -- 3. Verify Broadcast and Voice Engine Trigger
+    -- 3. Verify Broadcast and Voice Engine Trigger for Player
     local events = EventHub.getRecentAiEvents(5)
     local foundPounceEvent = false
     for _, ev in ipairs(events) do
@@ -3136,12 +3158,12 @@ do
       end
     end
     assertTrue(foundPounceEvent, "EventHub broadcast recorded Hunter's Pounce attack event")
-    assertEq(RadioVoiceEngine.getLastPlayedKey(), "info_overtake", "Radio voice triggered info_overtake")
+    assertEq(RadioVoiceEngine.getLastPlayedKey(), "info_overtake", "Radio voice triggered info_overtake for player pass")
 
     -- 4. Verify BehaviorActuator handles POUNCE_PASS with high transition rate
     BehaviorActuator.reset()
     chaserState.currentSplineOffset = 0.0
-    BehaviorActuator.applyActuator(carChaser, chaserState, 0.1)
+    BehaviorActuator.applyActuator(carPlayerChaser, chaserState, 0.1)
     assertTrue(chaserState.currentSplineOffset < -0.05, "BehaviorActuator uses fast 0.85 maneuver slew rate for POUNCE_PASS")
 
     TacticalTicker.reset()
