@@ -44,28 +44,35 @@ local function makeColor(r, g, b, a)
   return { r = r, g = g, b = b, a = a }
 end
 
-local COLOR_CYAN  = makeColor(0.00, 0.90, 1.00, 1.0) -- #00E5FF
-local COLOR_GREEN = makeColor(0.00, 0.90, 0.46, 1.0) -- #00E676
-local COLOR_BLUE  = makeColor(0.25, 0.77, 1.00, 1.0) -- #40C4FF
-local COLOR_GOLD  = makeColor(1.00, 0.72, 0.30, 1.0) -- #FFB74D
-local COLOR_RED   = makeColor(1.00, 0.32, 0.32, 1.0) -- #FF5252
-local COLOR_MUTED = makeColor(0.58, 0.64, 0.69, 1.0) -- #90A4AE
-local COLOR_WHITE = makeColor(1.00, 1.00, 1.00, 1.0) -- #FFFFFF
-local COLOR_PURPLE = makeColor(0.85, 0.20, 1.00, 1.0) -- #D500F9
-local COLOR_WET_BLUE = makeColor(0.16, 0.47, 1.00, 1.0) -- #2979FF
-local COLOR_BTN_OVERRIDE       = makeColor(0.00, 0.42, 0.65, 0.90)
-local COLOR_BTN_OVERRIDE_HOVER = makeColor(0.00, 0.58, 0.88, 1.00)
-local COLOR_BTN_NATIVE         = makeColor(0.00, 0.45, 0.28, 0.90)
-local COLOR_BTN_NATIVE_HOVER   = makeColor(0.00, 0.60, 0.38, 1.00)
+-- GT7 Obsidian & Precision Motorsport Palette
+local COLOR_CYAN       = makeColor(0.20, 0.75, 0.92, 1.0) -- GT7 Technical Cyan
+local COLOR_GREEN      = makeColor(0.10, 0.82, 0.48, 1.0) -- GT7 Safety Mint Green
+local COLOR_BLUE       = makeColor(0.15, 0.58, 0.95, 1.0) -- GT7 Endurance Sebring Blue
+local COLOR_GOLD       = makeColor(0.94, 0.70, 0.22, 1.0) -- GT7 Le Mans Champagne Gold
+local COLOR_RED        = makeColor(0.92, 0.22, 0.26, 1.0) -- GT7 Apex Scarlet Red
+local COLOR_MUTED      = makeColor(0.58, 0.63, 0.70, 1.0) -- Titanium Gray (Labels & Subtitles)
+local COLOR_DARK_MUTED = makeColor(0.38, 0.42, 0.48, 1.0) -- Dark Slate Gray
+local COLOR_WHITE      = makeColor(0.96, 0.97, 0.99, 1.0) -- Polar White (Hero Data Values)
+local COLOR_PURPLE     = makeColor(0.78, 0.32, 0.95, 1.0) -- Pirelli Ultra/Hyper
+local COLOR_WET_BLUE   = makeColor(0.22, 0.50, 0.95, 1.0) -- Rain Wet Blue
 
--- Modern Pit Wall Action Button Palette
-local COLOR_BTN_TAB_ACTIVE     = makeColor(0.00, 0.60, 0.85, 0.95)
-local COLOR_BTN_TAB_IDLE       = makeColor(0.18, 0.22, 0.26, 0.70)
-local COLOR_BTN_PUSH           = makeColor(0.90, 0.55, 0.00, 0.90)
-local COLOR_BTN_ATTACK         = makeColor(0.88, 0.20, 0.20, 0.90)
-local COLOR_BTN_DEFEND         = makeColor(0.00, 0.48, 0.80, 0.90)
-local COLOR_BTN_SAVE           = makeColor(0.10, 0.62, 0.32, 0.90)
-local COLOR_BTN_BOX            = makeColor(0.85, 0.10, 0.15, 0.95)
+-- Card & Surface Accents
+local COLOR_BG_CARD     = makeColor(0.09, 0.12, 0.16, 0.85) -- Obsidian Card Surface
+local COLOR_BORDER_CARD = makeColor(0.22, 0.26, 0.33, 0.50) -- Matte Metal Border
+
+local COLOR_BTN_OVERRIDE       = makeColor(0.10, 0.38, 0.58, 0.90)
+local COLOR_BTN_OVERRIDE_HOVER = makeColor(0.15, 0.48, 0.72, 1.00)
+local COLOR_BTN_NATIVE         = makeColor(0.08, 0.42, 0.28, 0.90)
+local COLOR_BTN_NATIVE_HOVER   = makeColor(0.12, 0.55, 0.38, 1.00)
+
+-- Modern Pit Wall Action Button Palette in GT7 Precision Tone
+local COLOR_BTN_TAB_ACTIVE     = makeColor(0.15, 0.55, 0.88, 0.95)
+local COLOR_BTN_TAB_IDLE       = makeColor(0.14, 0.18, 0.24, 0.80)
+local COLOR_BTN_PUSH           = makeColor(0.90, 0.52, 0.10, 0.90)
+local COLOR_BTN_ATTACK         = makeColor(0.85, 0.18, 0.22, 0.90)
+local COLOR_BTN_DEFEND         = makeColor(0.10, 0.48, 0.82, 0.90)
+local COLOR_BTN_SAVE           = makeColor(0.08, 0.65, 0.38, 0.90)
+local COLOR_BTN_BOX            = makeColor(0.88, 0.12, 0.18, 0.95)
 
 local function getCompoundVisual(compName, compIndex)
   local nameUpper = string.upper(tostring(compName or "")):gsub("^%s+", ""):gsub("%s+$", "")
@@ -135,6 +142,26 @@ local function setTooltip(tipText)
   if ui and ui.isItemHovered and ui.isItemHovered() and ui.setTooltip then
     ui.setTooltip(tipText)
   end
+end
+
+local function drawSectionHeader(title, subtitle, accentCol)
+  if not ui or not ui.text then return end
+  local col = accentCol or COLOR_CYAN
+  drawInlineColored(col, "■ ")
+  if ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_WHITE, title or "")
+  if subtitle and subtitle ~= "" then
+    if ui.sameLine then ui.sameLine() end
+    drawInlineColored(COLOR_MUTED, string.format(" · %s", subtitle))
+  end
+  if ui.separator then ui.separator() end
+end
+
+local function drawMetricPair(label, val, valCol)
+  if not ui or not ui.text then return end
+  drawInlineColored(COLOR_MUTED, label or "")
+  if ui.sameLine then ui.sameLine() end
+  drawInlineColored(valCol or COLOR_WHITE, val or "")
 end
 
 local function drawPersonaOptionButton(label, key, carIndex, isCurrent, isOverride)
@@ -420,19 +447,17 @@ function M.renderRadioChatterCard()
   local tagCol = (chatter.priority == 3) and COLOR_RED or ((chatter.priority == 2) and COLOR_GOLD or COLOR_GREEN)
 
   if ui and ui.offsetCursorY then ui.offsetCursorY(2) end
-  drawInlineColored(COLOR_CYAN, "╭─ 📻 [TEAM RADIO] ")
+  drawInlineColored(COLOR_CYAN, "▌ 📻 TEAM RADIO")
   if ui and ui.sameLine then ui.sameLine() end
-  drawInlineColored(COLOR_WHITE, string.format("#%02d %-12s", chatter.carIndex + 1, cName:sub(1, 12)))
+  drawInlineColored(COLOR_WHITE, string.format(" [#%02d %-12s]", chatter.carIndex + 1, cName:sub(1, 12)))
   if ui and ui.sameLine then ui.sameLine() end
-  drawInlineColored(tagCol, string.format("【%s】", cTag))
+  drawInlineColored(tagCol, string.format(" [%s] ", cTag))
   if ui and ui.sameLine then ui.sameLine() end
   local waveStr = (math.floor(chatter.waveformAnim) % 2 == 0) and " ▰▰▱▰▱▰ " or " ▱▰▰▱▰▰ "
   drawInlineColored(COLOR_GREEN, waveStr)
   if ui and ui.sameLine then ui.sameLine() end
-  drawInlineColored(COLOR_CYAN, "─╮")
-
-  if ui and ui.text then ui.text(string.format("│  \"%s\"", cTxt)) end
-  drawTextColored(COLOR_CYAN, "╰──────────────────────────────────────────╯")
+  drawInlineColored(COLOR_WHITE, string.format(" \"%s\"", cTxt))
+  if ui and ui.separator then ui.separator() end
 end
 
 --------------------------------------------------------------------------------
@@ -443,56 +468,8 @@ function M.renderMain(perfMs, activeAiCount)
 
   refreshActiveAiCars()
 
-  -- Top Brand Header & Telemetry Chip
-  drawInlineColored(COLOR_CYAN, "ULTIMATE AI GRAND PRIX PRO")
-  ui.sameLine()
-  ui.text(string.format(" ⏱ %.2f ms", perfMs or 0.0))
-  ui.sameLine()
-  ui.text("•")
-  ui.sameLine()
-
-  -- Core Watchdog & Session Status
   local race = RaceContext.getRaceState()
   local isPhysOn = watchdog.isPhysicsAllowed()
-
-  if isPhysOn then
-    drawInlineColored(COLOR_GREEN, "● 物理看门狗接管")
-  else
-    drawInlineColored(COLOR_MUTED, "○ 物理看门狗待命")
-  end
-  ui.sameLine()
-  ui.text("•")
-  ui.sameLine()
-
-  local totalLaps = race.totalLaps or 13
-  local curLap = race.currentLap or 1
-  local lapStr = (totalLaps > 0) and string.format("第 %d/%d 圈", curLap, totalLaps) or string.format("第 %d 圈 (计时赛)", curLap)
-  drawInlineColored(COLOR_WHITE, lapStr)
-  ui.sameLine()
-  ui.text("•")
-  ui.sameLine()
-
-  if race.flagState == "GREEN" then
-    drawInlineColored(COLOR_GREEN, "⚑ GREEN FLAG 绿旗")
-  elseif race.flagState == "YELLOW" then
-    drawInlineColored(COLOR_GOLD, "⚠ YELLOW FLAG 全场黄旗")
-  elseif race.flagState == "SC" or race.flagState == "VSC" then
-    drawInlineColored(COLOR_GOLD, "🚨 SAFETY CAR 安全车")
-  elseif race.flagState == "RED" then
-    drawInlineColored(COLOR_RED, "🛑 RED FLAG 红旗中止")
-  else
-    drawInlineColored(COLOR_MUTED, race.flagState or "NORMAL")
-  end
-
-  ui.sameLine()
-  ui.text("•")
-  ui.sameLine()
-
-  local displayTotalCars = (race.carsCount and race.carsCount > 0) and race.carsCount or math.max(1, _activeAiCount + 1)
-  ui.text(string.format("总车数: %d (AI: %d)", displayTotalCars, _activeAiCount))
-  ui.sameLine()
-  ui.text("•")
-  ui.sameLine()
 
   local wWetness = WeatherStrategyModel.getTrackWetness()
   local wRain = WeatherStrategyModel.getRainIntensity()
@@ -515,10 +492,53 @@ function M.renderMain(perfMs, activeAiCount)
       wText = "☀ 干燥干胎路面"
     end
   end
+
+  -- Row 1: Session Race Status Ribbon
+  drawInlineColored(COLOR_CYAN, "■ ULTIMATE AI GRAND PRIX PRO")
+  if ui and ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_MUTED, " | ")
+  if ui and ui.sameLine then ui.sameLine() end
+  local totalLaps = race.totalLaps or 13
+  local curLap = race.currentLap or 1
+  local lapStr = (totalLaps > 0) and string.format("第 %d/%d 圈", curLap, totalLaps) or string.format("第 %d 圈 (计时赛)", curLap)
+  drawInlineColored(COLOR_WHITE, lapStr)
+  if ui and ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_MUTED, " | ")
+  if ui and ui.sameLine then ui.sameLine() end
+
+  if race.flagState == "GREEN" then
+    drawInlineColored(COLOR_GREEN, "● GREEN FLAG 绿旗")
+  elseif race.flagState == "YELLOW" then
+    drawInlineColored(COLOR_GOLD, "⚠ YELLOW FLAG 全场黄旗")
+  elseif race.flagState == "SC" or race.flagState == "VSC" then
+    drawInlineColored(COLOR_GOLD, "🚨 SAFETY CAR 安全车")
+  elseif race.flagState == "RED" then
+    drawInlineColored(COLOR_RED, "🛑 RED FLAG 红旗中止")
+  else
+    drawInlineColored(COLOR_MUTED, race.flagState or "NORMAL")
+  end
+  if ui and ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_MUTED, " | ")
+  if ui and ui.sameLine then ui.sameLine() end
+
+  local displayTotalCars = (race.carsCount and race.carsCount > 0) and race.carsCount or math.max(1, _activeAiCount + 1)
+  drawInlineColored(COLOR_WHITE, string.format("赛道: %d 车 (AI: %d)", displayTotalCars, _activeAiCount))
+  if ui and ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_MUTED, " | ")
+  if ui and ui.sameLine then ui.sameLine() end
   drawInlineColored(wCol, wText)
 
-  -- Experience Mode Selector & Director Pill (Modern styled pills)
+  -- Row 2: Actuators, Mode Switcher & Director Control Bar
+  if isPhysOn then
+    drawInlineColored(COLOR_GREEN, "● 物理看门狗接管")
+  else
+    drawInlineColored(COLOR_MUTED, "○ 物理看门狗待命")
+  end
   if ui and ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_MUTED, string.format(" | ⏱ 遥测: %.2f ms | ", perfMs or 0.0))
+  if ui and ui.sameLine then ui.sameLine() end
+
+  -- Experience Mode Selector & Director Pill (Modern styled pills)
   local expMode = RaceContext.getExperienceMode and RaceContext.getExperienceMode() or "DRIVER"
   local isDriver = (expMode == "DRIVER")
   local modeBtnText = isDriver and "🏁 车手沉浸模式##exp_mode_btn" or "📻 围场领队模式##exp_mode_btn"
@@ -528,7 +548,7 @@ function M.renderMain(perfMs, activeAiCount)
     RaceContext.setExperienceMode(isDriver and "SPECTATOR" or "DRIVER")
   end
 
-  ui.sameLine()
+  if ui and ui.sameLine then ui.sameLine() end
   local isDirectorOn = TVDirectorEngine.isEnabled()
   local toggleBtnText = isDirectorOn and "🎥 导播: 运行中##top_tv_dir_btn" or "🎥 导播: 已关闭##top_tv_dir_btn"
   local dirBtnBg = isDirectorOn and COLOR_BTN_SAVE or COLOR_BTN_TAB_IDLE
@@ -599,15 +619,11 @@ function M.renderLiveHudTab()
   local expMode = RaceContext.getExperienceMode and RaceContext.getExperienceMode() or "DRIVER"
   local isDriver = (expMode == "DRIVER")
 
-  if isDriver then
-    drawTextColored(COLOR_CYAN, "🏁 驾驶者座舱微型战术看板 (COCKPIT MINI-HUD - 0 鼠标干预，全自动博弈)")
-  else
-    drawTextColored(COLOR_CYAN, "实时赛道战况与遥测 (LIVE RACING TELEMETRY)")
-  end
-
   local carStates = RaceContext.getAllCarStates()
 
   -- 1. Hero Player Telemetry Card
+  drawSectionHeader(isDriver and "驾驶者座舱微型战术看板" or "玩家第一人称实时遥测", isDriver and "COCKPIT MINI-HUD" or "HERO TELEMETRY", COLOR_CYAN)
+
   local playerState = carStates[0]
   local pSpeed = 0.0
   local pGear = 0
@@ -624,61 +640,51 @@ function M.renderLiveHudTab()
   local pGearStr = (pGear == 0) and "N 空档" or ((pGear < 0) and "R 倒档" or string.format("G%d", pGear))
   local _, pFullName = getDriverNameDisplay(0, 16)
 
-  drawInlineColored(COLOR_WHITE, string.format("车手 #01 %s", pFullName))
-  ui.sameLine()
-  drawInlineColored(COLOR_CYAN, string.format("  时速: %5.1f km/h", pSpeed))
-  ui.sameLine()
-  drawInlineColored(COLOR_GOLD, string.format("  档位: %-4s", pGearStr))
-  ui.sameLine()
-  drawInlineColored(COLOR_WHITE, string.format("  转速: %5d RPM", math.floor(pRpm)))
-  ui.sameLine()
-  drawInlineColored(COLOR_GREEN, string.format("  油量: %4.1f L", pFuel))
-  ui.sameLine()
-  drawInlineColored((pWear > 0.6) and COLOR_RED or COLOR_WHITE, string.format("  胎耗: %4.1f%%", pWear * 100.0))
+  -- Row 1: Powertrain & Speed Dynamics
+  drawInlineColored(COLOR_WHITE, string.format("  车手: #01 %-14s", pFullName))
+  if ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_CYAN, string.format(" | 时速: %5.1f km/h", pSpeed))
+  if ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_GOLD, string.format(" | 档位: %-4s", pGearStr))
+  if ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_WHITE, string.format(" | 转速: %5d RPM", math.floor(pRpm)))
 
-  -- Driver Mode Dedicated Proximity Radar Card
-  if isDriver then
-    local aheadIdx, aheadDist, behindIdx, behindDist = RaceContext.getNeighbors(0)
-    local aheadStr = "无人"
-    local behindStr = "无人"
-    if aheadIdx >= 0 then
-      local _, aName = getDriverNameDisplay(aheadIdx, 10)
-      aheadStr = string.format("#%02d %s (%.1fm)", aheadIdx + 1, aName, aheadDist)
-    end
-    if behindIdx >= 0 then
-      local _, bName = getDriverNameDisplay(behindIdx, 10)
-      behindStr = string.format("#%02d %s (%.1fm)", behindIdx + 1, bName, behindDist)
-    end
-
-    local plan0 = StrategyCoordinator.getCarPlan(0)
-    local targetLap0 = plan0 and plan0.targetLap or 0
-    local curLap0 = (RaceContext.getRaceState().currentLap or 1)
-    local pitNotice = (targetLap0 > 0 and (targetLap0 - curLap0) <= 2) and string.format("📦 进站窗口: 第%d圈 (剩余%d圈)", targetLap0, math.max(0, targetLap0 - curLap0)) or "🍃 策略窗口: 稳定巡航"
-
-    ui.offsetCursorY(2)
-    drawInlineColored(COLOR_CYAN, "  前车追击: ")
-    ui.sameLine()
-    drawInlineColored((aheadDist < 15.0) and COLOR_GOLD or COLOR_WHITE, aheadStr)
-    ui.sameLine()
-    ui.text("  |  ")
-    ui.sameLine()
-    drawInlineColored(COLOR_CYAN, "后车防守: ")
-    ui.sameLine()
-    drawInlineColored((behindDist < 15.0) and COLOR_RED or COLOR_WHITE, behindStr)
-    ui.sameLine()
-    ui.text("  |  ")
-    ui.sameLine()
-    drawInlineColored(COLOR_GREEN, pitNotice)
+  -- Row 2: Consumables & Proximity Battle Dynamics
+  local aheadIdx, aheadDist, behindIdx, behindDist = RaceContext.getNeighbors(0)
+  local aheadStr = "无人"
+  local behindStr = "无人"
+  if aheadIdx >= 0 then
+    local _, aName = getDriverNameDisplay(aheadIdx, 8)
+    aheadStr = string.format("#%02d %s(%.1fm)", aheadIdx + 1, aName, aheadDist)
+  end
+  if behindIdx >= 0 then
+    local _, bName = getDriverNameDisplay(behindIdx, 8)
+    behindStr = string.format("#%02d %s(%.1fm)", behindIdx + 1, bName, behindDist)
   end
 
-  ui.separator()
+  local plan0 = StrategyCoordinator.getCarPlan(0)
+  local targetLap0 = plan0 and plan0.targetLap or 0
+  local curLap0 = (RaceContext.getRaceState().currentLap or 1)
+  local pitNotice = (targetLap0 > 0 and (targetLap0 - curLap0) <= 2) and string.format("进站第%d圈(余%d圈)", targetLap0, math.max(0, targetLap0 - curLap0)) or "稳健巡航中"
+
+  drawInlineColored(COLOR_GREEN, string.format("  燃油: %4.1f L", pFuel))
+  if ui.sameLine then ui.sameLine() end
+  drawInlineColored((pWear > 0.6) and COLOR_RED or COLOR_WHITE, string.format(" | 胎耗: %4.1f%%", pWear * 100.0))
+  if ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_CYAN, " | 前车: ")
+  if ui.sameLine then ui.sameLine() end
+  drawInlineColored((aheadDist < 15.0) and COLOR_GOLD or COLOR_WHITE, string.format("%-14s", aheadStr))
+  if ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_CYAN, " | 后车: ")
+  if ui.sameLine then ui.sameLine() end
+  drawInlineColored((behindDist < 15.0) and COLOR_RED or COLOR_WHITE, string.format("%-14s", behindStr))
+  if ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_GREEN, string.format(" | %s", pitNotice))
+
+  if ui.separator then ui.separator() end
 
   -- 2. Dynamic AI Driver Telemetry Matrix
-  if isDriver then
-    drawTextColored(COLOR_CYAN, "全网 AI 对决与心理博弈看板 (全自主博弈中，无须手动干预)")
-  else
-    drawTextColored(COLOR_CYAN, "全场活跃 AI 战术姿态与心理博弈矩阵 (点击车手行可直接选中车队指挥目标)")
-  end
+  drawSectionHeader(isDriver and "全网 AI 对决与心理博弈看板" or "全场活跃 AI 战术姿态与心理博弈矩阵", "ACTIVE AI DYNAMICS MATRIX", COLOR_GOLD)
 
   if _activeAiCount == 0 then
     drawTextColored(COLOR_MUTED, "  待命状态: 当前单人练习模式，暂未发现其他 AI 赛车。")
@@ -686,8 +692,8 @@ function M.renderLiveHudTab()
     return
   end
 
-  -- Table Header (Strict visual alignment)
-  ui.text("  车号   车手姓名     LOD调度   攻防战术姿态     压力指数   士气心流     正在执行动作/指令")
+  -- Table Header (Strict monospace column layout)
+  ui.text("  车号   车手姓名         LOD     攻防战术姿态     压力   心流    执行动作与指令")
 
   for slot = 1, _activeAiCount do
     local i = _activeAiIndices[slot]
@@ -697,12 +703,12 @@ function M.renderLiveHudTab()
       local tierStr = (tier == 1) and "T1高精" or ((tier == 2) and "T2中距" or "T3省电")
       local telem = TelemetryBridge.getCarTelemetry(i)
 
-      local dName, fullDriverName = getDriverNameDisplay(i, 10)
+      local dName, fullDriverName = getDriverNameDisplay(i, 12)
       local dLabel = EventHub.formatDriverLabel(i, fullDriverName)
 
       local isSelected = (_selectedCarForRadio == i)
       local selPrefix = isSelected and "▶ " or "  "
-      local rowLabel = string.format("%s#%02d %-10s##ai_row_%d", selPrefix, i + 1, dName, i)
+      local rowLabel = string.format("%s#%02d %-12s##ai_row_%d", selPrefix, i + 1, dName, i)
 
       local rowClicked = false
       if ui.selectable then
@@ -717,9 +723,9 @@ function M.renderLiveHudTab()
       end
       setTooltip(string.format("车手: %s (点击选中为车队无线电指挥目标)", fullDriverName))
 
-      ui.sameLine()
-      ui.text(string.format(" %s ", tierStr))
-      ui.sameLine()
+      if ui.sameLine then ui.sameLine() end
+      ui.text(string.format("[%s] ", tierStr))
+      if ui.sameLine then ui.sameLine() end
 
       -- State badge with dedicated color & clear symbol
       local stText = "● 稳定巡航"
@@ -751,20 +757,20 @@ function M.renderLiveHudTab()
         stColor = COLOR_MUTED
       end
 
-      drawInlineColored(stColor, string.format("%-10s", stText))
-      ui.sameLine()
-      ui.text(string.format("    %4.2f      %+5.2f      ", telem.stress or 0.0, telem.momentum or 0.0))
-      ui.sameLine()
+      drawInlineColored(stColor, string.format(" %-10s ", stText))
+      if ui.sameLine then ui.sameLine() end
+      ui.text(string.format(" %4.2f  %+5.2f  ", telem.stress or 0.0, telem.momentum or 0.0))
+      if ui.sameLine then ui.sameLine() end
 
       if c.isRetired or c.pitState == "RETIRED" or c.tacticalState == "RETIRED" or c.activeSkill == "RET" then
         drawInlineColored(COLOR_RED, "RET 退赛")
       elseif c.activeSkill == "POUNCE_PASS" or c.tacticalState == "POUNCE_PASS" then
         drawInlineColored(COLOR_GOLD, "POUNCE 绝杀突袭")
       elseif c.activeSkill and c.activeSkill ~= "NONE" then
-        drawInlineColored(COLOR_CYAN, string.format("⚡ %s", c.activeSkill))
+        drawInlineColored(COLOR_CYAN, string.format("⚡ %-14s", c.activeSkill))
       elseif c.radioCommand and c.radioCommand ~= "NONE" then
         local rCmdCol = (c.radioCommand == "BOX_THIS_LAP") and COLOR_RED or ((c.radioCommand == "PUSH") and COLOR_GOLD or COLOR_GREEN)
-        drawInlineColored(rCmdCol, string.format("📻 %s", c.radioCommand))
+        drawInlineColored(rCmdCol, string.format("📻 %-14s", c.radioCommand))
       elseif telem.lift_and_coast == 1 then
         drawInlineColored(COLOR_GREEN, "🍃 滑行节油")
       elseif telem.breaking_tow == 1 then
@@ -780,15 +786,16 @@ end
 -- 6. Tab 2: Pit Wall & Driver Radio Command Console
 --------------------------------------------------------------------------------
 function M.renderPitWallTab()
-  drawTextColored(COLOR_CYAN, "车队无线电指挥台与进站策略调度 (PIT WALL COMMAND CONSOLE)")
+  drawSectionHeader("车队无线电指挥台与进站策略调度", "PIT WALL COMMAND CONSOLE", COLOR_CYAN)
 
   local wWetness = WeatherStrategyModel.getTrackWetness()
   local wRain = WeatherStrategyModel.getRainIntensity()
   local wBand = WeatherStrategyModel.getActiveBandName()
   local wOpt = WeatherStrategyModel.getOptimalTyreCompound()
   local radarCol = (wBand == "WET") and COLOR_WET_BLUE or ((wBand == "INTERMEDIATE") and COLOR_CYAN or COLOR_GREEN)
-  drawInlineColored(radarCol, string.format("天气雷达: 湿地率 %.1f%% | 降水 %.2f | 路面 %s | 推荐配方 %s",
+  drawInlineColored(radarCol, string.format("  天气雷达: 湿地率 %4.1f%% | 降水强度: %.2f | 路面状态: %-12s | 推荐轮胎: %s",
     wWetness * 100.0, wRain, wBand, wOpt))
+  if ui.separator then ui.separator() end
 
   local carStates = RaceContext.getAllCarStates()
 
@@ -796,22 +803,23 @@ function M.renderPitWallTab()
   local _, fullTargetName = getDriverNameDisplay(_selectedCarForRadio, 16)
   local targetLabel = EventHub.formatDriverLabel(_selectedCarForRadio, fullTargetName)
 
-  ui.text("当前指挥目标: ")
-  ui.sameLine()
-  drawInlineColored(COLOR_CYAN, targetLabel)
-  ui.sameLine()
-
   local selAi = TacticalTicker.getAiState(_selectedCarForRadio)
   local mtiVal = (selAi and selAi.mti) or 0.0
   local riskVal = (selAi and selAi.breakdownRisk) or 0.0
   local psychSt = (selAi and selAi.psychStatus) or "CALM"
   local psychCol = (psychSt == "FLOW") and COLOR_CYAN or ((psychSt == "CRACKING") and COLOR_RED or ((psychSt == "RATTLED") and COLOR_GOLD or ((psychSt == "UNDER_PRESSURE") and COLOR_GOLD or COLOR_GREEN)))
-  ui.text("• 心态:")
-  ui.sameLine()
-  drawInlineColored(psychCol, string.format("● %s", psychSt))
-  ui.sameLine()
-  ui.text(string.format("• 威胁MTI: %.2f • 崩盘风险: %.0f%%", mtiVal, riskVal))
-  ui.sameLine()
+
+  -- Row 1: Target Header & Target Status
+  drawInlineColored(COLOR_WHITE, "  指挥目标: ")
+  if ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_CYAN, string.format("%-18s", targetLabel))
+  if ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_MUTED, " | 心态: ")
+  if ui.sameLine then ui.sameLine() end
+  drawInlineColored(psychCol, string.format("● %-10s", psychSt))
+  if ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_WHITE, string.format(" | 威胁MTI: %4.2f | 崩盘风险: %2.0f%%  ", mtiVal, riskVal))
+  if ui.sameLine then ui.sameLine() end
 
   if ui.button(" ◀ 上一车手##radio_prev ") then
     if _activeAiCount > 0 then
@@ -837,7 +845,7 @@ function M.renderPitWallTab()
   end
   setTooltip("切换至上一位活跃 AI 车手")
 
-  ui.sameLine()
+  if ui.sameLine then ui.sameLine() end
   if ui.button(" 下一车手 ▶##radio_next ") then
     if _activeAiCount > 0 then
       local currentSlot = 1
@@ -870,17 +878,17 @@ function M.renderPitWallTab()
     StrategyCoordinator.issueRadioOrder(_selectedCarForRadio, "PUSH")
   end
 
-  ui.sameLine()
+  if ui.sameLine then ui.sameLine() end
   if drawActionButton("⚡ ATTACK 突击##cmd_attack", COLOR_BTN_ATTACK, COLOR_WHITE, "指令赛车开启超车通道，缩短跟车留白，执行晚刹车极限超越") then
     StrategyCoordinator.issueRadioOrder(_selectedCarForRadio, "ATTACK")
   end
 
-  ui.sameLine()
+  if ui.sameLine then ui.sameLine() end
   if drawActionButton("🛡 DEFEND 防守##cmd_defend", COLOR_BTN_DEFEND, COLOR_WHITE, "指令赛车死守内线防守走线，大直道破坏后车尾流") then
     StrategyCoordinator.issueRadioOrder(_selectedCarForRadio, "DEFEND")
   end
 
-  ui.sameLine()
+  if ui.sameLine then ui.sameLine() end
   if drawActionButton("🍃 SAVE 保胎节油##cmd_save", COLOR_BTN_SAVE, COLOR_WHITE, "指令赛车进入滑行断油模式 (Lift & Coast)，延长轮胎与燃油寿命") then
     StrategyCoordinator.issueRadioOrder(_selectedCarForRadio, "SAVE")
   end
@@ -892,7 +900,7 @@ function M.renderPitWallTab()
   local selFpl = (selCar and selCar.empiricalFpl) or (selPlan and selPlan.dynamicFpl) or 2.5
   local selEstLaps = (selFpl > 0) and math.floor(selFuel / selFpl) or 0
 
-  ui.sameLine()
+  if ui.sameLine then ui.sameLine() end
   if drawActionButton("📦 BOX 进站##cmd_box", COLOR_BTN_BOX, COLOR_WHITE, "配置进站工单（选择轮胎配方、加油量）并向车手下达进站指令") then
     _workOrderCarIndex = _selectedCarForRadio
     _showWorkOrderModal = true
@@ -915,7 +923,7 @@ function M.renderPitWallTab()
     _woRefuelLiters = math.min(room, math.floor(fuelToFinish * 10 + 0.5) / 10)
   end
 
-  ui.sameLine()
+  if ui.sameLine then ui.sameLine() end
   if drawActionButton("⚡ FAST 极速换胎##cmd_fastbox", COLOR_BTN_TAB_IDLE, COLOR_CYAN, "一键极速进站 (采用智能默认配置换胎不补油，无需手动配置工单)") then
     RaceContext.setCarWorkOrder(_selectedCarForRadio, {
       changeTyres = true,
@@ -927,7 +935,7 @@ function M.renderPitWallTab()
     StrategyCoordinator.issueRadioOrder(_selectedCarForRadio, "BOX_THIS_LAP")
   end
 
-  ui.sameLine()
+  if ui.sameLine then ui.sameLine() end
   if drawActionButton("✖ CLEAR 恢复自主##cmd_clear", COLOR_BTN_TAB_IDLE, COLOR_MUTED, "恢复该赛车的自主战术与标称策略节奏") then
     StrategyCoordinator.issueRadioOrder(_selectedCarForRadio, "NONE")
   end
@@ -940,17 +948,17 @@ function M.renderPitWallTab()
     local isOk = (latestCmd.status == "SUCCESS")
     local statusTag = isOk and "[已确认]" or ((latestCmd.status == "PENDING") and "[处理中/合流]" or "[未执行]")
     local statusCol = isOk and COLOR_GREEN or ((latestCmd.status == "PENDING") and COLOR_GOLD or COLOR_RED)
-    ui.text("最近无线电回显: ")
-    ui.sameLine()
+    drawInlineColored(COLOR_WHITE, "  最近无线电回显: ")
+    if ui.sameLine then ui.sameLine() end
     drawInlineColored(statusCol, statusTag)
-    ui.sameLine()
-    ui.text(string.format("[%s] %s", latestCmd.timeStr, latestCmd.msg))
+    if ui.sameLine then ui.sameLine() end
+    drawInlineColored(COLOR_MUTED, string.format(" [%s] %s", latestCmd.timeStr, latestCmd.msg))
   end
 
-  ui.separator()
+  if ui.separator then ui.separator() end
 
   -- 2. Synchronized Driver Telemetry & Vehicle Health Panel
-  drawTextColored(COLOR_CYAN, string.format("【#%02d %s 实时机械工况与车况遥测】", _selectedCarForRadio + 1, fullTargetName))
+  drawSectionHeader(string.format("#%02d %s 机械工况与车况遥测", _selectedCarForRadio + 1, fullTargetName), "MECHANICAL HEALTH & SENSORS", COLOR_CYAN)
   local engHealth = math.max(0.0, math.min(100.0, (selCar.engineLifeLeft or 1000.0) / 10.0))
   local waterT = selCar.waterTemp or 90.0
   local gbHealth = math.max(0.0, math.min(100.0, (1.0 - (selCar.gearboxDamage or 0.0)) * 100.0))
@@ -1087,7 +1095,7 @@ function M.renderPitWallTab()
   ui.separator()
 
   -- 2. Dynamic Pit Strategy Table
-  drawTextColored(COLOR_CYAN, "【全场进站策略窗口与动态续航概览】(点击车手行可直接选中指挥目标)")
+  drawSectionHeader("全场进站策略窗口与动态续航概览", "DYNAMIC PIT STRATEGY OVERVIEW", COLOR_GOLD)
 
   if _activeAiCount == 0 then
     -- Show Player Standby Plan
@@ -1097,16 +1105,16 @@ function M.renderPitWallTab()
     local pFpl = playerPlan.dynamicFpl or 2.5
     local pEstLaps = (pFpl > 0) and math.floor(pFuel / pFpl) or 0
     local _, pFullName = getDriverNameDisplay(0, 16)
-    ui.text("  车号   车手姓名     燃油/单圈     预计续航   进站建议窗口    策略决策")
-    ui.text(string.format("  #01   %-10s   %4.1fL(%.2f)   ~%2d 圈    第%02d-%02d圈     ",
-      pFullName:sub(1, 10), pFuel, pFpl, pEstLaps, playerPlan.openLap or 0, playerPlan.escalateLap or 0))
-    ui.sameLine()
-    drawInlineColored(COLOR_GREEN, "[继续留场]")
+    ui.text("  车号   车手姓名         燃油 / 单圈     预计续航   进站建议窗口    策略决策")
+    ui.text(string.format("  #01   %-12s   %4.1fL (%.2f)   ~%2d 圈    第%02d-%02d圈     ",
+      pFullName:sub(1, 12), pFuel, pFpl, pEstLaps, playerPlan.openLap or 0, playerPlan.escalateLap or 0))
+    if ui.sameLine then ui.sameLine() end
+    drawInlineColored(COLOR_GREEN, "[继续留场 STAY]")
     drawTextColored(COLOR_MUTED, "  [待命] 当前未检测到其他 AI 赛车。多车比赛时将在此动态列出全场战术规划。")
     return
   end
 
-  ui.text("  车号   车手姓名     燃油/单圈     预计续航   进站建议窗口    策略决策")
+  ui.text("  车号   车手姓名         燃油 / 单圈     预计续航   进站建议窗口    策略决策")
 
   for slot = 1, _activeAiCount do
     local i = _activeAiIndices[slot]
@@ -1116,12 +1124,12 @@ function M.renderPitWallTab()
       local fuel = c.fuelInTank or 0.0
       local fpl = plan.dynamicFpl or 2.5
       local estLaps = (fpl > 0) and math.floor(fuel / fpl) or 0
-      local dName, fullDriverName = getDriverNameDisplay(i, 10)
+      local dName, fullDriverName = getDriverNameDisplay(i, 12)
       local dLabel = EventHub.formatDriverLabel(i, fullDriverName)
 
       local isSelected = (_selectedCarForRadio == i)
-      local selPrefix = isSelected and "> " or "  "
-      local rowLabel = string.format("%s#%02d %-10s##pit_row_%d", selPrefix, i + 1, dName, i)
+      local selPrefix = isSelected and "▶ " or "  "
+      local rowLabel = string.format("%s#%02d %-12s##pit_row_%d", selPrefix, i + 1, dName, i)
 
       local rowClicked = false
       if ui.selectable then
@@ -1136,19 +1144,19 @@ function M.renderPitWallTab()
       end
       setTooltip(string.format("车手: %s (点击选中为指挥目标)", fullDriverName))
 
-      ui.sameLine()
-      ui.text(string.format(" %4.1fL(%.2f)   ~%2d 圈    第%02d-%02d圈     ",
+      if ui.sameLine then ui.sameLine() end
+      ui.text(string.format(" %4.1fL (%.2f)   ~%2d 圈    第%02d-%02d圈     ",
         fuel, fpl, estLaps, plan.openLap or 0, plan.escalateLap or 0))
-      ui.sameLine()
+      if ui.sameLine then ui.sameLine() end
 
       if c.isRetired or c.pitState == "RETIRED" or c.tacticalState == "RETIRED" then
-        drawInlineColored(COLOR_MUTED, "[已退赛 (RET)]")
+        drawInlineColored(COLOR_MUTED, "[赛车退赛 RET]")
       elseif c.pitState == "IN_BAY" or c.pitState == "IN_PITLANE" or c.tacticalState == "PIT_BAY" or c.isInPitlane or c.isInPit then
-        drawInlineColored(COLOR_CYAN, "[停站作业中 (BAY)]")
+        drawInlineColored(COLOR_CYAN, "[停站作业 BAY]")
       elseif c.pitState == "REQUESTED" or c.radioCommand == "BOX_THIS_LAP" or c.tacticalState == "BOXING" or c.pit_requested then
-        drawInlineColored(COLOR_RED, "[立即进站 (BOX)]")
+        drawInlineColored(COLOR_RED, "[立即进站 BOX]")
       else
-        drawInlineColored(COLOR_GREEN, "[继续留场 (STAY)]")
+        drawInlineColored(COLOR_GREEN, "[继续留场 STAY]")
       end
     end
   end
@@ -1159,8 +1167,7 @@ end
 --------------------------------------------------------------------------------
 function M.renderSetup()
   if not ui or not ui.text then return end
-  drawTextColored(COLOR_CYAN, "【进站策略工坊与参数设定】")
-  ui.separator()
+  drawSectionHeader("进站策略工坊与参数设定", "PIT STRATEGY WORKSHOP & STINT PLANNER", COLOR_CYAN)
 
   local race = RaceContext.getRaceState()
   local totalLaps = race.totalLaps or 13
@@ -1174,7 +1181,7 @@ function M.renderSetup()
     end
   end
 
-  ui.text("1. 比赛基础参数设定 (FIA 官方正赛规程锁定):")
+  drawSectionHeader("比赛基础参数设定 (FIA 官方正赛规程锁定)", "SESSION REGULATION & BASE FPL", COLOR_GOLD)
   ui.text(string.format("  官方总圈数: %d 圈 (赛程已锁定)  |  基准预估单圈油耗: %.2f L/圈", totalLaps, _setupBaseFpl))
 
   if ui.button("省油特性 (2.0L)##setup_fpl_low") then
@@ -1182,43 +1189,43 @@ function M.renderSetup()
     StrategyCoordinator.rebuildFieldStrategy(totalLaps, _setupStops, _setupBaseFpl)
   end
   setTooltip("设定为省油车辆参数 (如 GT4 / 房车 / 高效调校)")
-  ui.sameLine()
+  if ui.sameLine then ui.sameLine() end
   if ui.button("标准特性 (2.5L)##setup_fpl_med") then
     _setupBaseFpl = 2.5
     StrategyCoordinator.rebuildFieldStrategy(totalLaps, _setupStops, _setupBaseFpl)
   end
   setTooltip("设定为标准 GT3 / 单座方程式标称能耗")
-  ui.sameLine()
+  if ui.sameLine then ui.sameLine() end
   if ui.button("高耗特性 (3.2L)##setup_fpl_high") then
     _setupBaseFpl = 3.2
     StrategyCoordinator.rebuildFieldStrategy(totalLaps, _setupStops, _setupBaseFpl)
   end
   setTooltip("设定为大排量/推圈车辆参数 (如 F1 / GT3 / 斯帕长赛道调校)")
 
-  ui.separator()
+  if ui.separator then ui.separator() end
 
-  ui.text("2. 目标进站停站轮次:")
+  drawSectionHeader("目标进站停站轮次", "TARGET PIT STOP STRATEGY", COLOR_GOLD)
   if ui.button(_setupStops == 0 and "[ 0停冲刺 (不进站) ]" or "  0停冲刺 (不进站)  ") then
     _setupStops = 0
     StrategyCoordinator.rebuildFieldStrategy(totalLaps, 0, _setupBaseFpl)
   end
   setTooltip("规划为一胎到底、中途不停站策略")
-  ui.sameLine()
+  if ui.sameLine then ui.sameLine() end
   if ui.button(_setupStops == 1 and "[ 1停均衡 (常规最优) ]" or "  1停均衡 (常规最优)  ") then
     _setupStops = 1
     StrategyCoordinator.rebuildFieldStrategy(totalLaps, 1, _setupBaseFpl)
   end
   setTooltip("规划为中程单次进站策略，平衡抓地力与停站耗时")
-  ui.sameLine()
+  if ui.sameLine then ui.sameLine() end
   if ui.button(_setupStops == 2 and "[ 2停攻击 (全力超车) ]" or "  2停攻击 (全力超车)  ") then
     _setupStops = 2
     StrategyCoordinator.rebuildFieldStrategy(totalLaps, 2, _setupBaseFpl)
   end
   setTooltip("规划为两次进站策略，全程使用高抓地力软胎全力推圈")
 
-  ui.separator()
+  if ui.separator then ui.separator() end
 
-  ui.text("3. 各赛段 (Stint) 详细拆解与进站开窗:")
+  drawSectionHeader("各赛段详细拆解与进站开窗", "STINT SPLITS & PIT WINDOWS", COLOR_GOLD)
   local stintCount = strategyCalc.computeStintCount(_setupStops, totalLaps)
   local splits = strategyCalc.splitTotalLapsAcrossStints(totalLaps, stintCount)
   local startFuel = totalLaps * _setupBaseFpl
@@ -1242,13 +1249,13 @@ function M.renderSetup()
     end
   end
 
-  ui.separator()
+  if ui.separator then ui.separator() end
 
-  ui.text("4. 燃油需求核算卡片:")
+  drawSectionHeader("燃油需求核算卡片", "FUEL REQUIREMENT CALCULATION", COLOR_GOLD)
   ui.text(string.format("  全场理论耗油: %.1f L (安全储备含保底: %.1f L)", startFuel, safeFuel))
   ui.text(string.format("  节油巡航目标: %.2f L/圈  |  进攻推圈限额: %.2f L/圈", _setupBaseFpl * 0.94, _setupBaseFpl * 1.05))
 
-  ui.separator()
+  if ui.separator then ui.separator() end
 
   if ui.button("应用策略至全场发车格 (APPLY STRATEGY)##setup_apply") then
     StrategyCoordinator.rebuildFieldStrategy(totalLaps, _setupStops, _setupBaseFpl)
@@ -1260,7 +1267,7 @@ function M.renderSetup()
 
   local nowClock = (os and os.clock and os.clock()) or 0.0
   if _setupAppliedFeedback and (nowClock - _setupAppliedTimestamp) < 4.0 then
-    ui.sameLine()
+    if ui.sameLine then ui.sameLine() end
     drawInlineColored(COLOR_GREEN, " [OK] " .. _setupAppliedFeedback)
   end
 end
@@ -1269,7 +1276,7 @@ end
 -- 8. Tab 4: Driver Grid Persona Configuration
 --------------------------------------------------------------------------------
 function M.renderGridSetupTab()
-  drawTextColored(COLOR_CYAN, "【车手性格与 7D 基因图谱覆写】")
+  drawSectionHeader("车手性格与 7D 基因图谱覆写", "DRIVER PERSONALITY & 7D DNA PROFILES", COLOR_CYAN)
 
   if _activeAiCount == 0 then
     drawTextColored(COLOR_MUTED, "当前未检测到活跃 AI 车手。")
@@ -1279,18 +1286,18 @@ function M.renderGridSetupTab()
   for slot = 1, _activeAiCount do
     local i = _activeAiIndices[slot]
     local c = RaceContext.getCarState(i)
-    local dName, fullDriverName = getDriverNameDisplay(i, 10)
+    local dName, fullDriverName = getDriverNameDisplay(i, 12)
     local dLabel = EventHub.formatDriverLabel(i, fullDriverName)
     local curOverride = personaLoader.getManualOverride(i)
     local persona = personaLoader.getPersonaForCar(i, fullDriverName)
     local activeKey = (personaLoader.getActivePersonaKey and personaLoader.getActivePersonaKey(i, fullDriverName)) or curOverride
     local pDisplay = _personaNames[curOverride] or (activeKey and _personaNames[activeKey]) or (persona.name or "均衡配置")
 
-    ui.text(string.format("  #%02d %-10s: ", i + 1, dName))
+    drawInlineColored(COLOR_WHITE, string.format("  #%02d %-12s: ", i + 1, dName))
     setTooltip(string.format("车手: %s", fullDriverName))
-    ui.sameLine()
-    drawInlineColored(COLOR_BLUE, string.format("[ %s ]", pDisplay))
-    ui.sameLine()
+    if ui.sameLine then ui.sameLine() end
+    drawInlineColored(COLOR_BLUE, string.format("[ %-12s ]", pDisplay))
+    if ui.sameLine then ui.sameLine() end
 
     local isEditing = (_selectedCarForPersona == i)
     if ui.button(string.format("%s##btn_persona_%d", isEditing and "收起模版" or "自选模版", i)) then
@@ -1355,7 +1362,7 @@ end
 -- 9. Tab 5: Core System Diagnostic Logs
 --------------------------------------------------------------------------------
 function M.renderLogsTab()
-  drawTextColored(COLOR_CYAN, "【核心运行诊断与 AI 控制日志】")
+  drawSectionHeader("核心运行诊断与 AI 控制日志", "CORE SYSTEM DIAGNOSTICS & TELEMETRY", COLOR_CYAN)
 
   -- 1. Toolbar & Controls
   local isStreamActive = ControlTelemetry.isEnabled()
@@ -1421,7 +1428,7 @@ function M.renderLogsTab()
 
   -- 2. Live AI Control Stream Section (Streamed when enabled)
   if isStreamActive then
-    drawTextColored(COLOR_CYAN, "=== 实时 AI 原生控制遥测流 (Live AI Control Telemetry Stream) ===")
+    drawSectionHeader("实时 AI 原生控制遥测流", "LIVE AI CONTROL TELEMETRY STREAM", COLOR_GOLD)
     local ctrlEntries = ControlTelemetry.getRecentEntries(30)
     if #ctrlEntries == 0 then
       drawTextColored(COLOR_MUTED, "  [监听中] 暂无控制动作下发。当战术策略系统下发油门、变道、配速或进站指令时将在此实时显示。")
@@ -1470,7 +1477,7 @@ function M.renderLogsTab()
   end
 
   -- 3. Standard Core System Diagnostic Logs
-  drawTextColored(COLOR_CYAN, "=== 系统诊断与服务日志 (System Service Logs) ===")
+  drawSectionHeader("系统与策略诊断服务日志", "SYSTEM & STRATEGY SERVICE LOGS", COLOR_CYAN)
   local logs = Logger.getRecentLogs()
   if #logs == 0 then
     drawTextColored(COLOR_MUTED, "暂无已产生的日志记录。")
@@ -1498,7 +1505,7 @@ end
 --------------------------------------------------------------------------------
 function M.renderDirectorTab()
   if not ui or not ui.text then return end
-  drawTextColored(COLOR_CYAN, "【智能实时导播系统 (AI TV Director & Cinematic Broadcast Engine)】")
+  drawSectionHeader("智能实时导播系统", "AI TV DIRECTOR & CINEMATIC BROADCAST ENGINE", COLOR_CYAN)
 
   local isDirectorActive = TVDirectorEngine.isEnabled()
 
@@ -1518,7 +1525,7 @@ function M.renderDirectorTab()
 
   -- 2. Live Telemetry Monitor (When Active)
   if isDirectorActive then
-    drawTextColored(COLOR_CYAN, "=== 当前导播监视器 (Live Director Monitor) ===")
+    drawSectionHeader("当前导播监视器", "LIVE DIRECTOR MONITOR", COLOR_GOLD)
     local focusedCar = TVDirectorEngine.getFocusedCar()
     local _, fullTargetName = getDriverNameDisplay(focusedCar, 18)
     local targetLabel = EventHub.formatDriverLabel(focusedCar, fullTargetName)
@@ -1591,8 +1598,8 @@ function M.renderDirectorTab()
     if ui and ui.separator then ui.separator() end
   end
 
-  -- 3. Configurable Dwell Times & Quiet Window (Requirement 1 & 2)
-  drawTextColored(COLOR_CYAN, "=== 镜头节奏与人工让渡时限配置 (Configurable Timing Parameters) ===")
+  -- 3. Configurable Dwell Times & Quiet Window
+  drawSectionHeader("镜头节奏与人工让渡时限配置", "CONFIGURABLE TIMING PARAMETERS", COLOR_GOLD)
 
   local minDwell = TVDirectorEngine.getMinDwellTime()
   local maxDwell = TVDirectorEngine.getMaxDwellTime()
@@ -1645,7 +1652,7 @@ function M.renderDirectorTab()
   if ui and ui.separator then ui.separator() end
 
   -- 4. Director Style Presets
-  drawTextColored(COLOR_CYAN, "=== 转播风格预设 (Broadcast Flavor Presets) ===")
+  drawSectionHeader("转播风格预设", "BROADCAST FLAVOR PRESETS", COLOR_GOLD)
   local curStyle = TVDirectorEngine.getStyle()
 
   local style1Text = (curStyle == TVDirectorEngine.STYLE_WORLD_FEED) and "[✔ 官方转播风格 (World Feed)]##wf_btn" or "  官方转播风格 (World Feed)  ##wf_btn"
@@ -1671,7 +1678,7 @@ function M.renderDirectorTab()
   if ui and ui.separator then ui.separator() end
 
   -- 5. Contextual Perspectives & Narrative Storytelling
-  drawTextColored(COLOR_CYAN, "=== 拟人战术情景视角偏好与叙事连贯 (Tactical Perspectives & Storytelling) ===")
+  drawSectionHeader("拟人战术情景视角偏好与叙事连贯", "TACTICAL PERSPECTIVES & STORYTELLING", COLOR_GOLD)
 
   local prefCockpit = TVDirectorEngine.getPrefStrainCockpit()
   local btnCockpit = prefCockpit and "[✔] 高压心理座舱视角 (Stress Dash)##pref_cockpit" or "[  ] 高压心理座舱视角 (Stress Dash)##pref_cockpit"
@@ -1714,7 +1721,7 @@ function M.renderDirectorTab()
   if ui and ui.separator then ui.separator() end
 
   -- 6. Instant Perspective Audition
-  drawTextColored(COLOR_CYAN, "=== 快速试镜体验 (Instant Perspective Audition) ===")
+  drawSectionHeader("快速试镜体验", "INSTANT PERSPECTIVE AUDITION", COLOR_GOLD)
   local focusTarget = TVDirectorEngine.getFocusedCar()
   if ui and ui.text then ui.text(string.format("针对当前聚焦车辆 (#%02d) 即时体验各特色机位:", focusTarget + 1)) end
   if ui and ui.sameLine then ui.sameLine() end
@@ -1751,7 +1758,7 @@ function M.renderDirectorTab()
   if ui and ui.separator then ui.separator() end
 
   -- 7. Combat Hotspot Radar Top 3
-  drawTextColored(COLOR_CYAN, "=== 全场战斗精彩度雷达 (Top Combat Hotspots) ===")
+  drawSectionHeader("全场战斗精彩度雷达与手动切镜", "TOP COMBAT HOTSPOTS & MANUAL CUT", COLOR_GOLD)
   local topHotspots = TVDirectorEngine.getTopHotspots(3)
   for idx = 1, 3 do
     local h = topHotspots[idx]
@@ -1760,7 +1767,7 @@ function M.renderDirectorTab()
       local hLabel = EventHub.formatDriverLabel(h.carIndex, hName)
       local hCol = (h.priority <= 1) and COLOR_RED or ((h.priority <= 2) and COLOR_GOLD or COLOR_GREEN)
       local hSit = (h.situation == TVDirectorEngine.SITUATION_ATTACK_NOSE) and "进攻前鼻" or ((h.situation == TVDirectorEngine.SITUATION_DEFEND_REAR) and "防守尾追" or ((h.situation == TVDirectorEngine.SITUATION_STRAIN_COCKPIT) and "座舱高压" or ((h.situation == TVDirectorEngine.SITUATION_SIDE_HELICOPTER) and "直升机" or "转播机位")))
-      if ui and ui.text then ui.text(string.format("热点 #%d: %s | 精彩度: %.1f | 推荐机位: [%s] | ", idx, hLabel, h.score, hSit)) end
+      if ui and ui.text then ui.text(string.format("  热点 #%d: %-18s | 精彩度: %4.1f | 机位: [%s] | ", idx, hLabel, h.score, hSit)) end
       if ui and ui.sameLine then ui.sameLine() end
       drawInlineColored(hCol, string.format("[%s]", h.reason))
       if ui and ui.sameLine then ui.sameLine() end
@@ -1776,30 +1783,30 @@ end
 -- 10. Dual-Track Live Command Receipt & Race Broadcast Feed (Pinned)
 --------------------------------------------------------------------------------
 function M.renderEventFeed()
-  ui.separator()
-  drawTextColored(COLOR_CYAN, "=== 实时指令响应与赛事广播流 ===")
+  if ui and ui.separator then ui.separator() end
+  drawSectionHeader("实时指令响应与赛事广播流", "LIVE COMMAND RECEIPTS & BROADCAST FEED", COLOR_CYAN)
 
   -- Controls bar
   if _feedPaused then
-    drawInlineColored(COLOR_MUTED, "⏸ 广播已暂停")
+    drawInlineColored(COLOR_MUTED, "  ⏸ 广播已暂停")
   else
-    drawInlineColored(COLOR_GREEN, "● 实时监听中")
+    drawInlineColored(COLOR_GREEN, "  ● 实时监听中")
   end
-  ui.sameLine()
-  if ui.button(_feedPaused and "恢复更新##feed_toggle" or "暂停更新##feed_toggle") then
+  if ui and ui.sameLine then ui.sameLine() end
+  if ui and ui.button and ui.button(_feedPaused and "恢复更新##feed_toggle" or "暂停更新##feed_toggle") then
     _feedPaused = not _feedPaused
   end
   setTooltip("暂停或恢复事件流的自动滚动刷新")
-  ui.sameLine()
-  if ui.button("清空面板##feed_clear") then
+  if ui and ui.sameLine then ui.sameLine() end
+  if ui and ui.button and ui.button("清空面板##feed_clear") then
     EventHub.clearAll()
   end
   setTooltip("清除当前已记录的指令与事件列表")
 
-  ui.separator()
+  if ui and ui.separator then ui.separator() end
 
   -- Track 1: Command & Execution Receipt
-  drawTextColored(COLOR_CYAN, "指令下达与回执 (COMMANDS & RECEIPTS)")
+  drawSectionHeader("指令下达与回执", "COMMANDS & RECEIPTS", COLOR_GOLD)
   local cmdEvents = EventHub.getRecentCommands(5)
   if #cmdEvents == 0 then
     drawTextColored(COLOR_MUTED, "  待命: 暂无已提交指令。在上方点击策略或无线电按钮即可产生即时回显。")
@@ -1808,18 +1815,18 @@ function M.renderEventFeed()
       local isOk = (ev.status == "SUCCESS")
       local markText = isOk and "✔ 成功" or "✖ 异常"
       local markCol = isOk and COLOR_GREEN or COLOR_RED
-      ui.text(string.format("  [%s] ", ev.timeStr))
-      ui.sameLine()
+      if ui and ui.text then ui.text(string.format("  [%s] ", ev.timeStr)) end
+      if ui and ui.sameLine then ui.sameLine() end
       drawInlineColored(markCol, markText)
-      ui.sameLine()
-      ui.text(string.format(" • %s", ev.msg))
+      if ui and ui.sameLine then ui.sameLine() end
+      if ui and ui.text then ui.text(string.format(" • %s", ev.msg)) end
     end
   end
 
-  ui.separator()
+  if ui and ui.separator then ui.separator() end
 
   -- Track 2: AI Behavior & World Events
-  drawTextColored(COLOR_CYAN, "AI 拟人决策与赛事动态广播 (RACE BROADCAST)")
+  drawSectionHeader("AI 拟人决策与赛事动态广播", "RACE BROADCAST", COLOR_CYAN)
   local aiEvents = EventHub.getRecentAiEvents(7)
   if #aiEvents == 0 then
     drawTextColored(COLOR_MUTED, "  监听中: 正在追踪全场 AI 攻防博弈、特技动作、失误修正与黄旗突发...")
@@ -1828,8 +1835,8 @@ function M.renderEventFeed()
       local isHornAlert = ev.msg:find("抗议") or ev.msg:find("鸣笛")
       local isAlert = isHornAlert or ev.msg:find("大灯") or ev.msg:find("闪灯") or ev.msg:find("失误") or ev.msg:find("黄旗") or ev.msg:find("进站") or ev.msg:find("撞击") or ev.msg:find("Safety") or ev.msg:find("安全车") or ev.msg:find("蓝旗")
       local evCol = isHornAlert and COLOR_RED or (isAlert and COLOR_GOLD or COLOR_BLUE)
-      ui.text(string.format("  [%s] ", ev.timeStr))
-      ui.sameLine()
+      if ui and ui.text then ui.text(string.format("  [%s] ", ev.timeStr)) end
+      if ui and ui.sameLine then ui.sameLine() end
       drawInlineColored(evCol, ev.msg)
     end
   end
@@ -1865,70 +1872,74 @@ function M.renderBattleRadarTab()
   local bStats = BattleTracker.getStats()
   local race = RaceContext.getRaceState()
 
-  drawTextColored(COLOR_CYAN, "AI 攻防博弈与战力量化大屏 (COBAL BATTLE ANALYTICS)")
-  ui.text("基于情境感知引擎 (SCE) 与量化校准体系，呈现本插件相比原生 AI 的质感跃升。")
-  ui.separator()
+  drawSectionHeader("AI 攻防博弈与战力量化大屏", "COBAL BATTLE ANALYTICS", COLOR_CYAN)
 
   -- Section A: 4 KPI Metric Chips (High visual contrast, immediate data visibility)
-  drawInlineColored(COLOR_GOLD, "▶ 核心战果统计 (VS 原生单调 AI 基准改善)")
+  drawSectionHeader("核心战果统计 (VS 原生单调 AI 基准改善)", "CORE BATTLE IMPACT KPIS", COLOR_GOLD)
 
   -- Row 1: Duel Time & Overtakes
-  ui.text("  缠斗总时长:")
-  ui.sameLine()
-  drawInlineColored(COLOR_WHITE, string.format(" %.1f 秒对 ", bStats.totalDuelTime or 0.0))
-  ui.sameLine()
-  drawInlineColored(COLOR_GREEN, string.format("(▲ +%.0f%% 显著增加攻防机会)", bStats.benchmarkDuelGainPct or 145.0))
-  ui.sameLine()
-  ui.text("  •  完成有效超车:")
-  ui.sameLine()
-  drawInlineColored(COLOR_WHITE, string.format(" %d 次 ", bStats.completedOvertakes or 0))
-  ui.sameLine()
+  drawInlineColored(COLOR_WHITE, "  缠斗总时长: ")
+  if ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_WHITE, string.format("%.1f 秒 ", bStats.totalDuelTime or 0.0))
+  if ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_GREEN, string.format("(▲ +%.0f%% 攻防增益)", bStats.benchmarkDuelGainPct or 145.0))
+  if ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_MUTED, "  |  ")
+  if ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_WHITE, "完成有效超车: ")
+  if ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_WHITE, string.format("%d 次 ", bStats.completedOvertakes or 0))
+  if ui.sameLine then ui.sameLine() end
   drawInlineColored(COLOR_CYAN, string.format("(转化率 %.1f%%)",
     (bStats.duelEpisodesCount > 0) and ((bStats.duelConversionsCount / bStats.duelEpisodesCount) * 100.0) or 0.0))
 
   -- Row 2: Pack Spacing & Field Cohesion
-  ui.text("  车群中位间距 G:")
-  ui.sameLine()
-  drawInlineColored(COLOR_WHITE, string.format(" %.1f 米 ", bStats.medianPackSpacingG or 22.0))
-  ui.sameLine()
-  drawInlineColored(COLOR_GREEN, string.format("(▼ -%.0f%% 车群致密拒绝列车巡航)", bStats.benchmarkPackGainPct or 42.0))
-  ui.sameLine()
-  ui.text("  •  集团相干度:")
-  ui.sameLine()
-  drawInlineColored(COLOR_WHITE, string.format(" %.0f%% 赛车处于追击窗口", (bStats.packCohesionRatio or 0.85) * 100.0))
+  drawInlineColored(COLOR_WHITE, "  车群中位间距: ")
+  if ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_WHITE, string.format("%.1f 米 ", bStats.medianPackSpacingG or 22.0))
+  if ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_GREEN, string.format("(▼ -%.0f%% 致密防列车)", bStats.benchmarkPackGainPct or 42.0))
+  if ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_MUTED, "  |  ")
+  if ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_WHITE, "集团相干度: ")
+  if ui.sameLine then ui.sameLine() end
+  drawInlineColored(COLOR_CYAN, string.format("%.0f%% 处于追击窗口", (bStats.packCohesionRatio or 0.85) * 100.0))
 
-  ui.separator()
+  if ui.separator then ui.separator() end
 
   -- Section B: High-Order Maneuvers Breakdown
-  drawInlineColored(COLOR_CYAN, "▶ 高阶对抗动作分布 (HIGH-ORDER COMBAT MANEUVERS)")
+  drawSectionHeader("高阶对抗动作分布", "HIGH-ORDER COMBAT MANEUVERS", COLOR_CYAN)
   ui.text(string.format("  ⚡ 绝杀突袭晚刹车: %2d 次    |  ⚔ 交叉线反超反制: %2d 次",
     bStats.lateBrakeDivesCount or 0, bStats.switchbacksCount or 0))
   ui.text(string.format("  🛡 极限防守压迫:   %2d 次    |  ⚠ 施压迫发失误:   %2d 次",
     bStats.defenseSqueezesCount or 0, bStats.pressureMistakesCount or 0))
 
-  ui.separator()
+  if ui.separator then ui.separator() end
 
   -- Section C: Spotlight on Hottest Duel
-  drawInlineColored(COLOR_GOLD, "▶ 全场最焦灼攻防对决 (SPOTLIGHT BATTLE)")
+  drawSectionHeader("全场最焦灼攻防对决", "SPOTLIGHT BATTLE", COLOR_GOLD)
   local hotDuel = BattleTracker.getHottestDuel()
   if hotDuel and hotDuel.carA >= 0 and hotDuel.carB >= 0 then
     local cA = RaceContext.getCarState(hotDuel.carA)
     local cB = RaceContext.getCarState(hotDuel.carB)
     local nameA = (cA and cA.driverName) or string.format("Car #%d", hotDuel.carA + 1)
     local nameB = (cB and cB.driverName) or string.format("Car #%d", hotDuel.carB + 1)
-    drawInlineColored(COLOR_CYAN, string.format("  ★ 激战对决: %s  VS  %s", nameA, nameB))
-    ui.sameLine()
-    drawInlineColored(COLOR_GOLD, "  ● 持续缠斗中")
-    ui.text(string.format("    间距: %.2f 秒 (%.1f 米) • 焦灼时长: %.1f 秒",
+    drawInlineColored(COLOR_CYAN, string.format("  ★ 激战对决: %-16s VS %-16s", nameA, nameB))
+    if ui.sameLine then ui.sameLine() end
+    drawInlineColored(COLOR_GOLD, " [持续缠斗中]")
+    ui.text(string.format("    间距: %.2f 秒 (%.1f 米) | 焦灼时长: %.1f 秒",
       hotDuel.gapSeconds or 0.0, hotDuel.gapMetres or 0.0, hotDuel.duration or 0.0))
   else
     drawTextColored(COLOR_MUTED, "  雷达追踪中: 全场赛车处于稳定追击或窗口重构中...")
   end
 
-  ui.separator()
+  if ui.separator then ui.separator() end
 
   -- Section D: Live AI Situational Context (SCE) Table
-  drawInlineColored(COLOR_CYAN, "▶ 全场 AI 实时情境投入度矩阵 (LIVE SCE & COMMITMENT MATRIX)")
+  drawSectionHeader("全场 AI 实时情境投入度矩阵", "LIVE SCE & COMMITMENT MATRIX", COLOR_CYAN)
+  ui.text("  车号   车手姓名         攻防战术姿态     追击     防守     缠斗     特技动作")
+
   local carsCount = (race.carsCount and race.carsCount > 0) and race.carsCount or _activeAiCount
   for i = 1, math.min(carsCount - 1, 12) do
     local s = TacticalTicker.getAiState(i)
@@ -1950,19 +1961,19 @@ function M.renderBattleRadarTab()
         statusCol = COLOR_CYAN
       end
 
-      ui.text(string.format("  #%02d %-14s • ", i, dName:sub(1, 14)))
-      ui.sameLine()
-      drawInlineColored(statusCol, string.format("%-11s", stateName))
-      ui.sameLine()
-      ui.text(string.format("• 追击: %2.0f%% • 防守: %2.0f%% • 缠斗: %2.0f%% • 特技: %s",
+      ui.text(string.format("  #%02d   %-14s", i, dName:sub(1, 14)))
+      if ui.sameLine then ui.sameLine() end
+      drawInlineColored(statusCol, string.format("   %-12s", stateName))
+      if ui.sameLine then ui.sameLine() end
+      ui.text(string.format("   %3.0f%%     %3.0f%%     %3.0f%%    %-14s",
         pMu * 100, defMu * 100, dMu * 100, actSkill))
     end
   end
 
-  ui.separator()
+  if ui.separator then ui.separator() end
 
   -- Section E: 360-Degree Proximity & Spatial Radar
-  drawInlineColored(COLOR_GOLD, "▶ 全向近距空间感知与盲区雷达 (360° PROXIMITY & BLINDSPOT RADAR)")
+  drawSectionHeader("全向近距空间感知与盲区雷达", "360° PROXIMITY & BLINDSPOT RADAR", COLOR_GOLD)
   local rSummary = SpatialRadar.getSummary()
   local nearby = SpatialRadar.getNearbyCars()
   local spotAlert, spotTimer = SpatialRadar.getSpotterAlert()
@@ -1983,10 +1994,11 @@ function M.renderBattleRadarTab()
   end
 
   if #nearby > 0 then
+    ui.text("  方位      车手姓名         顺位   距离     局部坐标(X, Z)       逼近速度     态势标签")
     for i = 1, math.min(#nearby, 8) do
       local c = nearby[i]
       local tagColor = COLOR_GREEN
-      local tagText = "安全"
+      local tagText = "安全巡航"
       if c.isOverlapping then
         tagColor = COLOR_RED
         tagText = "重叠盲区"
@@ -1998,12 +2010,13 @@ function M.renderBattleRadarTab()
         tagText = "尾流追击"
       end
 
-      ui.text(string.format("  • [%2d 点钟] %s (P%d) 距 %.1fm | 局部(X:%+.1fm, Z:%+.1fm) | 逼近: %+.0f km/h | 方位: %s",
-        c.clockDirection or 12, (c.driverName ~= "" and c.driverName or c.carName):sub(1, 16),
+      local driverDisp = (c.driverName ~= "" and c.driverName or c.carName)
+      ui.text(string.format("  [%2d点]   %-14s   P%02d   %4.1fm  (%+5.1fm, %+5.1fm)  %+5.0f km/h  ",
+        c.clockDirection or 12, driverDisp:sub(1, 14),
         c.racePosition or 0, c.distance or 0.0, c.localX or 0.0, c.localZ or 0.0,
-        c.closingSpeedKmh or 0.0, c.sector or "FRONT"))
-      ui.sameLine()
-      drawInlineColored(tagColor, string.format(" [%s]", tagText))
+        c.closingSpeedKmh or 0.0))
+      if ui.sameLine then ui.sameLine() end
+      drawInlineColored(tagColor, string.format("[%s]", tagText))
     end
   else
     drawTextColored(COLOR_MUTED, "  80m 范围内无贴身邻车，处于完全干净气流区 (Clean Air)")
