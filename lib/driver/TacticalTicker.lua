@@ -22,6 +22,7 @@ local TelemetryBridge = require("lib/bridge/TelemetryBridge")
 local watchdog = require("lib/driver/watchdog")
 local SkillArbitrator = require("lib/skills/SkillArbitrator")
 local BattleTracker = require("lib/driver/BattleTracker")
+local SpatialRadar = require("lib/driver/SpatialRadar")
 
 local function safeExtractDriverName(car)
   if not car then return "" end
@@ -545,6 +546,18 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
     return s
   end
 
+  -- 0.05 Spatial Radar Scan & Three-Wide Pinch Safety Gate:
+  local radarScan = SpatialRadar.updateTacticalFromPair(car, aheadCar, behindCar)
+  if radarScan and radarScan.isThreeWide and currentSpeedKmh > 45.0 then
+    s.state = "THREE_WIDE_HOLD"
+    s.activeSkill = "THREE_WIDE"
+    s.targetSplineOffset = s.currentSplineOffset or 0.0
+    s.targetCaution = 1.85
+    s.targetAggression = 0.40
+    TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
+    return s
+  end
+
   -- 0.1 Check Blue Flag yielding condition
   if raceContext and raceContext.isBlueFlagged and behindCar then
     s.state = M.STATE_YIELD
@@ -808,7 +821,16 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
       s.activeSkill = "POUNCE_PASS"
       s.targetCaution = 0.25
       s.targetAggression = 0.98
-      evaluateBodyLanguage(s, car, aheadCar, behindCar, s.aheadDist or 999.0, s.behindDist or 999.0, persona, rivalryScore, raceContext, dt)
+      -- Wheel-to-wheel Racing Room Margin: prevent cutting across overlapping flank
+  if radarScan and radarScan.hasOverlap and currentSpeedKmh > 45.0 then
+    if radarScan.overlapRelX < 0 then
+      s.targetSplineOffset = math.max(-0.20, s.targetSplineOffset)
+    elseif radarScan.overlapRelX > 0 then
+      s.targetSplineOffset = math.min(0.20, s.targetSplineOffset)
+    end
+  end
+
+  evaluateBodyLanguage(s, car, aheadCar, behindCar, s.aheadDist or 999.0, s.behindDist or 999.0, persona, rivalryScore, raceContext, dt)
       TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
       return s
     end
@@ -850,7 +872,16 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
         local DriverChatterEngine = require("lib/audio/DriverChatterEngine")
         DriverChatterEngine.triggerChatter(idx, DriverChatterEngine.SIT_OVERTAKE, persona, safeExtractDriverName(car))
       end
-      evaluateBodyLanguage(s, car, aheadCar, behindCar, s.aheadDist or 999.0, s.behindDist or 999.0, persona, rivalryScore, raceContext, dt)
+      -- Wheel-to-wheel Racing Room Margin: prevent cutting across overlapping flank
+  if radarScan and radarScan.hasOverlap and currentSpeedKmh > 45.0 then
+    if radarScan.overlapRelX < 0 then
+      s.targetSplineOffset = math.max(-0.20, s.targetSplineOffset)
+    elseif radarScan.overlapRelX > 0 then
+      s.targetSplineOffset = math.min(0.20, s.targetSplineOffset)
+    end
+  end
+
+  evaluateBodyLanguage(s, car, aheadCar, behindCar, s.aheadDist or 999.0, s.behindDist or 999.0, persona, rivalryScore, raceContext, dt)
       TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
       return s
     end
@@ -889,7 +920,16 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
       s.defenseHeatTimer = 0.0
     end
 
-    evaluateBodyLanguage(s, car, aheadCar, behindCar, s.aheadDist or 999.0, s.behindDist or 999.0, persona, rivalryScore, raceContext, dt)
+    -- Wheel-to-wheel Racing Room Margin: prevent cutting across overlapping flank
+  if radarScan and radarScan.hasOverlap and currentSpeedKmh > 45.0 then
+    if radarScan.overlapRelX < 0 then
+      s.targetSplineOffset = math.max(-0.20, s.targetSplineOffset)
+    elseif radarScan.overlapRelX > 0 then
+      s.targetSplineOffset = math.min(0.20, s.targetSplineOffset)
+    end
+  end
+
+  evaluateBodyLanguage(s, car, aheadCar, behindCar, s.aheadDist or 999.0, s.behindDist or 999.0, persona, rivalryScore, raceContext, dt)
     TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
     return s
   else
@@ -960,9 +1000,12 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
         end
 
         s.rivalRelX = behindRelX
-        -- Side-by-side overlap ratio estimation
+        -- Side-by-side overlap ratio estimation with Spatial Radar
         local overlap = 0.0
-        if behindDist < 6.0 then
+        if radarScan and radarScan.hasOverlap then
+          overlap = math.max(0.1, 1.0 - (radarScan.overlapDist / 6.0))
+          s.rivalRelX = radarScan.overlapRelX
+        elseif behindDist < 6.0 then
           overlap = 1.0 - (behindDist / 6.0)
         end
         s.overlapRatio = overlap
@@ -971,6 +1014,15 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
           s.targetSplineOffset = math.min(0.85, blockWidth)
         else
           s.targetSplineOffset = -math.min(0.85, blockWidth)
+        end
+
+        -- Wheel-to-wheel Racing Room Margin: prevent squeezing overlapping car into the wall
+        if radarScan and radarScan.hasOverlap then
+          if radarScan.overlapRelX < 0 then
+            s.targetSplineOffset = math.max(-0.20, s.targetSplineOffset)
+          elseif radarScan.overlapRelX > 0 then
+            s.targetSplineOffset = math.min(0.20, s.targetSplineOffset)
+          end
         end
 
         local DriverChatterEngine = require("lib/audio/DriverChatterEngine")
@@ -1005,7 +1057,16 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
         end
       end
 
-      evaluateBodyLanguage(s, car, aheadCar, behindCar, s.aheadDist or 999.0, s.behindDist or 999.0, persona, rivalryScore, raceContext, dt)
+      -- Wheel-to-wheel Racing Room Margin: prevent cutting across overlapping flank
+  if radarScan and radarScan.hasOverlap and currentSpeedKmh > 45.0 then
+    if radarScan.overlapRelX < 0 then
+      s.targetSplineOffset = math.max(-0.20, s.targetSplineOffset)
+    elseif radarScan.overlapRelX > 0 then
+      s.targetSplineOffset = math.min(0.20, s.targetSplineOffset)
+    end
+  end
+
+  evaluateBodyLanguage(s, car, aheadCar, behindCar, s.aheadDist or 999.0, s.behindDist or 999.0, persona, rivalryScore, raceContext, dt)
       TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
       return s
     end
@@ -1046,7 +1107,16 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
           if raceContext then raceContext.tyreTempNorm = s.tireTempNorm end
         end
 
-        evaluateBodyLanguage(s, car, aheadCar, behindCar, s.aheadDist or 999.0, s.behindDist or 999.0, persona, rivalryScore, raceContext, dt)
+        -- Wheel-to-wheel Racing Room Margin: prevent cutting across overlapping flank
+  if radarScan and radarScan.hasOverlap and currentSpeedKmh > 45.0 then
+    if radarScan.overlapRelX < 0 then
+      s.targetSplineOffset = math.max(-0.20, s.targetSplineOffset)
+    elseif radarScan.overlapRelX > 0 then
+      s.targetSplineOffset = math.min(0.20, s.targetSplineOffset)
+    end
+  end
+
+  evaluateBodyLanguage(s, car, aheadCar, behindCar, s.aheadDist or 999.0, s.behindDist or 999.0, persona, rivalryScore, raceContext, dt)
         TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, (raceContext and raceContext.tyreWear) or 0.0, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
         return s
       end
@@ -1118,7 +1188,16 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
     s.targetSplineOffset = aheadState and aheadState.currentSplineOffset or 0.0
     s.targetAggression = math.min(0.95, (persona.base_aggression or 0.8) + 0.05)
     s.targetCaution = math.max(0.4, (persona.base_caution or 0.7) * 0.8)
-    evaluateBodyLanguage(s, car, aheadCar, behindCar, s.aheadDist or 999.0, s.behindDist or 999.0, persona, rivalryScore, raceContext, dt)
+    -- Wheel-to-wheel Racing Room Margin: prevent cutting across overlapping flank
+  if radarScan and radarScan.hasOverlap and currentSpeedKmh > 45.0 then
+    if radarScan.overlapRelX < 0 then
+      s.targetSplineOffset = math.max(-0.20, s.targetSplineOffset)
+    elseif radarScan.overlapRelX > 0 then
+      s.targetSplineOffset = math.min(0.20, s.targetSplineOffset)
+    end
+  end
+
+  evaluateBodyLanguage(s, car, aheadCar, behindCar, s.aheadDist or 999.0, s.behindDist or 999.0, persona, rivalryScore, raceContext, dt)
     TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, tyreWear, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
     return s
   end
@@ -1201,7 +1280,16 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
       end
       s.targetSplineOffset = s.decoyOffset
     end
-    evaluateBodyLanguage(s, car, aheadCar, behindCar, s.aheadDist or 999.0, s.behindDist or 999.0, persona, rivalryScore, raceContext, dt)
+    -- Wheel-to-wheel Racing Room Margin: prevent cutting across overlapping flank
+  if radarScan and radarScan.hasOverlap and currentSpeedKmh > 45.0 then
+    if radarScan.overlapRelX < 0 then
+      s.targetSplineOffset = math.max(-0.20, s.targetSplineOffset)
+    elseif radarScan.overlapRelX > 0 then
+      s.targetSplineOffset = math.min(0.20, s.targetSplineOffset)
+    end
+  end
+
+  evaluateBodyLanguage(s, car, aheadCar, behindCar, s.aheadDist or 999.0, s.behindDist or 999.0, persona, rivalryScore, raceContext, dt)
     TelemetryBridge.updateCarTelemetry(idx, s.state, s.stress, s.momentum, tyreWear, s.isLiftAndCoast, s.isBreakingTow, s.lastMistakeType, s.currentSplineOffset, s.targetCaution)
     return s
   end
@@ -1244,6 +1332,15 @@ function M.stepCar(car, aheadCar, behindCar, persona, rivalryScore, raceContext,
     s.chatterVictoryReported = true
     local DriverChatterEngine = require("lib/audio/DriverChatterEngine")
     DriverChatterEngine.triggerChatter(idx, DriverChatterEngine.SIT_VICTORY, persona, safeExtractDriverName(car), true)
+  end
+
+  -- Wheel-to-wheel Racing Room Margin: prevent cutting across overlapping flank
+  if radarScan and radarScan.hasOverlap and currentSpeedKmh > 45.0 then
+    if radarScan.overlapRelX < 0 then
+      s.targetSplineOffset = math.max(-0.20, s.targetSplineOffset)
+    elseif radarScan.overlapRelX > 0 then
+      s.targetSplineOffset = math.min(0.20, s.targetSplineOffset)
+    end
   end
 
   evaluateBodyLanguage(s, car, aheadCar, behindCar, s.aheadDist or 999.0, s.behindDist or 999.0, persona, rivalryScore, raceContext, dt)

@@ -70,8 +70,8 @@ end
 
 function M.checkAbort(car, aheadCar, behindCar, geoState)
   if not behindCar then return true end
-  -- Overlap rule: if rival has established side-by-side overlap > 80%, cease aggressive squeeze to prevent pit maneuver
-  if (geoState.overlapRatio or 0.0) > 0.80 then
+  -- Overlap rule: if rival has established side-by-side overlap > 80% or three-wide risk, cease squeeze
+  if (geoState.overlapRatio or 0.0) > 0.80 or geoState.isThreeWide then
     return true
   end
   return false

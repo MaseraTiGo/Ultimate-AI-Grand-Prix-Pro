@@ -26,6 +26,7 @@
 local RaceContext = require("lib/core/RaceContext")
 local EventHub = require("lib/core/EventHub")
 local BattleTracker = require("lib/driver/BattleTracker")
+local SpatialRadar = require("lib/driver/SpatialRadar")
 
 local M = {}
 
@@ -552,16 +553,30 @@ local function computeHotspots(raceState, recentEvents)
         subMode = 0
         dur = 5.5
         baseScore = baseScore + 30.0
-      elseif _prefSideHelicopter and ((aheadDist > 0.1 and aheadDist < 4.2) or (behindDist > 0.1 and behindDist < 4.2)) and (cState.speedKmh or 0) > 35.0 and (tact == "OVERTAKING" or tact == "ATTACK" or skill == "POUNCE_PASS" or gap < 0.25 or gapBehind < 0.25) then
+      elseif (function()
+               local rScan = SpatialRadar.scanTacticalSurroundings(i)
+               local isTrueSideBySide = (rScan and (rScan.hasOverlap or rScan.isThreeWide)) or
+                 (((aheadDist > 0.1 and aheadDist < 4.2) or (behindDist > 0.1 and behindDist < 4.2)) and (cState.speedKmh or 0) > 35.0 and (tact == "OVERTAKING" or tact == "ATTACK" or skill == "POUNCE_PASS" or gap < 0.25 or gapBehind < 0.25))
+               return _prefSideHelicopter and isTrueSideBySide and ((cState.speedKmh or 0) > 30.0)
+             end)() then
         -- Dual Side-by-Side Corner Apex Battle (Helicopter Aerial View)
+        local rScan = SpatialRadar.scanTacticalSurroundings(i)
         sit = M.SITUATION_SIDE_HELICOPTER
         prio = M.PRIORITY_ACTION
-        reason = "SIDE_BY_SIDE_DUEL"
+        if rScan and rScan.isThreeWide then
+          reason = "THREE_WIDE_BATTLE"
+          baseScore = baseScore + 48.0
+        elseif rScan and rScan.hasOverlap then
+          reason = "SIDE_BY_SIDE_OVERLAP"
+          baseScore = baseScore + 44.0
+        else
+          reason = "SIDE_BY_SIDE_DUEL"
+          baseScore = baseScore + 42.0
+        end
         camMode = M.CAMERA_MODE_HELICOPTER
         subMode = 0
-        rivalIdx = (aheadDist < behindDist) and aheadIdx or behindIdx
+        rivalIdx = (rScan and rScan.overlapCarIdx >= 0) and rScan.overlapCarIdx or ((aheadDist < behindDist) and aheadIdx or behindIdx)
         dur = 6.0
-        baseScore = baseScore + 42.0
       elseif _prefAttackNose and (skill == "POUNCE_PASS" or skill == "DIVEBOMB" or tact == "POUNCE_PASS" or (tact == "ATTACK" and aheadDist < 16.0 and (cState.gapAheadSec or 999.0) < 0.75)) then
         -- Attacker Front Bumper / Nose Cam Charging into Apex
         sit = M.SITUATION_ATTACK_NOSE
@@ -814,7 +829,8 @@ function M.step(dt, sim)
   local raceState = RaceContext.getRaceState()
   local recentEvents = EventHub.getRecentAiEvents(5)
 
-  -- 2. Compute Combat Hotspots across all cars
+  -- 2. Compute Combat Hotspots across all cars & update Focal Spatial Radar
+  SpatialRadar.update(safeDt, _focusedCar)
   computeHotspots(raceState, recentEvents)
 
   local bestCarIdx = _sortedIndices[1] or 0

@@ -30,6 +30,7 @@ local DriverChatterEngine = require("lib/audio/DriverChatterEngine")
 local TVDirectorEngine = require("lib/broadcast/TVDirectorEngine")
 local BattleTracker = require("lib/driver/BattleTracker")
 local DashboardUI = require("lib/ui/DashboardUI")
+local SpatialRadar = require("lib/driver/SpatialRadar")
 
 local _initialized = false
 local _initAttempted = false
@@ -89,6 +90,7 @@ function script.init()
   RadioVoiceEngine.reset()
   DriverChatterEngine.reset()
   TVDirectorEngine.init()
+  SpatialRadar.init()
 
   local sim = nil
   if ac and ac.getSim then
@@ -134,6 +136,8 @@ local function doUpdate(safeDt, sim)
   RadioVoiceEngine.step(safeDt)
   DriverChatterEngine.step(safeDt)
   TVDirectorEngine.step(safeDt, sim)
+  local focusIdx = (TVDirectorEngine.isEnabled() and TVDirectorEngine.getFocusedCar()) or 0
+  SpatialRadar.update(safeDt, focusIdx)
   _tacticalTimer = _tacticalTimer + safeDt
   _strategyTimer = _strategyTimer + safeDt
   _flushTimer = _flushTimer + safeDt

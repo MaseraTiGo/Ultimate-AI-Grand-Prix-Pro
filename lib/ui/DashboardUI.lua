@@ -25,6 +25,7 @@ local WeatherStrategyModel = require("lib/strategy/WeatherStrategyModel")
 local TacticalTicker = require("lib/driver/TacticalTicker")
 local TVDirectorEngine = require("lib/broadcast/TVDirectorEngine")
 local BattleTracker = require("lib/driver/BattleTracker")
+local SpatialRadar = require("lib/driver/SpatialRadar")
 
 local M = {}
 
@@ -1956,6 +1957,56 @@ function M.renderBattleRadarTab()
       ui.text(string.format("• 追击: %2.0f%% • 防守: %2.0f%% • 缠斗: %2.0f%% • 特技: %s",
         pMu * 100, defMu * 100, dMu * 100, actSkill))
     end
+  end
+
+  ui.separator()
+
+  -- Section E: 360-Degree Proximity & Spatial Radar
+  drawInlineColored(COLOR_GOLD, "▶ 全向近距空间感知与盲区雷达 (360° PROXIMITY & BLINDSPOT RADAR)")
+  local rSummary = SpatialRadar.getSummary()
+  local nearby = SpatialRadar.getNearbyCars()
+  local spotAlert, spotTimer = SpatialRadar.getSpotterAlert()
+
+  -- Status Chips
+  ui.text(string.format("  感知邻车: %d 辆 (前方: %d, 后方: %d, 左侧: %d, 右侧: %d, 极近: %d)",
+    rSummary.total or 0, rSummary.frontCount or 0, rSummary.rearCount or 0,
+    rSummary.leftCount or 0, rSummary.rightCount or 0, rSummary.nearCount or 0))
+
+  if rSummary.isThreeWide then
+    drawTextColored(COLOR_RED, "  ⚠ [高危警报] 检测到三车并排夹击 (THREE-WIDE PINCH)！保持当前行车线！")
+  elseif rSummary.hasDangerOverlap then
+    drawTextColored(COLOR_RED, "  ⚠ [盲区警报] 侧身出现轮对轮重叠 (SIDE OVERLAP)！注意留白防守！")
+  elseif spotAlert ~= "NONE" then
+    drawTextColored(COLOR_GOLD, string.format("  ● [领航员 Spotter] %s (持续 %.1fs)", spotAlert, spotTimer or 0.0))
+  else
+    drawTextColored(COLOR_GREEN, "  ● [空间感知正常] 周围车体间隙良好，无即刻盲区碰撞威胁")
+  end
+
+  if #nearby > 0 then
+    for i = 1, math.min(#nearby, 8) do
+      local c = nearby[i]
+      local tagColor = COLOR_GREEN
+      local tagText = "安全"
+      if c.isOverlapping then
+        tagColor = COLOR_RED
+        tagText = "重叠盲区"
+      elseif c.isNear then
+        tagColor = COLOR_GOLD
+        tagText = "极近贴身"
+      elseif c.distance < 18.0 then
+        tagColor = COLOR_CYAN
+        tagText = "尾流追击"
+      end
+
+      ui.text(string.format("  • [%2d 点钟] %s (P%d) 距 %.1fm | 局部(X:%+.1fm, Z:%+.1fm) | 逼近: %+.0f km/h | 方位: %s",
+        c.clockDirection or 12, (c.driverName ~= "" and c.driverName or c.carName):sub(1, 16),
+        c.racePosition or 0, c.distance or 0.0, c.localX or 0.0, c.localZ or 0.0,
+        c.closingSpeedKmh or 0.0, c.sector or "FRONT"))
+      ui.sameLine()
+      drawInlineColored(tagColor, string.format(" [%s]", tagText))
+    end
+  else
+    drawTextColored(COLOR_MUTED, "  80m 范围内无贴身邻车，处于完全干净气流区 (Clean Air)")
   end
 end
 

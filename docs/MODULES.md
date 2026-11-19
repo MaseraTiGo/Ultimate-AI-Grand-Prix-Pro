@@ -104,6 +104,18 @@
 ### `watchdog.lua`
 - **职责**：60Hz 瞬态物理看门狗、物理 J-Turn 掉头脱困、冷胎起步防打滑油门渐进爬坡、内置 `safeGetCar` 严格越界保护。
 
+### `SpatialRadar.lua`
+- **职责**：全向近距雷达与三维空间态势感知中枢（基于 CAS SDK 演进构建）。
+  - **核心特性**：车身局部正交坐标系内联点积投影（`localX`, `localZ`）、360° 时钟方位角（1~12 点钟）、八卦限扇区切分、车身重叠与盲区判定（Overlap & Blindspot）、相对逼近速度（Closing Speed）、三车并排夹击（Three-Wide）检测与领航员 Spotter 状态机。
+  - **性能保证**：64 槽位预分配对象池（Zero GC）、平方距离初筛剪枝、静态元数据缓存，支持焦点车 30Hz 扫描及全场 24 车纯标量 O(1) 战术感知。
+- **公共接口**：
+  - `M.init(options)` / `M.reset()`: 初始化与重置雷达参数与池表。
+  - `M.update(dt, focusCarIndex)`: 30Hz 节流驱动焦点车全向雷达感知与领航员状态机。
+  - `M.updateTacticalFromPair(car, aheadCar, behindCar)`: 供 `TacticalTicker` 10Hz 战术步调用的纯标量零分配近邻快速检测。
+  - `M.getTacticalScan(carIndex)`: O(1) 检索指定车辆的空间态势缓存。
+  - `M.getSummary()` / `M.getNearbyCars()`: 供 UI 看板与导播引擎提取邻车列表与汇总指标。
+  - `M.getSpotterAlert()`: 获取当前活跃的领航员呼叫状态（`CAR_LEFT`, `CAR_RIGHT`, `THREE_WIDE`, `CLEAR`）。
+
 ### `LODScheduler.lua`
 - **职责**：三级空间动态调度（聚焦 T1: 10Hz / 中距 T2: 3.33Hz / 远端 T3: 0Hz 深度休眠）。
 

@@ -14,6 +14,7 @@
 
 local SkillRegistry = require("lib/skills/SkillRegistry")
 local Logger = require("lib/core/Logger")
+local SpatialRadar = require("lib/driver/SpatialRadar")
 
 local M = {}
 
@@ -57,6 +58,9 @@ local _geoState = {
   isStraight = true,
   isCurvatureSafe = true,
   overlapRatio = 0.0,
+  hasOverlap = false,
+  isThreeWide = false,
+  overlapRelX = 0.0,
   tyreGrip = 1.0,
   stress = 0.0,
   upcomingTurnDist = 999.0,
@@ -143,12 +147,26 @@ local function populateGeoState(car, aheadCar, behindCar, sState, raceCtx)
   _geoState.behindRelX = behindRelX
   _geoState.ttcBehind = ttcBehind
 
-  -- Side-by-side Overlap Ratio
+  -- Side-by-side Overlap Ratio with Spatial Radar
   local overlap = 0.0
-  if behindDist < 6.0 then
-    overlap = 1.0 - (behindDist / 6.0)
-  elseif aheadDist < 6.0 then
-    overlap = 1.0 - (aheadDist / 6.0)
+  local scan = SpatialRadar.getTacticalScan(car.index or 0)
+  if scan and scan.hasOverlap then
+    overlap = math.max(0.1, 1.0 - (scan.overlapDist / 6.0))
+    _geoState.hasOverlap = true
+    _geoState.isThreeWide = scan.isThreeWide
+    _geoState.overlapRelX = scan.overlapRelX
+    if scan.closestFrontClosingSpeed and scan.closestFrontClosingSpeed > 0 then
+      _geoState.closingSpeedAhead = scan.closestFrontClosingSpeed
+    end
+  else
+    if behindDist < 6.0 then
+      overlap = 1.0 - (behindDist / 6.0)
+    elseif aheadDist < 6.0 then
+      overlap = 1.0 - (aheadDist / 6.0)
+    end
+    _geoState.hasOverlap = false
+    _geoState.isThreeWide = scan and scan.isThreeWide or false
+    _geoState.overlapRelX = 0.0
   end
   _geoState.overlapRatio = overlap
 

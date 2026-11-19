@@ -485,6 +485,14 @@ function M.mapRadioCommandToClip(radioCmd)
     return "cmd_attack"
   elseif radioCmd == "DEFEND" then
     return "cmd_defend"
+  elseif radioCmd == "SPOTTER_CAR_LEFT" then
+    return "spotter_car_left"
+  elseif radioCmd == "SPOTTER_CAR_RIGHT" then
+    return "spotter_car_right"
+  elseif radioCmd == "SPOTTER_THREE_WIDE" then
+    return "spotter_three_wide"
+  elseif radioCmd == "SPOTTER_CLEAR" then
+    return "spotter_clear"
   end
   return nil
 end

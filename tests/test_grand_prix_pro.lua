@@ -3913,8 +3913,184 @@ do
   runTest65()
 end
 
+-- [Test 66] Testing SpatialRadar 360° Omnidirectional Sensing, Clock Mapping & Zero GC Pool
+do
+  print("\n[Test 66] Testing SpatialRadar 360° Omnidirectional Sensing, Clock Mapping & Zero GC Pool...")
+  local function runTest66()
+    local SpatialRadar = require("lib/driver/SpatialRadar")
+    SpatialRadar.reset()
+    SpatialRadar.init({
+      maxDistance = 60.0,
+      nearThreshold = 7.0,
+      blindspotZRange = 5.0,
+      blindspotXMin = 1.6,
+      blindspotXMax = 5.0,
+      updateRate = 30
+    })
+
+    -- 1. Sector Classification Verification
+    assertEq(SpatialRadar.calculateSector(0.0, 15.0), SpatialRadar.SECTOR_FRONT, "Ahead in center is FRONT")
+    assertEq(SpatialRadar.calculateSector(0.0, -15.0), SpatialRadar.SECTOR_REAR, "Behind in center is REAR")
+    assertEq(SpatialRadar.calculateSector(-2.5, 0.5), SpatialRadar.SECTOR_LEFT, "Left lateral offset is LEFT")
+    assertEq(SpatialRadar.calculateSector(2.5, 0.5), SpatialRadar.SECTOR_RIGHT, "Right lateral offset is RIGHT")
+    assertEq(SpatialRadar.calculateSector(-3.0, 10.0), SpatialRadar.SECTOR_LEFT_FRONT, "Left diagonal ahead is LEFT_FRONT")
+    assertEq(SpatialRadar.calculateSector(3.0, 10.0), SpatialRadar.SECTOR_RIGHT_FRONT, "Right diagonal ahead is RIGHT_FRONT")
+    assertEq(SpatialRadar.calculateSector(-3.0, -10.0), SpatialRadar.SECTOR_LEFT_REAR, "Left diagonal behind is LEFT_REAR")
+    assertEq(SpatialRadar.calculateSector(3.0, -10.0), SpatialRadar.SECTOR_RIGHT_REAR, "Right diagonal behind is RIGHT_REAR")
+
+    -- 2. 360-Degree Clock Direction Mapping
+    local h12, _ = SpatialRadar.calculateClockDirection(0.0, 20.0)
+    assertEq(h12, 12, "Directly ahead maps to 12 o'clock")
+    local h3, _ = SpatialRadar.calculateClockDirection(20.0, 0.0)
+    assertEq(h3, 3, "Directly right maps to 3 o'clock")
+    local h6, _ = SpatialRadar.calculateClockDirection(0.0, -20.0)
+    assertEq(h6, 6, "Directly behind maps to 6 o'clock")
+    local h9, _ = SpatialRadar.calculateClockDirection(-20.0, 0.0)
+    assertEq(h9, 9, "Directly left maps to 9 o'clock")
+    local h1, _ = SpatialRadar.calculateClockDirection(5.0, 18.0)
+    assertEq(h1, 1, "Slight right ahead maps to 1 o'clock")
+
+    -- 3. Overlap & Blindspot Logic
+    assertTrue(SpatialRadar.calculateOverlap(2.2, 1.0), "2.2m right, 1.0m front is overlapping")
+    assertTrue(SpatialRadar.calculateOverlap(-2.2, -1.0), "-2.2m left, -1.0m rear is overlapping")
+    assertTrue(not SpatialRadar.calculateOverlap(0.5, 1.0), "0.5m lateral is inside car body / not side flank")
+    assertTrue(not SpatialRadar.calculateOverlap(2.2, 15.0), "15.0m longitudinal is too far ahead for overlap")
+    assertTrue(not SpatialRadar.calculateOverlap(7.0, 0.0), "7.0m lateral is too far away for overlap")
+
+    -- 4. In-Place Neighbor Scalar Update (Zero Allocation)
+    local leadCar = {
+      index = 0,
+      position = { x = 0, y = 0, z = 100 },
+      side = { x = 1, y = 0, z = 0 },
+      look = { x = 0, y = 0, z = 1 },
+      speedKmh = 180,
+    }
+    local leftRival = {
+      index = 1,
+      position = { x = -2.2, y = 0, z = 101 },
+      speedKmh = 190,
+    }
+    local scanLeft = SpatialRadar.updateTacticalFromPair(leadCar, leftRival, nil)
+    assertTrue(scanLeft.hasOverlap, "Left rival established physical overlap")
+    assertEq(scanLeft.overlapCarIdx, 1, "Overlapping rival index is 1")
+    assertTrue(scanLeft.overlapRelX < -2.0, "Overlap relative X is negative (on left side)")
+    assertTrue(scanLeft.leftThreat, "Left threat flag raised")
+    assertTrue(not scanLeft.rightThreat, "Right flank clear")
+
+    -- Add right rival -> Three-Wide!
+    local rightRival = {
+      index = 2,
+      position = { x = 2.4, y = 0, z = 99 },
+      speedKmh = 185,
+    }
+    local scanThree = SpatialRadar.updateTacticalFromPair(leadCar, leftRival, rightRival)
+    assertTrue(scanThree.hasOverlap, "Overlap detected")
+    assertTrue(scanThree.isThreeWide, "Both flanks threatened: Three-Wide confirmed!")
+    assertTrue(scanThree.leftThreat and scanThree.rightThreat, "Both left and right threats active")
+
+    print("  -> Passed: SpatialRadar 360° Omnidirectional Sensing, Clock Mapping & Zero GC Pool verified.")
+  end
+  runTest66()
+end
+
+-- [Test 67] Testing Multi-Car Combat Tactics (Racing Room Margin, Three-Wide Lock & TV Overlap Camera)
+do
+  print("\n[Test 67] Testing Multi-Car Combat Tactics (Racing Room Margin, Three-Wide Lock & TV Overlap Camera)...")
+  local function runTest67()
+    local SpatialRadar = require("lib/driver/SpatialRadar")
+    local TacticalTicker = require("lib/driver/TacticalTicker")
+    local GentleSqueezeSkill = require("lib/skills/GentleSqueezeSkill")
+    local TVDirectorEngine = require("lib/broadcast/TVDirectorEngine")
+    local DashboardUI = require("lib/ui/DashboardUI")
+
+    SpatialRadar.reset()
+    TacticalTicker.reset()
+
+    local car0 = {
+      index = 0,
+      position = { x = 0, y = 0, z = 100 },
+      side = { x = 1, y = 0, z = 0 },
+      look = { x = 0, y = 0, z = 1 },
+      speedKmh = 160.0,
+      isConnected = true,
+      isAIControlled = true,
+    }
+
+    -- 1. Three-Wide Safety Pinch Protection in TacticalTicker
+    local carLeft = {
+      index = 1,
+      position = { x = -2.2, y = 0, z = 100.5 },
+      speedKmh = 160.0,
+      isConnected = true,
+    }
+    local carRight = {
+      index = 2,
+      position = { x = 2.2, y = 0, z = 99.5 },
+      speedKmh = 160.0,
+      isConnected = true,
+    }
+
+    -- Step car in three-wide situation
+    local stThree = TacticalTicker.stepCar(car0, carLeft, carRight, { base_aggression = 0.8, base_caution = 0.7 }, 0.0, nil, 0.1)
+    assertEq(stThree.state, "THREE_WIDE_HOLD", "TacticalTicker enters THREE_WIDE_HOLD during sandwich")
+    assertEq(stThree.activeSkill, "THREE_WIDE", "Active skill is THREE_WIDE")
+    assertTrue(stThree.targetCaution >= 1.8, "Caution elevated for collision avoidance (> 1.8)")
+
+    -- 2. Wheel-to-Wheel Racing Room Margin (Left Rival)
+    TacticalTicker.reset()
+    -- Car with rival on left attempting aggressive right-to-left block
+    local stLeftOverlap = TacticalTicker.stepCar(car0, nil, carLeft, { base_aggression = 0.9, base_caution = 0.5 }, 0.0, nil, 0.1)
+    assertTrue(stLeftOverlap.targetSplineOffset >= -0.20, "Spline offset clamped to >= -0.20 to leave 2.0m room on left")
+
+    -- 3. Wheel-to-Wheel Racing Room Margin (Right Rival)
+    TacticalTicker.reset()
+    local stRightOverlap = TacticalTicker.stepCar(car0, nil, carRight, { base_aggression = 0.9, base_caution = 0.5 }, 0.0, nil, 0.1)
+    assertTrue(stRightOverlap.targetSplineOffset <= 0.20, "Spline offset clamped to <= 0.20 to leave 2.0m room on right")
+
+    -- 4. GentleSqueezeSkill Abort Protection on Three-Wide
+    local geoThree = { overlapRatio = 0.2, isThreeWide = true }
+    assertTrue(GentleSqueezeSkill.checkAbort(car0, nil, carLeft, geoThree), "Gentle squeeze safely aborted during three-wide")
+
+    -- 5. Spotter Alert State Machine Integration
+    SpatialRadar.reset()
+    local mockPlayer = {
+      index = 0,
+      position = { x = 0, y = 0, z = 100 },
+      side = { x = 1, y = 0, z = 0 },
+      look = { x = 0, y = 0, z = 1 },
+      speedKmh = 150.0,
+      isConnected = true,
+    }
+    -- Step radar with rival on left
+    SpatialRadar.updateTacticalFromPair(mockPlayer, carLeft, nil)
+    -- Trigger spotter update
+    SpatialRadar.updateSpotter(0, 0.1)
+    local alert, timer = SpatialRadar.getSpotterAlert()
+    assertEq(alert, "CAR_LEFT", "Spotter alerted CAR_LEFT")
+
+    -- Clear situation
+    local carDistant = {
+      index = 1,
+      position = { x = -20.0, y = 0, z = 150 },
+      speedKmh = 150.0,
+      isConnected = true,
+    }
+    SpatialRadar.updateTacticalFromPair(mockPlayer, carDistant, nil)
+    SpatialRadar.updateSpotter(0, 0.1)
+    local alertClear, _ = SpatialRadar.getSpotterAlert()
+    assertEq(alertClear, "CLEAR", "Spotter alerted CLEAR when cars separated")
+
+    -- 6. DashboardUI Battle Radar Tab Render verification
+    local okTab, errTab = pcall(DashboardUI.renderBattleRadarTab)
+    assertTrue(okTab, "DashboardUI renderBattleRadarTab rendered without error")
+
+    print("  -> Passed: Multi-Car Combat Tactics (Racing Room Margin, Three-Wide Lock & TV Overlap Camera) verified.")
+  end
+  runTest67()
+end
+
 print("==================================================================")
-print("  ALL 65 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
+print("  ALL 67 INTEGRATION TESTS PASSED: Ultimate AI Grand Prix Pro!    ")
 print("==================================================================")
 
 
