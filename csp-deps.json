@@ -1,0 +1,44 @@
+{
+  "$schema": "csp-deps-v1",
+  "projectName": "Ultimate AI Grand Prix Pro",
+  "projectVersion": "1.0.0",
+  "projectPath": "C:/Users/EDZ/Desktop/update-ac/app/Ultimate AI Grand Prix Pro",
+  "lastSynced": "2026-11-20",
+  "dependencies": {
+    "cas": {
+      "installedVersion": "v1.1.0",
+      "latestKnownVersion": "v1.1.0",
+      "localPath": "lib/driver/cas",
+      "status": "UP_TO_DATE",
+      "notes": "360°近距战术雷达与盲区重叠监控"
+    },
+    "pit_strategy": {
+      "installedVersion": "v1.0.0",
+      "latestKnownVersion": "v1.0.0",
+      "localPath": "lib/strategy/pit_strategy",
+      "status": "UP_TO_DATE",
+      "notes": "正赛油耗推演与停站加注模型"
+    },
+    "track_hotspots": {
+      "installedVersion": "v1.0.0",
+      "latestKnownVersion": "v1.0.0",
+      "localPath": "lib/driver/track_hotspots",
+      "status": "UP_TO_DATE",
+      "notes": "事故难点自适应热力网格与逆向热扩散预警"
+    },
+    "stewards": {
+      "installedVersion": "v1.0.0",
+      "latestKnownVersion": "v1.0.0",
+      "localPath": "lib/driver/stewards",
+      "status": "UP_TO_DATE",
+      "notes": "车身轴距正交投影弯道路权仲裁"
+    },
+    "utils": {
+      "installedVersion": "v1.0.0",
+      "latestKnownVersion": "v1.0.0",
+      "localPath": "lib/core/utils",
+      "status": "UP_TO_DATE",
+      "notes": "Win32 QPC 纳秒级单调硬件时钟与安全调用探针"
+    }
+  }
+}

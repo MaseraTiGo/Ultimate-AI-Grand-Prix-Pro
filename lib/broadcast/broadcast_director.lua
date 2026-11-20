@@ -251,19 +251,33 @@ local function getCarSnapshot(carIndex)
   end
 
   local p = c.position
-  rec.pos.x, rec.pos.y, rec.pos.z = p.x, p.y, p.z
+  if p then
+    rec.pos.x, rec.pos.y, rec.pos.z = p.x or 0, p.y or 0, p.z or 0
+  end
 
   local l = c.look
-  local lookNorm = v_norm({x=l.x, y=l.y, z=l.z})
-  rec.look.x, rec.look.y, rec.look.z = lookNorm.x, lookNorm.y, lookNorm.z
+  if l then
+    local lookNorm = v_norm({x=l.x or 0, y=l.y or 0, z=l.z or 1})
+    rec.look.x, rec.look.y, rec.look.z = lookNorm.x, lookNorm.y, lookNorm.z
+  else
+    rec.look.x, rec.look.y, rec.look.z = 0, 0, 1
+  end
 
   local u = c.up
-  local upNorm = v_norm({x=u.x, y=u.y, z=u.z})
-  rec.up.x, rec.up.y, rec.up.z = upNorm.x, upNorm.y, upNorm.z
+  if u then
+    local upNorm = v_norm({x=u.x or 0, y=u.y or 1, z=u.z or 0})
+    rec.up.x, rec.up.y, rec.up.z = upNorm.x, upNorm.y, upNorm.z
+  else
+    rec.up.x, rec.up.y, rec.up.z = 0, 1, 0
+  end
 
   local s = c.side
-  local sideNorm = v_norm({x=s.x, y=s.y, z=s.z})
-  rec.side.x, rec.side.y, rec.side.z = sideNorm.x, sideNorm.y, sideNorm.z
+  if s then
+    local sideNorm = v_norm({x=s.x or 1, y=s.y or 0, z=s.z or 0})
+    rec.side.x, rec.side.y, rec.side.z = sideNorm.x, sideNorm.y, sideNorm.z
+  else
+    rec.side.x, rec.side.y, rec.side.z = 1, 0, 0
+  end
 
   local v = c.velocity
   if v then
