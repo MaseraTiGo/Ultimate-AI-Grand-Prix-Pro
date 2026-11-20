@@ -28,6 +28,18 @@ local EventHub = require("lib/core/EventHub")
 local BattleTracker = require("lib/driver/BattleTracker")
 local SpatialRadar = require("lib/driver/SpatialRadar")
 
+-- Integration with csp-sdk Broadcast Director
+local hasSdkDirector, SdkDirector = pcall(require, "broadcast_director.broadcast_director")
+if not hasSdkDirector or type(SdkDirector) ~= "table" then
+  -- Fallback to relative path lookup
+  local ok, mod = pcall(require, "lib/broadcast/broadcast_director")
+  if ok and type(mod) == "table" then
+    hasSdkDirector, SdkDirector = true, mod
+  else
+    hasSdkDirector, SdkDirector = false, nil
+  end
+end
+
 local M = {}
 
 -- Priority Constants (0 is highest, 4 is lowest)
@@ -84,6 +96,23 @@ local _prefAttackNose = true
 local _prefDefendRear = true
 local _prefSideHelicopter = true
 local _prefStorytelling = true
+
+-- Advanced Cinematic Features (from GC_AutoReplay & csp-sdk)
+local _useProceduralCams = true       -- Enable ac.grabCamera procedural cameras (twoshot, tele, kerb, etc.)
+local _useRaycastOcclusion = true     -- Enable physical raycast line-of-sight checks against walls/mesh
+local _overtakeHoldTimer = 0.0        -- Lock camera on overtakes (3.0s minimum hold)
+local _directorInstance = nil         -- SDK Director instance
+local _currentProceduralMode = nil    -- Active procedural camera mode name (e.g. "twoshot")
+
+if hasSdkDirector and SdkDirector then
+  SdkDirector.init({
+    maxRaysPerFrame = 35,
+    enableRaycast = true,
+    enableOperatorSway = true,
+    appName = "UAGPP_TV_Director"
+  })
+  _directorInstance = SdkDirector.new()
+end
 
 -- Director State Registers
 local _focusedCar = 0
@@ -381,14 +410,58 @@ function M.isManualOverrideActive()
   return _quietTimer > 0.0
 end
 
---- Execute CSP Camera Switch Safely
+--- Execute Camera Switch Safely (Supports both Procedural ac.grabCamera & AC Native)
 ---@param carIndex integer
 ---@param mode integer?
 ---@param subMode integer?
 ---@param trackGroup integer?
-local function applyCspCamera(carIndex, mode, subMode, trackGroup)
+---@param situation string?
+---@param duelRival integer?
+local function applyCspCamera(carIndex, mode, subMode, trackGroup, situation, duelRival)
   if not carIndex or carIndex < 0 then carIndex = 0 end
   mode = mode or M.CAMERA_MODE_TRACK
+
+  -- 1. Check if we should activate advanced Procedural Cameras (from SDK)
+  if _useProceduralCams and hasSdkDirector and SdkDirector and _directorInstance then
+    local procMode = nil
+    if situation == M.SITUATION_SIDE_HELICOPTER or situation == M.SITUATION_ATTACK_NOSE then
+      if duelRival and duelRival >= 0 then
+        procMode = SdkDirector.Mode.TWOSHOT
+      else
+        procMode = SdkDirector.Mode.KERB
+      end
+    elseif situation == M.SITUATION_DEFEND_REAR and duelRival and duelRival >= 0 then
+      procMode = SdkDirector.Mode.REARWING
+    elseif mode == M.CAMERA_MODE_TRACK then
+      -- Alternate between procedural Tele and Kerb
+      procMode = (_currentTrackGroup % 2 == 1) and SdkDirector.Mode.KERB or SdkDirector.Mode.TELE
+    elseif mode == M.CAMERA_MODE_HELICOPTER then
+      procMode = SdkDirector.Mode.HELI2
+    end
+
+    if procMode then
+      local trackLen = 3500.0
+      local raceState = RaceContext.getRaceState and RaceContext.getRaceState()
+      if raceState and raceState.trackLength and raceState.trackLength > 100 then
+        trackLen = raceState.trackLength
+      end
+
+      local ok = SdkDirector.startShot(_directorInstance, procMode, carIndex, duelRival, trackLen)
+      if ok then
+        _currentProceduralMode = procMode
+        _lastEngineFocusedCar = carIndex
+        _lastEngineCameraMode = mode
+        _transitionGraceTimer = 0.05
+        return
+      end
+    end
+  end
+
+  -- Fallback / Native CSP Camera Actuation
+  if hasSdkDirector and SdkDirector and _directorInstance and _currentProceduralMode then
+    SdkDirector.releaseCamera(_directorInstance)
+    _currentProceduralMode = nil
+  end
 
   -- 1. Switch camera mode FIRST (exits Cockpit view so AC can focus external cars)
   if mode and ac and ac.setCurrentCamera then
@@ -435,7 +508,7 @@ function M.forceCut(carIndex, mode, reason, priority, duration, subMode, situati
   _dwellTimer = 0.0
   _quietTimer = 0.0 -- Explicit director cut clears quiet window
 
-  applyCspCamera(_focusedCar, _currentCameraMode, _currentSubMode, _currentTrackGroup)
+  applyCspCamera(_focusedCar, _currentCameraMode, _currentSubMode, _currentTrackGroup, _currentSituation, _currentDuelRival)
 end
 
 --- Compute Combat Hotspot Index (CHI) for all cars
@@ -821,13 +894,54 @@ function M.step(dt, sim)
   end
 
   -- If director is disabled, do nothing further
-  if not _enabled then return end
-
-  -- Advance current shot dwell timer
-  _dwellTimer = _dwellTimer + safeDt
+  if not _enabled then
+    if hasSdkDirector and SdkDirector and _directorInstance and _currentProceduralMode then
+      SdkDirector.releaseCamera(_directorInstance)
+      _currentProceduralMode = nil
+    end
+    return
+  end
 
   local raceState = RaceContext.getRaceState()
   local recentEvents = EventHub.getRecentAiEvents(5)
+  local trackLen = (raceState and raceState.trackLength and raceState.trackLength > 100) and raceState.trackLength or 3500.0
+
+  -- 1b. Check for OVERTAKE event in current duel to trigger Hold-Until camera protection
+  if recentEvents and _currentDuelRival >= 0 then
+    for idx = 1, #recentEvents do
+      local ev = recentEvents[idx]
+      if ev and (ev.type == "OVERTAKE" or ev.kind == "overtake") then
+        local cA = ev.carIndex or ev.car
+        local cB = ev.otherCar or ev.other
+        if (cA == _focusedCar and cB == _currentDuelRival) or (cA == _currentDuelRival and cB == _focusedCar) then
+          _overtakeHoldTimer = math.max(_overtakeHoldTimer, 3.0)
+          if hasSdkDirector and SdkDirector and _directorInstance then
+            SdkDirector.notifyOvertake(_directorInstance, 3.0)
+          end
+          break
+        end
+      end
+    end
+  end
+
+  if _overtakeHoldTimer > 0.0 then
+    _overtakeHoldTimer = _overtakeHoldTimer - safeDt
+  end
+
+  -- 1c. Update SDK Procedural Camera if active
+  local isProceduralOccluded = false
+  local isProceduralDone = false
+  if hasSdkDirector and SdkDirector and _directorInstance and _currentProceduralMode then
+    local status = SdkDirector.update(_directorInstance, safeDt, trackLen)
+    if status == "occluded" then
+      isProceduralOccluded = true
+    elseif status == "done" then
+      isProceduralDone = true
+    end
+  end
+
+  -- Advance current shot dwell timer
+  _dwellTimer = _dwellTimer + safeDt
 
   -- 2. Compute Combat Hotspots across all cars & update Focal Spatial Radar
   SpatialRadar.update(safeDt, _focusedCar)
@@ -841,7 +955,18 @@ function M.step(dt, sim)
   local targetDuration = bestHotspot.targetDuration or 8.0
 
   -- 3. Preemption Check: Higher priority event preempts immediately!
-  if bestHotspot.priority < _currentPriority then
+  if isProceduralOccluded then
+    -- Raycast detected building/wall blocking line of sight for >0.6s: Trigger immediate soft-cut
+    shouldCut = true
+    targetDuration = _minDwellTime
+  elseif isProceduralDone and _overtakeHoldTimer <= 0.0 then
+    -- Procedural shot completed naturally (e.g. cars flew past tele/kerb anchor)
+    shouldCut = true
+    targetDuration = _minDwellTime
+  elseif _overtakeHoldTimer > 0.0 and bestHotspot.priority > M.PRIORITY_EMERGENCY then
+    -- Hold-Until active for overtake: freeze camera to let battle resolve cleanly
+    shouldCut = false
+  elseif bestHotspot.priority < _currentPriority then
     -- Strictly higher priority (e.g. EMERGENCY preempts BATTLE, ACTION preempts CRUISE)
     shouldCut = true
     if bestHotspot.priority == M.PRIORITY_EMERGENCY then
@@ -887,7 +1012,7 @@ function M.step(dt, sim)
       _currentTrackGroup = 0
     end
 
-    applyCspCamera(_focusedCar, _currentCameraMode, _currentSubMode, _currentTrackGroup)
+    applyCspCamera(_focusedCar, _currentCameraMode, _currentSubMode, _currentTrackGroup, _currentSituation, _currentDuelRival)
   end
 end
 
